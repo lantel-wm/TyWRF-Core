@@ -26,6 +26,8 @@ Completed work:
 - Agent B returned a completed CUDA-ready layout subtask for main-agent review.
 - Main-agent integration review completed for the first A/B/C/F subagent round.
 - Unified validation passed for the integrated Phase 2-4 baseline.
+- Created verified Git milestone commit `48a8415`:
+  `Bootstrap TyWRF-Core baseline`.
 - Updated `AGENTS.md` with the persistent collaboration constraints requested
   by the user: proactive subagent dispatch each round, near-real-time
   `PROGRESS.md` updates, ongoing progress reports, and verified milestone Git
@@ -126,6 +128,7 @@ Git status policy:
 
 - Commit after each main-agent-reviewed and verified integration milestone.
 - Do not commit sub-agent intermediate work before unified review and tests.
+- Latest verified milestone commit: `48a8415`.
 
 Test results:
 
@@ -155,6 +158,5 @@ Blockers:
 
 Next step:
 
-- Commit the first verified integration milestone.
 - Proactively dispatch the next subagent round from the remaining plan after
   this integration checkpoint.
