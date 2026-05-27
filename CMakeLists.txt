@@ -13,6 +13,7 @@ add_library(tywrf_core STATIC
   src/core/version.cpp
   src/dynamics/cycle_schedule.cpp
   src/dynamics/dynamics_loop.cpp
+  src/dynamics/state_stepper.cpp
   src/dynamics/tendency.cpp
   src/io/forcing_io.cpp
   src/io/netcdf_schema.cpp
@@ -81,6 +82,10 @@ if(BUILD_TESTING)
   add_executable(tywrf_tendency_test tests/unit/tendency_test.cpp)
   target_link_libraries(tywrf_tendency_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_tendency_test COMMAND tywrf_tendency_test)
+
+  add_executable(tywrf_state_stepper_test tests/unit/state_stepper_test.cpp)
+  target_link_libraries(tywrf_state_stepper_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_state_stepper_test COMMAND tywrf_state_stepper_test)
 
   add_executable(tywrf_field_layout_test tests/unit/field_layout_test.cpp)
   target_link_libraries(tywrf_field_layout_test PRIVATE TyWRF::Core)
