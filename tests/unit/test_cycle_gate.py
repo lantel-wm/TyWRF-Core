@@ -95,6 +95,44 @@ def test_cycle_gate_fails_field_normalized_rmse_threshold(tmp_path: Path) -> Non
     assert fields["U"].normalized_rmse > 0.05
 
 
+def test_cycle_gate_reports_first_failure_for_10_min_progressive_run(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    end_times = (
+        "2025-07-26_00:10:00",
+        "2025-07-26_00:20:00",
+        "2025-07-26_00:30:00",
+        "2025-07-26_00:40:00",
+        "2025-07-26_00:50:00",
+        "2025-07-26_01:00:00",
+    )
+    for end_time in end_times:
+        _write_wrfout(reference_dir / f"wrfout_d02_{end_time}")
+        _write_wrfout(
+            candidate_dir / f"wrfout_d02_{end_time}",
+            field_offset=1.0 if end_time == "2025-07-26_00:20:00" else 0.0,
+        )
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end="2025-07-26_01:00:00",
+        interval_minutes=10,
+    )
+    payload = json.loads(report_to_json(report))
+
+    assert report.status == "failed"
+    assert report.summary == {"total": 6, "passed": 5, "failed": 1}
+    assert payload["interval_minutes"] == 10
+    assert payload["cycles"][1]["end_time"] == "2025-07-26_00:20:00"
+    assert payload["first_failure"]["cycle_index"] == 2
+    assert payload["first_failure"]["end_time"] == "2025-07-26_00:20:00"
+    assert payload["first_failure"]["field"] == "U"
+    assert payload["first_failure"]["field_status"] == "failed"
+    assert payload["first_failure"]["diagnostic"] is None
+
+
 def test_cycle_gate_rejects_diagnostic_only_candidate_metadata(tmp_path: Path) -> None:
     reference_dir, candidate_dir = _write_pair(
         tmp_path,

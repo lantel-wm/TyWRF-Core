@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generate explicit baseline candidate wrfout files for 6 h validation gates."""
+"""Generate explicit baseline candidate wrfout files for validation gates."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ class BaselineCandidateMetadata:
     start_time: str
     end_time: str
     hours: int
+    minutes: int
     mode: str
     candidate_kind: str
     reference_copy: bool
@@ -159,6 +160,7 @@ def _set_candidate_attrs(
         "TYWRF_CYCLE_START": metadata.start_time,
         "TYWRF_CYCLE_END": metadata.end_time,
         "TYWRF_CYCLE_HOURS": metadata.hours,
+        "TYWRF_CYCLE_MINUTES": metadata.minutes,
         "TYWRF_CANDIDATE_SOURCE": metadata.source,
         "TYWRF_D02_RESOLUTION_CHECK": metadata.d02_resolution_check,
         "TYWRF_CANDIDATE_MESSAGE": metadata.message,
@@ -184,9 +186,13 @@ def build_baseline_candidate(
     normalized_mode = normalize_candidate_mode(mode)
     start_text = format_wrf_time(start_time)
     end_text = format_wrf_time(end_time)
-    hours = int((parse_wrf_time(end_text) - parse_wrf_time(start_text)).total_seconds() // 3600)
-    if hours <= 0:
+    duration_seconds = int((parse_wrf_time(end_text) - parse_wrf_time(start_text)).total_seconds())
+    if duration_seconds <= 0:
         raise ValueError("baseline candidate cycle length must be positive")
+    if duration_seconds % 60 != 0:
+        raise ValueError("baseline candidate cycle length must align to whole minutes")
+    minutes = duration_seconds // 60
+    hours = minutes // 60
 
     source, source_role = _candidate_source_for_mode(
         normalized_mode,
@@ -230,6 +236,7 @@ def build_baseline_candidate(
         start_time=start_text,
         end_time=end_text,
         hours=hours,
+        minutes=minutes,
         mode=normalized_mode,
         candidate_kind="baseline_candidate",
         reference_copy=reference_copy,

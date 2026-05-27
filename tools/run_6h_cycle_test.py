@@ -26,6 +26,7 @@ except ModuleNotFoundError:
 
 WRF_TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 DEFAULT_DOMAINS = ("d01", "d02")
+DEFAULT_INTERVAL_HOURS = 6
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class CyclePlan:
     start_time: str
     end_time: str
     hours: int
+    minutes: int
     reference_dir: str
     candidate_dir: str
     domains: list[DomainCyclePlan]
@@ -83,20 +85,29 @@ def _validate_domains(domains: Iterable[str]) -> list[str]:
     return requested
 
 
+def _resolve_duration_minutes(*, hours: int | None, minutes: int | None) -> int:
+    if minutes is not None:
+        if minutes <= 0:
+            raise ValueError("cycle length minutes must be positive")
+        return minutes
+    if hours is None or hours <= 0:
+        raise ValueError("cycle length must be positive")
+    return hours * 60
+
+
 def build_cycle_plan(
     reference_dir: Path,
     candidate_dir: Path,
     start: str | datetime,
     *,
     hours: int = 6,
+    minutes: int | None = None,
     domains: Iterable[str] = DEFAULT_DOMAINS,
     dry_run: bool = True,
 ) -> CyclePlan:
-    if hours <= 0:
-        raise ValueError("cycle length must be positive")
-
     start_time = parse_wrf_time(start) if isinstance(start, str) else start
-    end_time = start_time + timedelta(hours=hours)
+    duration_minutes = _resolve_duration_minutes(hours=hours, minutes=minutes)
+    end_time = start_time + timedelta(minutes=duration_minutes)
     requested_domains = _validate_domains(domains)
 
     domain_plans = []
@@ -123,7 +134,8 @@ def build_cycle_plan(
         status="dry_run" if dry_run else "not_implemented",
         start_time=format_wrf_time(start_time),
         end_time=format_wrf_time(end_time),
-        hours=hours,
+        hours=duration_minutes // 60,
+        minutes=duration_minutes,
         reference_dir=str(reference_dir),
         candidate_dir=str(candidate_dir),
         domains=domain_plans,
@@ -144,22 +156,29 @@ def _baseline_cycle_windows(
     start: str,
     *,
     end: str | None,
-    hours: int,
-    interval_hours: int,
+    hours: int | None,
+    interval_hours: int | None,
+    minutes: int | None = None,
+    interval_minutes: int | None = None,
 ) -> list[tuple[datetime, datetime]]:
     start_time = parse_wrf_time(start)
     if end is None:
-        if hours <= 0:
-            raise ValueError("cycle length must be positive")
-        return [(start_time, start_time + timedelta(hours=hours))]
+        duration_minutes = _resolve_duration_minutes(hours=hours, minutes=minutes)
+        return [(start_time, start_time + timedelta(minutes=duration_minutes))]
 
-    if interval_hours <= 0:
-        raise ValueError("interval must be positive")
+    if interval_minutes is not None:
+        if interval_minutes <= 0:
+            raise ValueError("interval minutes must be positive")
+        resolved_interval_minutes = interval_minutes
+    else:
+        if interval_hours is None or interval_hours <= 0:
+            raise ValueError("interval must be positive")
+        resolved_interval_minutes = interval_hours * 60
     end_time = parse_wrf_time(end)
     if end_time <= start_time:
         raise ValueError("end time must be after start time")
 
-    interval = timedelta(hours=interval_hours)
+    interval = timedelta(minutes=resolved_interval_minutes)
     windows = []
     cycle_start = start_time
     cycle_end = cycle_start + interval
@@ -180,9 +199,11 @@ def build_baseline_candidate_report(
     start: str,
     end: str | None,
     hours: int,
-    interval_hours: int,
+    interval_hours: int | None,
     domains: Iterable[str],
     mode: str,
+    minutes: int | None = None,
+    interval_minutes: int | None = None,
     variables: Iterable[str] = CORE_WRFOUT_VARIABLES,
     allow_missing: bool = False,
 ) -> dict[str, object]:
@@ -192,7 +213,9 @@ def build_baseline_candidate_report(
         start,
         end=end,
         hours=hours,
+        minutes=minutes,
         interval_hours=interval_hours,
+        interval_minutes=interval_minutes,
     )
 
     cycles = []
@@ -231,6 +254,10 @@ def build_baseline_candidate_report(
         "candidate_dir": str(candidate_dir),
         "start_time": format_wrf_time(windows[0][0]),
         "end_time": format_wrf_time(windows[-1][1]),
+        "hours": int((windows[-1][1] - windows[0][0]).total_seconds() // 3600),
+        "minutes": int((windows[-1][1] - windows[0][0]).total_seconds() // 60),
+        "interval_hours": int((windows[0][1] - windows[0][0]).total_seconds() // 3600),
+        "interval_minutes": int((windows[0][1] - windows[0][0]).total_seconds() // 60),
         "domains": requested_domains,
         "cycle_count": len(windows),
         "cycles": cycles,
@@ -262,7 +289,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start", required=True, help="Cycle start time, for example 2025-07-26_00:00:00")
     parser.add_argument("--end", help="Final cycle end time for gate mode")
     parser.add_argument("--hours", type=int, default=6, help="Cycle length in hours")
-    parser.add_argument("--interval", type=int, default=6, help="Cycle interval in hours for gate mode")
+    parser.add_argument(
+        "--minutes",
+        type=int,
+        help="Cycle length in minutes; overrides --hours for 10 min validation windows",
+    )
+    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_HOURS, help="Cycle interval in hours for gate mode")
+    parser.add_argument(
+        "--interval-minutes",
+        type=int,
+        help="Cycle interval in minutes for progressive gate mode; overrides --interval",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print planned inputs without running the integrator")
     parser.add_argument(
         "--mode",
@@ -289,8 +326,10 @@ def main(argv: list[str] | None = None) -> int:
                 end=args.end,
                 hours=args.hours,
                 interval_hours=args.interval,
+                interval_minutes=args.interval_minutes,
                 domains=domains,
                 mode=args.mode,
+                minutes=args.minutes,
                 variables=args.variables,
                 allow_missing=args.allow_missing,
             )
@@ -321,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
                 end=args.end,
                 hours=None if args.end else args.hours,
                 interval_hours=args.interval,
+                interval_minutes=args.interval_minutes,
                 domain=domains[0],
             )
         except ValueError as exc:
@@ -340,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
             args.candidate_dir,
             args.start,
             hours=args.hours,
+            minutes=args.minutes,
             domains=domains,
             dry_run=args.dry_run,
         )

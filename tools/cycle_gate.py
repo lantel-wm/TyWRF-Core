@@ -28,6 +28,7 @@ except ModuleNotFoundError:
 WRF_TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 DEFAULT_DOMAIN = "d02"
 DEFAULT_INTERVAL_HOURS = 6
+DEFAULT_INTERVAL_MINUTES = DEFAULT_INTERVAL_HOURS * 60
 GATE_FIELD_THRESHOLD = 0.05
 GATE_FIELD_THRESHOLDS = {name: GATE_FIELD_THRESHOLD for name in STRICT_CORE_VARIABLES}
 METADATA_GATE_THRESHOLD = 0.0
@@ -81,8 +82,10 @@ class CycleGateReport:
     start_time: str
     end_time: str
     interval_hours: int
+    interval_minutes: int
     cycles: list[CycleGate]
     summary: dict[str, int]
+    first_failure: dict[str, object | None] | None
 
 
 def parse_wrf_time(value: str) -> datetime:
@@ -102,13 +105,39 @@ def wrfout_filename(domain: str, valid_time: datetime) -> str:
     return f"wrfout_{domain}_{format_wrf_time(valid_time)}"
 
 
-def cycle_end_times(start_time: datetime, end_time: datetime, interval_hours: int) -> list[datetime]:
+def _resolve_interval_minutes(
+    *,
+    interval_hours: int | None = DEFAULT_INTERVAL_HOURS,
+    interval_minutes: int | None = None,
+) -> int:
+    if interval_minutes is not None:
+        if interval_minutes <= 0:
+            raise ValueError("interval minutes must be positive")
+        return interval_minutes
+    if interval_hours is None:
+        raise ValueError("interval is required")
     if interval_hours <= 0:
+        raise ValueError("interval must be positive")
+    return interval_hours * 60
+
+
+def cycle_end_times(
+    start_time: datetime,
+    end_time: datetime,
+    interval_hours: int | None = DEFAULT_INTERVAL_HOURS,
+    *,
+    interval_minutes: int | None = None,
+) -> list[datetime]:
+    resolved_interval_minutes = _resolve_interval_minutes(
+        interval_hours=interval_hours,
+        interval_minutes=interval_minutes,
+    )
+    if resolved_interval_minutes <= 0:
         raise ValueError("interval must be positive")
     if end_time <= start_time:
         raise ValueError("end time must be after start time")
 
-    interval = timedelta(hours=interval_hours)
+    interval = timedelta(minutes=resolved_interval_minutes)
     current = start_time + interval
     ends: list[datetime] = []
     while current <= end_time:
@@ -266,7 +295,7 @@ def _candidate_metadata_gate(
             status="failed",
             threshold=METADATA_GATE_THRESHOLD,
             value=1.0,
-            message="candidate is not eligible for the default 6 h gate: "
+            message="candidate is not eligible for the default validation gate: "
             + ", ".join(disqualifiers),
         )
 
@@ -524,7 +553,8 @@ def evaluate_cycles(
     *,
     end: str | datetime | None = None,
     hours: int | None = None,
-    interval_hours: int = DEFAULT_INTERVAL_HOURS,
+    interval_hours: int | None = DEFAULT_INTERVAL_HOURS,
+    interval_minutes: int | None = None,
     domain: str = DEFAULT_DOMAIN,
     allow_validation_gate_only: bool = False,
 ) -> CycleGateReport:
@@ -532,7 +562,16 @@ def evaluate_cycles(
         raise ValueError(f"unsupported domain: {domain}")
     start_time = parse_wrf_time(start) if isinstance(start, str) else start
     end_time = resolve_end_time(start_time, end=end, hours=hours)
-    end_times = cycle_end_times(start_time, end_time, interval_hours)
+    resolved_interval_minutes = _resolve_interval_minutes(
+        interval_hours=interval_hours,
+        interval_minutes=interval_minutes,
+    )
+    end_times = cycle_end_times(
+        start_time,
+        end_time,
+        interval_hours=None,
+        interval_minutes=resolved_interval_minutes,
+    )
 
     cycle_start = start_time
     cycles = []
@@ -551,6 +590,7 @@ def evaluate_cycles(
 
     passed = sum(1 for cycle in cycles if cycle.status == "passed")
     failed = len(cycles) - passed
+    first_failure = _first_failure_summary(cycles)
     return CycleGateReport(
         status="passed" if failed == 0 else "failed",
         domain=domain,
@@ -558,10 +598,41 @@ def evaluate_cycles(
         candidate_dir=str(candidate_dir),
         start_time=format_wrf_time(start_time),
         end_time=format_wrf_time(end_time),
-        interval_hours=interval_hours,
+        interval_hours=resolved_interval_minutes // 60,
+        interval_minutes=resolved_interval_minutes,
         cycles=cycles,
         summary={"total": len(cycles), "passed": passed, "failed": failed},
+        first_failure=first_failure,
     )
+
+
+def _first_failure_summary(cycles: list[CycleGate]) -> dict[str, object | None] | None:
+    for index, cycle in enumerate(cycles, start=1):
+        if cycle.status == "passed":
+            continue
+
+        failed_field = next((field for field in cycle.fields if field.status != "passed"), None)
+        failed_diagnostic = next(
+            (metric for metric in cycle.diagnostics if metric.status != "passed"),
+            None,
+        )
+        return {
+            "cycle_index": index,
+            "start_time": cycle.start_time,
+            "end_time": cycle.end_time,
+            "field": failed_field.variable if failed_field else None,
+            "field_status": failed_field.status if failed_field else None,
+            "diagnostic": failed_diagnostic.name if failed_diagnostic else None,
+            "diagnostic_status": failed_diagnostic.status if failed_diagnostic else None,
+            "message": cycle.message
+            or (failed_field.message if failed_field and failed_field.message else None)
+            or (
+                failed_diagnostic.message
+                if failed_diagnostic and failed_diagnostic.message
+                else None
+            ),
+        }
+    return None
 
 
 def _strict_json_value(value):
@@ -592,6 +663,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end", help="Final cycle end time, for example 2025-07-26_06:00:00")
     parser.add_argument("--hours", type=int, help="Duration from --start to the final cycle end")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_HOURS, help="Cycle interval in hours")
+    parser.add_argument(
+        "--interval-minutes",
+        type=int,
+        help="Cycle interval in minutes; overrides --interval for 10 min progressive validation gates",
+    )
     parser.add_argument("--domain", choices=("d01", "d02"), default=DEFAULT_DOMAIN, help="Domain to gate")
     parser.add_argument(
         "--allow-validation-gate-only",
@@ -617,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
             end=args.end,
             hours=args.hours,
             interval_hours=args.interval,
+            interval_minutes=args.interval_minutes,
             domain=args.domain,
             allow_validation_gate_only=args.allow_validation_gate_only,
         )

@@ -57,12 +57,50 @@ def test_persistence_candidate_uses_start_file_and_rewrites_valid_time(tmp_path:
     assert metadata.copied_slp_candidates == []
     assert metadata.source == str(start)
     assert metadata.d02_resolution_check == "d02_2km"
+    assert metadata.hours == 6
+    assert metadata.minutes == 360
 
     with netCDF4.Dataset(candidate) as dataset:
         assert _read_time(dataset) == "2025-07-26_06:00:00"
         np.testing.assert_array_equal(dataset.variables["PSFC"][:], np.full((1, 2, 3), 100000.0))
         assert dataset.getncattr("TYWRF_BASELINE_MODE") == "persistence"
         assert dataset.getncattr("TYWRF_REFERENCE_COPY") == "false"
+        assert dataset.getncattr("TYWRF_INTEGRATOR_OUTPUT") == "false"
+        assert dataset.getncattr("TYWRF_CYCLE_HOURS") == 6
+        assert dataset.getncattr("TYWRF_CYCLE_MINUTES") == 360
+
+
+def test_10_minute_persistence_candidate_records_minutes_and_remains_non_integrator(
+    tmp_path: Path,
+) -> None:
+    start = tmp_path / "wrfout_d02_2025-07-26_00:00:00"
+    end = tmp_path / "wrfout_d02_2025-07-26_00:10:00"
+    candidate = tmp_path / "candidate" / end.name
+    _make_wrfout(start, "2025-07-26_00:00:00", 100000.0)
+    _make_wrfout(end, "2025-07-26_00:10:00", 99900.0)
+
+    metadata = build_baseline_candidate(
+        start,
+        end,
+        candidate,
+        domain="d02",
+        start_time="2025-07-26_00:00:00",
+        end_time="2025-07-26_00:10:00",
+        mode="persistence",
+        variables=("Times", "PSFC"),
+    )
+
+    assert metadata.hours == 0
+    assert metadata.minutes == 10
+    assert metadata.reference_copy is False
+    assert metadata.integrator_output is False
+    assert metadata.validation_gate_only is False
+    assert metadata.expected_to_meet_thresholds is False
+
+    with netCDF4.Dataset(candidate) as dataset:
+        assert _read_time(dataset) == "2025-07-26_00:10:00"
+        assert dataset.getncattr("TYWRF_CYCLE_HOURS") == 0
+        assert dataset.getncattr("TYWRF_CYCLE_MINUTES") == 10
         assert dataset.getncattr("TYWRF_INTEGRATOR_OUTPUT") == "false"
 
 

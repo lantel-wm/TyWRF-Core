@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Audit KROSA d02 WRF reference cycle coverage and validation fields."""
+"""Audit KROSA WRF reference cycle coverage and validation fields."""
 
 from __future__ import annotations
 
@@ -21,39 +21,61 @@ except ModuleNotFoundError:
 WRF_TIME_FORMAT = "%Y-%m-%d_%H:%M:%S"
 DEFAULT_REFERENCE_DIR = Path(
     "/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/"
-    "output_gfs_analysis/2025wp12/2025072600/WRF"
+    "output_gfs_analysis/2025wp12/2025072600/WRF_1h_10min_20260527_172838"
 )
-DEFAULT_DOMAIN = "d02"
+DEFAULT_DOMAINS = ("d01", "d02")
 DEFAULT_START = "2025-07-26_00:00:00"
-DEFAULT_END = "2025-08-02_00:00:00"
-DEFAULT_INTERVAL_HOURS = 6
+DEFAULT_END = "2025-07-26_01:00:00"
+DEFAULT_INTERVAL_MINUTES = 10
 
 TARGET_VARIABLES = (
-    "U",
-    "V",
-    "T",
-    "PH",
-    "MU",
-    "P",
-    "QVAPOR",
+    "Times",
     "XLAT",
     "XLONG",
+    "HGT",
+    "U",
+    "V",
+    "W",
+    "PH",
+    "PHB",
+    "T",
+    "MU",
+    "MUB",
+    "P",
+    "PB",
+    "QVAPOR",
+    "QCLOUD",
+    "QRAIN",
+    "QICE",
+    "QSNOW",
+    "QGRAUP",
+    "QNICE",
+    "QNRAIN",
+    "PSFC",
     "U10",
     "V10",
+    "T2",
+    "Q2",
+    "RAINC",
+    "RAINNC",
 )
 
 SLP_CANDIDATE_VARIABLES = MINIMUM_SLP_VARIABLE_CANDIDATES
 PRESSURE_PROXY_VARIABLES = ("PSFC",)
+GRID_SPACING_NAMES = ("DX", "DY")
 
 
 @dataclass(frozen=True)
 class CycleAudit:
+    domain: str
     valid_time: str
     filename: str
     path: str
     exists: bool
     status: str
     missing_variables: list[str]
+    missing_grid_spacing: list[str]
+    available_grid_spacing: list[str]
     available_slp_candidates: list[str]
     available_pressure_proxy_candidates: list[str]
     message: str | None = None
@@ -63,13 +85,15 @@ class CycleAudit:
 class ReferenceCycleAudit:
     status: str
     reference_dir: str
-    domain: str
+    domains: list[str]
     start_time: str
     end_time: str
-    interval_hours: int
+    interval_minutes: int
     cycle_count: int
     missing_files: list[str]
     missing_variables: dict[str, list[str]]
+    missing_grid_spacing: dict[str, list[str]]
+    available_grid_spacing: dict[str, list[str]]
     available_slp_candidates: dict[str, list[str]]
     available_pressure_proxy_candidates: dict[str, list[str]]
     cycles_without_slp_candidates: list[str]
@@ -94,147 +118,209 @@ def wrfout_filename(domain: str, valid_time: datetime) -> str:
     return f"wrfout_{domain}_{format_wrf_time(valid_time)}"
 
 
-def _cycle_times(start_time: datetime, end_time: datetime, interval_hours: int) -> list[datetime]:
-    if interval_hours <= 0:
-        raise ValueError("interval-hours must be positive")
+def _cycle_times(start_time: datetime, end_time: datetime, interval_minutes: int) -> list[datetime]:
+    if interval_minutes <= 0:
+        raise ValueError("interval-minutes must be positive")
     if end_time < start_time:
         raise ValueError("end time must be greater than or equal to start time")
 
     times = []
     current = start_time
-    interval = timedelta(hours=interval_hours)
+    interval = timedelta(minutes=interval_minutes)
     while current <= end_time:
         times.append(current)
         current += interval
     return times
 
 
-def _cycle_status(missing_variables: list[str], slp_candidates: list[str]) -> str:
-    if missing_variables and not slp_candidates:
-        return "missing_variables_and_slp_candidates"
+def _cycle_status(
+    missing_variables: list[str],
+    missing_grid_spacing: list[str],
+    slp_candidates: list[str],
+) -> str:
+    missing_core = bool(missing_variables or missing_grid_spacing)
+    if missing_core and not slp_candidates:
+        return "missing_core_and_slp_candidates"
+    if missing_variables and missing_grid_spacing:
+        return "missing_variables_and_grid_spacing"
     if missing_variables:
         return "missing_variables"
+    if missing_grid_spacing:
+        return "missing_grid_spacing"
     if not slp_candidates:
         return "missing_slp_candidates"
     return "ok"
 
 
+def _has_dataset_name(dataset: netCDF4.Dataset, name: str) -> bool:
+    return name in dataset.variables or name in dataset.ncattrs()
+
+
+def _cycle_key(domain: str, filename: str) -> str:
+    return f"{domain}/{filename}"
+
+
 def audit_reference_cycles(
     reference_dir: Path,
     *,
-    domain: str = DEFAULT_DOMAIN,
+    domain: str | None = None,
+    domains: Iterable[str] = DEFAULT_DOMAINS,
     start: str | datetime = DEFAULT_START,
     end: str | datetime = DEFAULT_END,
-    interval_hours: int = DEFAULT_INTERVAL_HOURS,
+    interval_minutes: int = DEFAULT_INTERVAL_MINUTES,
+    interval_hours: int | None = None,
     required_variables: Iterable[str] = TARGET_VARIABLES,
+    grid_spacing_names: Iterable[str] = GRID_SPACING_NAMES,
     slp_candidates: Iterable[str] = SLP_CANDIDATE_VARIABLES,
     pressure_proxy_candidates: Iterable[str] = PRESSURE_PROXY_VARIABLES,
 ) -> ReferenceCycleAudit:
     start_time = parse_wrf_time(start) if isinstance(start, str) else start
     end_time = parse_wrf_time(end) if isinstance(end, str) else end
+    if interval_hours is not None:
+        interval_minutes = interval_hours * 60
+    audit_domains = [domain] if domain is not None else list(domains)
+    if not audit_domains:
+        raise ValueError("at least one domain is required")
     required = tuple(required_variables)
+    spacing_names = tuple(grid_spacing_names)
     slp_candidate_names = tuple(slp_candidates)
     pressure_proxy_names = tuple(pressure_proxy_candidates)
 
     cycles: list[CycleAudit] = []
     unreadable_files: dict[str, str] = {}
 
-    for valid_time in _cycle_times(start_time, end_time, interval_hours):
-        filename = wrfout_filename(domain, valid_time)
-        path = reference_dir / filename
-        valid_time_text = format_wrf_time(valid_time)
-        if not path.exists():
-            cycles.append(
-                CycleAudit(
-                    valid_time=valid_time_text,
-                    filename=filename,
-                    path=str(path),
-                    exists=False,
-                    status="missing_file",
-                    missing_variables=[],
-                    available_slp_candidates=[],
-                    available_pressure_proxy_candidates=[],
+    for audit_domain in audit_domains:
+        for valid_time in _cycle_times(start_time, end_time, interval_minutes):
+            filename = wrfout_filename(audit_domain, valid_time)
+            path = reference_dir / filename
+            valid_time_text = format_wrf_time(valid_time)
+            if not path.exists():
+                cycles.append(
+                    CycleAudit(
+                        domain=audit_domain,
+                        valid_time=valid_time_text,
+                        filename=filename,
+                        path=str(path),
+                        exists=False,
+                        status="missing_file",
+                        missing_variables=[],
+                        missing_grid_spacing=[],
+                        available_grid_spacing=[],
+                        available_slp_candidates=[],
+                        available_pressure_proxy_candidates=[],
+                    )
                 )
-            )
-            continue
+                continue
 
-        try:
-            with netCDF4.Dataset(path) as dataset:
-                names = dataset.variables
-                missing_variables = [name for name in required if name not in names]
-                available_slp_candidates = [
-                    name for name in slp_candidate_names if name in names
-                ]
-                available_pressure_proxy_candidates = [
-                    name for name in pressure_proxy_names if name in names
-                ]
-        except OSError as exc:
-            unreadable_files[filename] = str(exc)
+            try:
+                with netCDF4.Dataset(path) as dataset:
+                    names = dataset.variables
+                    missing_variables = [name for name in required if name not in names]
+                    missing_grid_spacing = [
+                        name for name in spacing_names if not _has_dataset_name(dataset, name)
+                    ]
+                    available_grid_spacing = [
+                        name for name in spacing_names if _has_dataset_name(dataset, name)
+                    ]
+                    available_slp_candidates = [
+                        name for name in slp_candidate_names if name in names
+                    ]
+                    available_pressure_proxy_candidates = [
+                        name for name in pressure_proxy_names if name in names
+                    ]
+            except OSError as exc:
+                unreadable_files[_cycle_key(audit_domain, filename)] = str(exc)
+                cycles.append(
+                    CycleAudit(
+                        domain=audit_domain,
+                        valid_time=valid_time_text,
+                        filename=filename,
+                        path=str(path),
+                        exists=True,
+                        status="unreadable",
+                        missing_variables=[],
+                        missing_grid_spacing=[],
+                        available_grid_spacing=[],
+                        available_slp_candidates=[],
+                        available_pressure_proxy_candidates=[],
+                        message=str(exc),
+                    )
+                )
+                continue
+
             cycles.append(
                 CycleAudit(
+                    domain=audit_domain,
                     valid_time=valid_time_text,
                     filename=filename,
                     path=str(path),
                     exists=True,
-                    status="unreadable",
-                    missing_variables=[],
-                    available_slp_candidates=[],
-                    available_pressure_proxy_candidates=[],
-                    message=str(exc),
+                    status=_cycle_status(
+                        missing_variables,
+                        missing_grid_spacing,
+                        available_slp_candidates,
+                    ),
+                    missing_variables=missing_variables,
+                    missing_grid_spacing=missing_grid_spacing,
+                    available_grid_spacing=available_grid_spacing,
+                    available_slp_candidates=available_slp_candidates,
+                    available_pressure_proxy_candidates=available_pressure_proxy_candidates,
                 )
             )
-            continue
 
-        cycles.append(
-            CycleAudit(
-                valid_time=valid_time_text,
-                filename=filename,
-                path=str(path),
-                exists=True,
-                status=_cycle_status(missing_variables, available_slp_candidates),
-                missing_variables=missing_variables,
-                available_slp_candidates=available_slp_candidates,
-                available_pressure_proxy_candidates=available_pressure_proxy_candidates,
-            )
-        )
-
-    missing_files = [cycle.filename for cycle in cycles if not cycle.exists]
+    missing_files = [_cycle_key(cycle.domain, cycle.filename) for cycle in cycles if not cycle.exists]
     missing_variables = {
-        cycle.filename: cycle.missing_variables
+        _cycle_key(cycle.domain, cycle.filename): cycle.missing_variables
         for cycle in cycles
         if cycle.missing_variables
     }
+    missing_grid_spacing = {
+        _cycle_key(cycle.domain, cycle.filename): cycle.missing_grid_spacing
+        for cycle in cycles
+        if cycle.missing_grid_spacing
+    }
+    available_grid_spacing = {
+        _cycle_key(cycle.domain, cycle.filename): cycle.available_grid_spacing
+        for cycle in cycles
+        if cycle.exists and cycle.status != "unreadable"
+    }
     available_slp_candidates = {
-        cycle.filename: cycle.available_slp_candidates
+        _cycle_key(cycle.domain, cycle.filename): cycle.available_slp_candidates
         for cycle in cycles
         if cycle.exists and cycle.status != "unreadable"
     }
     available_pressure_proxy_candidates = {
-        cycle.filename: cycle.available_pressure_proxy_candidates
+        _cycle_key(cycle.domain, cycle.filename): cycle.available_pressure_proxy_candidates
         for cycle in cycles
         if cycle.exists and cycle.status != "unreadable"
     }
     cycles_without_slp_candidates = [
-        cycle.filename
+        _cycle_key(cycle.domain, cycle.filename)
         for cycle in cycles
         if cycle.exists
         and cycle.status != "unreadable"
         and not cycle.available_slp_candidates
     ]
     failed = bool(
-        missing_files or missing_variables or cycles_without_slp_candidates or unreadable_files
+        missing_files
+        or missing_variables
+        or missing_grid_spacing
+        or cycles_without_slp_candidates
+        or unreadable_files
     )
 
     return ReferenceCycleAudit(
         status="failed" if failed else "ok",
         reference_dir=str(reference_dir),
-        domain=domain,
+        domains=audit_domains,
         start_time=format_wrf_time(start_time),
         end_time=format_wrf_time(end_time),
-        interval_hours=interval_hours,
+        interval_minutes=interval_minutes,
         cycle_count=len(cycles),
         missing_files=missing_files,
         missing_variables=missing_variables,
+        missing_grid_spacing=missing_grid_spacing,
+        available_grid_spacing=available_grid_spacing,
         available_slp_candidates=available_slp_candidates,
         available_pressure_proxy_candidates=available_pressure_proxy_candidates,
         cycles_without_slp_candidates=cycles_without_slp_candidates,
@@ -249,18 +335,22 @@ def report_to_json(report: ReferenceCycleAudit, *, pretty: bool = False) -> str:
 
 def report_to_table(report: ReferenceCycleAudit) -> str:
     headers = (
+        "domain",
         "valid_time",
         "status",
         "missing_variables",
+        "missing_dxdy",
         "slp_candidates",
         "pressure_proxies",
         "filename",
     )
     rows = [
         (
+            cycle.domain,
             cycle.valid_time,
             cycle.status,
             ",".join(cycle.missing_variables) if cycle.missing_variables else "-",
+            ",".join(cycle.missing_grid_spacing) if cycle.missing_grid_spacing else "-",
             ",".join(cycle.available_slp_candidates)
             if cycle.available_slp_candidates
             else "-",
@@ -287,6 +377,7 @@ def report_to_table(report: ReferenceCycleAudit) -> str:
         f"status={report.status} cycle_count={report.cycle_count} "
         f"missing_files={len(report.missing_files)} "
         f"missing_variable_files={len(report.missing_variables)} "
+        f"missing_grid_spacing_files={len(report.missing_grid_spacing)} "
         f"cycles_without_slp_candidates={len(report.cycles_without_slp_candidates)}"
     )
     return "\n".join(lines)
@@ -300,10 +391,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_REFERENCE_DIR,
         help="Directory containing KROSA WRF reference wrfout files",
     )
-    parser.add_argument("--domain", default=DEFAULT_DOMAIN)
+    parser.add_argument(
+        "--domain",
+        action="append",
+        dest="domains",
+        help="Domain to audit; may be passed more than once. Defaults to d01 and d02.",
+    )
     parser.add_argument("--start", default=DEFAULT_START)
     parser.add_argument("--end", default=DEFAULT_END)
-    parser.add_argument("--interval-hours", type=int, default=DEFAULT_INTERVAL_HOURS)
+    parser.add_argument("--interval-minutes", type=int, default=DEFAULT_INTERVAL_MINUTES)
+    parser.add_argument(
+        "--interval-hours",
+        type=int,
+        help="Compatibility alias; overrides --interval-minutes when set",
+    )
     parser.add_argument(
         "--required-variables",
         nargs="+",
@@ -334,9 +435,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = audit_reference_cycles(
             args.reference_dir,
-            domain=args.domain,
+            domains=args.domains or DEFAULT_DOMAINS,
             start=args.start,
             end=args.end,
+            interval_minutes=args.interval_minutes,
             interval_hours=args.interval_hours,
             required_variables=args.required_variables,
             slp_candidates=args.slp_candidates,

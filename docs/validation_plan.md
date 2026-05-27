@@ -153,14 +153,19 @@ default minimum-SLP or storm-center gate.
 
 ## Python Validation Tools
 
-`tools/audit_reference_cycles.py` checks KROSA d02 reference coverage before
-cycle comparisons. It audits every 6 h `wrfout_d02` file from
-`2025-07-26_00:00:00` through `2025-08-02_00:00:00`, verifies
-`U,V,T,PH,MU,P,QVAPOR,XLAT,XLONG,U10,V10`, reports real SLP candidates from
-the accepted SLP/MSLP list, and records `PSFC` separately as a pressure proxy.
-The report includes `missing_files`, `missing_variables`,
-`available_slp_candidates`, `available_pressure_proxy_candidates`, and
-`cycle_count`; use `--format table` for a compact terminal summary.
+`tools/audit_reference_cycles.py` checks KROSA reference coverage before cycle
+comparisons. Its default audit targets the 1 h / 10 min validation reference
+directory, both `d01` and `d02`, and the required validation times from
+`2025-07-26_00:00:00` through `2025-07-26_01:00:00`. It verifies the v1 core
+output variables, including `Times`, checks `DX`/`DY` as grid-spacing metadata
+or variables, reports real SLP candidates from the accepted SLP/MSLP list, and
+records `PSFC` separately as a pressure proxy. The report includes
+`missing_files`, `missing_variables`, `missing_grid_spacing`,
+`available_grid_spacing`, `available_slp_candidates`,
+`available_pressure_proxy_candidates`, and `cycle_count`; use `--format table`
+for a compact terminal summary. `--interval-minutes` can audit alternate minute
+cadences, while `--interval-hours` remains available for older 6 h coverage
+checks.
 
 `tools/baseline_candidate.py` generates explicitly marked baseline candidate
 `wrfout` files without running a TyWRF-Core integrator. `persistence` copies

@@ -13,6 +13,7 @@ try:
     from tools.cycle_gate import (
         DEFAULT_DOMAIN,
         DEFAULT_INTERVAL_HOURS,
+        DEFAULT_INTERVAL_MINUTES,
         CycleGateReport,
         cycle_end_times,
         evaluate_cycles,
@@ -27,6 +28,7 @@ except ModuleNotFoundError:
     from cycle_gate import (
         DEFAULT_DOMAIN,
         DEFAULT_INTERVAL_HOURS,
+        DEFAULT_INTERVAL_MINUTES,
         CycleGateReport,
         cycle_end_times,
         evaluate_cycles,
@@ -64,6 +66,7 @@ class CycleGateWithSLPReport:
     start_time: str
     end_time: str
     interval_hours: int
+    interval_minutes: int
     derivations: list[DerivedCycleFile]
     gate_status: str
     gate_report: CycleGateReport
@@ -77,6 +80,22 @@ def _strict_json_value(value):
     if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
+
+
+def _resolve_interval_minutes(
+    *,
+    interval_hours: int | None,
+    interval_minutes: int | None,
+) -> int:
+    if interval_minutes is not None:
+        if interval_minutes <= 0:
+            raise ValueError("interval minutes must be positive")
+        return interval_minutes
+    if interval_hours is None:
+        return DEFAULT_INTERVAL_MINUTES
+    if interval_hours <= 0:
+        raise ValueError("interval must be positive")
+    return interval_hours * 60
 
 
 def _derive_cycle_file(
@@ -118,7 +137,8 @@ def run_cycle_gate_with_slp(
     *,
     end: str | None = None,
     hours: int | None = None,
-    interval_hours: int = DEFAULT_INTERVAL_HOURS,
+    interval_hours: int | None = DEFAULT_INTERVAL_HOURS,
+    interval_minutes: int | None = None,
     domain: str = DEFAULT_DOMAIN,
     derived_dir: Path = DEFAULT_DERIVED_DIR,
     allow_validation_gate_only: bool = False,
@@ -130,7 +150,16 @@ def run_cycle_gate_with_slp(
 
     start_time = parse_wrf_time(start)
     end_time = resolve_end_time(start_time, end=end, hours=hours)
-    cycle_ends = cycle_end_times(start_time, end_time, interval_hours)
+    resolved_interval_minutes = _resolve_interval_minutes(
+        interval_hours=interval_hours,
+        interval_minutes=interval_minutes,
+    )
+    cycle_ends = cycle_end_times(
+        start_time,
+        end_time,
+        interval_hours=None,
+        interval_minutes=resolved_interval_minutes,
+    )
 
     derived_reference_dir = derived_dir / "reference"
     derived_candidate_dir = derived_dir / "candidate"
@@ -160,7 +189,8 @@ def run_cycle_gate_with_slp(
         derived_candidate_dir,
         start_time,
         end=end_time,
-        interval_hours=interval_hours,
+        interval_hours=None,
+        interval_minutes=resolved_interval_minutes,
         domain=domain,
         allow_validation_gate_only=allow_validation_gate_only,
     )
@@ -176,7 +206,8 @@ def run_cycle_gate_with_slp(
         derived_candidate_dir=str(derived_candidate_dir),
         start_time=format_wrf_time(start_time),
         end_time=format_wrf_time(end_time),
-        interval_hours=interval_hours,
+        interval_hours=resolved_interval_minutes // 60,
+        interval_minutes=resolved_interval_minutes,
         derivations=derivations,
         gate_status=gate_report.status,
         gate_report=gate_report,
@@ -195,6 +226,7 @@ def report_to_dict(report: CycleGateWithSLPReport) -> dict[str, object]:
             "start_time": report.start_time,
             "end_time": report.end_time,
             "interval_hours": report.interval_hours,
+            "interval_minutes": report.interval_minutes,
             "derivations": [asdict(item) for item in report.derivations],
             "gate_status": report.gate_status,
             "gate_report": gate_report_to_dict(report.gate_report),
@@ -214,6 +246,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end", help="Final cycle end time, for example 2025-07-26_06:00:00")
     parser.add_argument("--hours", type=int, help="Duration from --start to the final cycle end")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_HOURS, help="Cycle interval in hours")
+    parser.add_argument(
+        "--interval-minutes",
+        type=int,
+        help="Cycle interval in minutes; overrides --interval for 10 min progressive validation gates",
+    )
     parser.add_argument("--domain", choices=("d01", "d02"), default=DEFAULT_DOMAIN, help="Domain to gate")
     parser.add_argument(
         "--derived-dir",
@@ -245,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             end=args.end,
             hours=args.hours,
             interval_hours=args.interval,
+            interval_minutes=args.interval_minutes,
             domain=args.domain,
             derived_dir=args.derived_dir,
             allow_validation_gate_only=args.allow_validation_gate_only,

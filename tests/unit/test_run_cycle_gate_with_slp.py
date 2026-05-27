@@ -137,6 +137,29 @@ def test_run_cycle_gate_with_slp_supports_multiple_cycle_endpoints(tmp_path: Pat
     assert payload["gate_report"]["summary"] == {"total": 2, "passed": 2, "failed": 0}
 
 
+def test_run_cycle_gate_with_slp_supports_10_min_interval(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    for end_time in ("2025-07-26_00:10:00", "2025-07-26_00:20:00"):
+        _write_wrfout(reference_dir / f"wrfout_d02_{end_time}")
+        _write_wrfout(candidate_dir / f"wrfout_d02_{end_time}")
+
+    report = run_cycle_gate_with_slp(
+        reference_dir,
+        candidate_dir,
+        START,
+        end="2025-07-26_00:20:00",
+        interval_minutes=10,
+        derived_dir=tmp_path / "derived",
+    )
+    payload = report_to_dict(report)
+
+    assert report.status == "passed"
+    assert payload["interval_minutes"] == 10
+    assert payload["gate_report"]["interval_minutes"] == 10
+    assert payload["gate_report"]["summary"] == {"total": 2, "passed": 2, "failed": 0}
+
+
 def test_run_cycle_gate_with_slp_preserves_metadata_rejection_after_derivation(
     tmp_path: Path,
 ) -> None:

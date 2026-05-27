@@ -42,6 +42,8 @@ def test_build_cycle_plan_resolves_d01_d02_start_and_end_files(tmp_path: Path) -
     assert plan.status == "dry_run"
     assert plan.start_time == "2025-07-26_00:00:00"
     assert plan.end_time == "2025-07-26_06:00:00"
+    assert plan.hours == 6
+    assert plan.minutes == 360
     assert [domain.domain for domain in plan.domains] == ["d01", "d02"]
     assert plan.domains[0].reference_start.endswith("wrfout_d01_2025-07-26_00:00:00")
     assert plan.domains[0].candidate_start.endswith("wrfout_d01_2025-07-26_00:00:00")
@@ -126,6 +128,80 @@ def test_build_baseline_candidate_report_generates_d02_multi_cycle_files(tmp_pat
     with netCDF4.Dataset(candidate_dir / "wrfout_d02_2025-07-26_12:00:00") as dataset:
         assert dataset.getncattr("TYWRF_REFERENCE_COPY") == "false"
         np.testing.assert_array_equal(dataset.variables["PSFC"][:], np.full((1, 2, 2), 99000.0))
+
+
+def test_build_baseline_candidate_report_supports_10_minute_d02_window(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    reference_dir.mkdir()
+    _make_d02_wrfout(
+        reference_dir / "wrfout_d02_2025-07-26_00:00:00",
+        "2025-07-26_00:00:00",
+        100000.0,
+    )
+    _make_d02_wrfout(
+        reference_dir / "wrfout_d02_2025-07-26_00:10:00",
+        "2025-07-26_00:10:00",
+        99900.0,
+    )
+
+    report = build_baseline_candidate_report(
+        reference_dir,
+        candidate_dir,
+        start="2025-07-26_00:00:00",
+        end=None,
+        hours=6,
+        minutes=10,
+        interval_hours=6,
+        domains=("d02",),
+        mode="persistence",
+        variables=("Times", "PSFC"),
+    )
+
+    assert report["cycle_count"] == 1
+    assert report["hours"] == 0
+    assert report["minutes"] == 10
+    assert report["interval_hours"] == 0
+    assert report["interval_minutes"] == 10
+    candidate = report["candidates"][0]
+    assert candidate["candidate"].endswith("wrfout_d02_2025-07-26_00:10:00")
+    assert candidate["hours"] == 0
+    assert candidate["minutes"] == 10
+    assert candidate["integrator_output"] is False
+    assert candidate["reference_copy"] is False
+
+    with netCDF4.Dataset(candidate_dir / "wrfout_d02_2025-07-26_00:10:00") as dataset:
+        assert dataset.getncattr("TYWRF_CYCLE_HOURS") == 0
+        assert dataset.getncattr("TYWRF_CYCLE_MINUTES") == 10
+        assert dataset.getncattr("TYWRF_INTEGRATOR_OUTPUT") == "false"
+
+
+def test_build_baseline_candidate_report_accepts_minute_interval(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    reference_dir.mkdir()
+    for minute, value in ((0, 100000.0), (10, 99000.0), (20, 98000.0)):
+        valid_time = f"2025-07-26_00:{minute:02d}:00"
+        _make_d02_wrfout(reference_dir / f"wrfout_d02_{valid_time}", valid_time, value)
+
+    report = build_baseline_candidate_report(
+        reference_dir,
+        candidate_dir,
+        start="2025-07-26_00:00:00",
+        end="2025-07-26_00:20:00",
+        hours=6,
+        interval_hours=6,
+        interval_minutes=10,
+        domains=("d02",),
+        mode="persistence",
+        variables=("Times", "PSFC"),
+    )
+
+    assert report["cycle_count"] == 2
+    assert [Path(item["candidate"]).name for item in report["candidates"]] == [
+        "wrfout_d02_2025-07-26_00:10:00",
+        "wrfout_d02_2025-07-26_00:20:00",
+    ]
 
 
 def test_cycle_main_reference_copy_writes_metadata_json(tmp_path: Path) -> None:
