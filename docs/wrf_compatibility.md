@@ -485,15 +485,58 @@ output/diagnostic gaps are that accepted sea-level pressure is unavailable,
 `U10` is absent in the v0 smoke output, and Vmax/MSLP diagnostics therefore
 cannot yet close the full strict d02 gate.
 
-Round D36 should keep the same compatibility boundary while improving the
-candidate. Preserve near-surface and core cycle-start fields where they are
-non-oracle and physically preferable to dropping variables from the output.
-Investigate the exact input and metadata requirements of
-`run_cycle_gate_with_slp.py`, especially how derived `SLP` is staged without
-falling back to a `PSFC` proxy. Evaluate pressure-refresh integration only if
-it consumes start-state/provider metadata and remains a real producer for the
-candidate field; it must not become a diagnostic shortcut or use
-reference-end truth to lower `P` RMSE.
+Round D36 kept the same compatibility boundary and improved output
+completeness; it did not produce a strict-gate pass. Commit `7d8d37c`
+(`Preserve selected-field diagnostic outputs`) makes `selected_field_cycle`
+write the strict d02 fields plus available cycle-start-backed `PB`, `PHB`,
+`MUB`, `PSFC`, `U10`, `V10`, `T2`, `Q2`, `RAINC`, and `RAINNC` by default.
+This is plumbing/output completeness work so validation tools can see the
+candidate shape and near-surface diagnostic variables instead of failing early
+on missing files or missing variables.
+
+The D36 real KROSA gate still fails. The strict first failure remains `U`
+normalized RMSE `0.117875`; `V` normalized RMSE `0.134244`, `MU` normalized
+RMSE `0.133382`, and `P` normalized RMSE `0.907405` also fail. `T`, `PH`, and
+`QVAPOR` pass. TC diagnostics report storm-center error `150.622 km` failed,
+minimum SLP error `0.364 hPa` passed after derived SLP staging, and Vmax error
+`0.769 m s-1` passed. The `U10`/`V10` field comparisons are still failed
+because these variables are preserved cycle-start fields, not outputs from a
+real surface-diagnostics producer.
+
+Positive selected-field metadata remains exclusive to the non-oracle
+`selected_field_cycle` candidate path. It must not be copied onto or used to
+legitimize diagnostic closures, diagnostic pressure-refresh artifacts,
+diagnostic remap outputs, reference-copy/oracle outputs, derived SLP/rainfall
+side products, or report-only files. Metadata or helper telemetry attached to
+those artifacts is compatibility context only and must not override the
+candidate file's own gate metadata.
+
+Round D37 pressure-refresh work, if enabled, is opt-in and must consume only
+cycle-start or provider-backed inputs. Missing, shape-incompatible, non-finite,
+or reference-end-derived pressure-refresh inputs must abort the candidate
+generation or diagnostic request; they must not silently fall back to
+start/end deltas, later restart truth, `PSFC` pressure shortcuts, or helper
+telemetry that marks the candidate as successful. Helper reports may describe
+provider, staging, and compute status, but they cannot cover or rewrite
+candidate NetCDF metadata.
+
+The D37 real KROSA opt-in smoke confirms the plumbing but not the numerics.
+`selected_field_cycle --pressure-refresh` generated a positive-metadata
+candidate from d01/d02 `00:00` start state and d02 `00:00` template metadata,
+with provider, staging, and compute all reporting success and `1,053,150`
+changed `P` points. The strict gate still failed, and `P` worsened from the
+D36 normalized RMSE `0.907405` to `5.806413`. `U`, `V`, and `MU` remained
+failed, while `T`, `PH`, and `QVAPOR` remained passed. This opt-in path must
+therefore stay off by default until provider/base-state/static consistency is
+fixed.
+
+The remaining compatibility blockers are real numerical producers, not
+metadata gaps: moving-nest static/coordinate handling for the shifted d02
+domain, pressure refresh as a real candidate producer, and surface diagnostics
+for `U10`, `V10`, `T2`, `Q2`, and related fields. D37 and later work must not
+use `00:10` reference-end static or coordinate truth, best-track nudging, an
+SLP shortcut, or a `U10`/`V10` proxy shortcut to make those blockers appear
+closed.
 
 ## Physics Bridge Compatibility Notes
 

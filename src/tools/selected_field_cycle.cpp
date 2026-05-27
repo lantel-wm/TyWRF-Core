@@ -1,4 +1,6 @@
+#include "tywrf/dynamics/pressure_refresh_hook.hpp"
 #include "tywrf/io/wrf_state_io.hpp"
+#include "tywrf/io/pressure_refresh_io.hpp"
 #include "tywrf/nest/parent_child_interpolation.hpp"
 #include "tywrf/nest/state_exchange.hpp"
 #include "tywrf/nest/state_remap.hpp"
@@ -64,6 +66,7 @@ struct Options {
   tywrf::nest::ParentChildPosition to_parent_start;
   bool has_from_parent_start = false;
   bool has_to_parent_start = false;
+  bool pressure_refresh = false;
   bool pretty = false;
   std::vector<std::string> variables;
 };
@@ -76,8 +79,13 @@ struct Resolution {
 struct CandidateReport {
   std::uint64_t changed_selected_points = 0;
   tywrf::nest::ChildStateRemapReport remap;
+  tywrf::nest::RemapPlan remap_plan;
   tywrf::nest::StateExchangePlan exchange;
   tywrf::nest::ParentChildInterpolationReport interpolation;
+  std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh;
+  std::filesystem::path pressure_refresh_metadata_source;
+  std::size_t pressure_refresh_metadata_time_index = 0;
+  std::uint64_t pressure_refresh_changed_p_points = 0;
 };
 
 class NetcdfHandle {
@@ -133,6 +141,8 @@ Options:
   --output-time-index N          Time index written in --output; default 0.
   --variables A,B,C              Output variables; default strict fields, Times/XLAT/XLONG/HGT,
                                   plus available d02 PB/PHB/MUB/PSFC/U10/V10/T2/Q2/RAINC/RAINNC.
+  --pressure-refresh             Opt in to provider-backed KROSA pressure refresh for exposed d02
+                                  mass cells using --template metadata before writing output.
   --pretty                       Pretty-print JSON report.
   --help                         Show this help.
 
@@ -258,6 +268,8 @@ selected-field integrator candidate, not a WRF-exact physics result.
       options.output_time_index = parse_size(require_value(arg), arg);
     } else if (arg == "--variables") {
       options.variables = split_variables(require_value(arg));
+    } else if (arg == "--pressure-refresh") {
+      options.pressure_refresh = true;
     } else if (arg == "--pretty") {
       options.pretty = true;
     } else {
@@ -456,8 +468,10 @@ void require_path_exists(const std::filesystem::path& path, const std::string_vi
   }
 }
 
-template <typename Storage>
-[[nodiscard]] std::uint64_t changed_points(const Storage& before, const Storage& after) {
+template <typename BeforeStorage, typename AfterStorage>
+[[nodiscard]] std::uint64_t changed_points(
+    const BeforeStorage& before,
+    const AfterStorage& after) {
   if (before.size() != after.size()) {
     throw std::runtime_error("storage size mismatch while checking selected-field changes");
   }
@@ -494,6 +508,79 @@ void require_finite_strict_fields(const tywrf::State<float>& state) {
   require_finite_storage("QVAPOR", state.qvapor);
 }
 
+[[nodiscard]] std::string join_variables(const std::vector<std::string>& variables);
+
+void require_pressure_refresh_inputs_ready(
+    const tywrf::io::KrosaPressureRefreshReadResult& inputs) {
+  if (inputs.ok() || inputs.base_state_reconstruction_inputs_ready()) {
+    return;
+  }
+
+  std::ostringstream message;
+  message << "pressure refresh metadata source is not ready for provider-backed selected-field "
+             "candidate";
+  if (!inputs.report.missing_names.empty()) {
+    message << "; missing direct inputs=" << join_variables(inputs.report.missing_names);
+  }
+  if (!inputs.report.missing_base_state_reconstruction_names.empty()) {
+    message << "; missing provider inputs="
+            << join_variables(inputs.report.missing_base_state_reconstruction_names);
+  }
+  throw std::runtime_error(message.str());
+}
+
+void require_pressure_refresh_hook_success(
+    const tywrf::dynamics::KrosaPressureRefreshHookReport& report) {
+  if (report.ok() && report.provider_ok && report.staging_ok &&
+      report.calls_pressure_refresh_compute && report.pressure_refresh_applied &&
+      !report.touched_overlap_cells && !report.touched_halo_cells) {
+    return;
+  }
+
+  std::ostringstream message;
+  message << "selected-field pressure refresh hook failed";
+  if (report.result.message != nullptr && report.result.message[0] != '\0') {
+    message << ": " << report.result.message;
+  }
+  message << " provider_ok=" << (report.provider_ok ? "true" : "false")
+          << " staging_ok=" << (report.staging_ok ? "true" : "false")
+          << " compute_called=" << (report.calls_pressure_refresh_compute ? "true" : "false")
+          << " applied=" << (report.pressure_refresh_applied ? "true" : "false")
+          << " touched_overlap=" << (report.touched_overlap_cells ? "true" : "false")
+          << " touched_halo=" << (report.touched_halo_cells ? "true" : "false");
+  throw std::runtime_error(message.str());
+}
+
+void apply_pressure_refresh(
+    const Options& options,
+    tywrf::State<float>& candidate,
+    CandidateReport& report) {
+  tywrf::FieldStorage3D<float> direct_alb(candidate.grid.mass_layout());
+  const auto metadata = tywrf::io::read_krosa_pressure_refresh_inputs(
+      options.template_path,
+      candidate.grid,
+      direct_alb,
+      {.time_index = options.template_time_index});
+  require_pressure_refresh_inputs_ready(metadata);
+
+  const std::vector<float> p_before(
+      candidate.p.data(), candidate.p.data() + candidate.p.size());
+  auto hook_report = tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+      report.remap_plan,
+      candidate,
+      metadata.metadata);
+  require_pressure_refresh_hook_success(hook_report);
+  require_finite_strict_fields(candidate);
+
+  report.pressure_refresh_changed_p_points = changed_points(p_before, candidate.p);
+  if (report.pressure_refresh_changed_p_points == 0) {
+    throw std::runtime_error("selected-field pressure refresh did not change any P point");
+  }
+  report.pressure_refresh_metadata_source = options.template_path;
+  report.pressure_refresh_metadata_time_index = options.template_time_index;
+  report.pressure_refresh = hook_report;
+}
+
 [[nodiscard]] CandidateReport build_candidate_state(
     const tywrf::nest::ParentChildDescriptor& descriptor,
     const Options& options,
@@ -518,6 +605,7 @@ void require_finite_strict_fields(const tywrf::State<float>& state) {
 
   candidate = d02_start;
   CandidateReport report;
+  report.remap_plan = remap_plan;
   report.remap = tywrf::nest::remap_child_state_overlap_only(remap_plan, d02_start, candidate);
   if (!report.remap.ok()) {
     throw std::runtime_error("failed to remap d02 overlap: " + std::string(report.remap.result.message));
@@ -628,6 +716,44 @@ void stamp_gate_metadata(
       file,
       "TYWRF_INTERPOLATED_POINTS",
       static_cast<double>(report.interpolation.interpolated_point_count));
+  if (report.pressure_refresh.has_value()) {
+    const auto& pressure = *report.pressure_refresh;
+    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_OPT_IN", "true");
+    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_APPLIED", "true");
+    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS", "applied_to_candidate");
+    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_PROVIDER_OK", "true");
+    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_STAGING_OK", "true");
+    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED", "true");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE",
+        report.pressure_refresh_metadata_source.string());
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX",
+        static_cast<double>(report.pressure_refresh_metadata_time_index));
+    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_HELPER_NAME", "refresh_krosa_moving_nest_pressure");
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS",
+        static_cast<double>(pressure.synced_pb_point_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS",
+        static_cast<double>(pressure.synced_mub_point_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS",
+        static_cast<double>(pressure.synced_phb_point_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS",
+        static_cast<double>(pressure.compute_report.refreshed_point_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS",
+        static_cast<double>(report.pressure_refresh_changed_p_points));
+  }
   write_text_attr(
       file,
       "TYWRF_CANDIDATE_MESSAGE",
@@ -737,8 +863,40 @@ void print_report(
       std::cout,
       "interpolated_points",
       static_cast<double>(report.interpolation.interpolated_point_count),
-      false,
+      report.pressure_refresh.has_value(),
       pretty);
+  if (report.pressure_refresh.has_value()) {
+    const auto& pressure = *report.pressure_refresh;
+    write_json_bool(std::cout, "pressure_refresh_opt_in", true, true, pretty);
+    write_json_bool(std::cout, "pressure_refresh_applied", true, true, pretty);
+    write_json_bool(std::cout, "pressure_refresh_provider_ok", true, true, pretty);
+    write_json_bool(std::cout, "pressure_refresh_staging_ok", true, true, pretty);
+    write_json_bool(std::cout, "pressure_refresh_compute_called", true, true, pretty);
+    write_json_string(
+        std::cout,
+        "pressure_refresh_metadata_source",
+        report.pressure_refresh_metadata_source.string(),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_metadata_time_index",
+        static_cast<double>(report.pressure_refresh_metadata_time_index),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_refreshed_p_points",
+        static_cast<double>(pressure.compute_report.refreshed_point_count),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_changed_p_points",
+        static_cast<double>(report.pressure_refresh_changed_p_points),
+        false,
+        pretty);
+  }
   std::cout << "}" << (pretty ? "\n" : "\n");
 }
 
@@ -780,7 +938,10 @@ int run(Options options) {
   require_finite_strict_fields(d02_start);
 
   tywrf::State<float> candidate(d02_grid);
-  const auto report = build_candidate_state(descriptor, options, d01_start, d02_start, candidate);
+  auto report = build_candidate_state(descriptor, options, d01_start, d02_start, candidate);
+  if (options.pressure_refresh) {
+    apply_pressure_refresh(options, candidate, report);
+  }
 
   tywrf::io::write_wrf_state(
       options.output_path,

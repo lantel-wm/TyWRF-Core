@@ -112,6 +112,15 @@ void put_2d_linear(
   check_nc(nc_put_vara_float(file_id, variable_id, start, count, values.data()), "write 2D var");
 }
 
+void put_time_vector(
+    const int file_id,
+    const int variable_id,
+    const std::vector<float>& values) {
+  const std::size_t start[2] = {0, 0};
+  const std::size_t count[2] = {1, values.size()};
+  check_nc(nc_put_vara_float(file_id, variable_id, start, count, values.data()), "write vector");
+}
+
 struct FixtureShape {
   int mass_nx = 0;
   int mass_ny = 0;
@@ -201,11 +210,16 @@ void create_wrf_fixture(
     const FixtureShape shape,
     const bool state_fields,
     const bool parent_values,
-    const bool optional_state_fields = false) {
+    const bool optional_state_fields = false,
+    const bool pressure_refresh_metadata = false) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create fixture");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DY", NC_DOUBLE, 1, &dx), "write DY");
+  if (pressure_refresh_metadata) {
+    const float p_top = 5'000.0F;
+    check_nc(nc_put_att_float(file_id, NC_GLOBAL, "P_TOP", NC_FLOAT, 1, &p_top), "write P_TOP");
+  }
 
   int time_dim = -1;
   int date_str_len_dim = -1;
@@ -245,12 +259,28 @@ void create_wrf_fixture(
       south_north_stag_dim,
       west_east_dim,
       west_east_stag_dim);
+  int c3f = -1;
+  int c4f = -1;
+  int c3h = -1;
+  int c4h = -1;
+  if (pressure_refresh_metadata) {
+    const int full_dims[2] = {time_dim, bottom_top_stag_dim};
+    const int mass_dims[2] = {time_dim, bottom_top_dim};
+    check_nc(nc_def_var(file_id, "C3F", NC_FLOAT, 2, full_dims, &c3f), "define C3F");
+    check_nc(nc_def_var(file_id, "C4F", NC_FLOAT, 2, full_dims, &c4f), "define C4F");
+    check_nc(nc_def_var(file_id, "C3H", NC_FLOAT, 2, mass_dims, &c3h), "define C3H");
+    check_nc(nc_def_var(file_id, "C4H", NC_FLOAT, 2, mass_dims, &c4h), "define C4H");
+  }
   check_nc(nc_enddef(file_id), "end definitions");
 
   put_times(file_id, vars.times, state_fields ? kCycleStart : kTenMinuteEnd);
   put_2d_linear(file_id, vars.xlat, shape.mass_ny, shape.mass_nx, 40'000.0F, 1.0F, 10.0F);
   put_2d_linear(file_id, vars.xlong, shape.mass_ny, shape.mass_nx, 50'000.0F, 1.0F, 10.0F);
-  put_2d_linear(file_id, vars.hgt, shape.mass_ny, shape.mass_nx, 60'000.0F, 1.0F, 10.0F);
+  if (pressure_refresh_metadata) {
+    put_2d_linear(file_id, vars.hgt, shape.mass_ny, shape.mass_nx, 20.0F, 1.0F, 5.0F);
+  } else {
+    put_2d_linear(file_id, vars.hgt, shape.mass_ny, shape.mass_nx, 60'000.0F, 1.0F, 10.0F);
+  }
   if (state_fields) {
     if (parent_values) {
       put_3d_linear(file_id, vars.u, shape.mass_nz, shape.mass_ny, shape.mass_nx + 1, 1'000.0F, 7.0F, 13.0F, 101.0F);
@@ -281,6 +311,12 @@ void create_wrf_fixture(
       put_2d_linear(file_id, vars.rainc, shape.mass_ny, shape.mass_nx, 160'000.0F, 1.0F, 10.0F);
       put_2d_linear(file_id, vars.rainnc, shape.mass_ny, shape.mass_nx, 170'000.0F, 1.0F, 10.0F);
     }
+  }
+  if (pressure_refresh_metadata) {
+    put_time_vector(file_id, c3f, {1.0F, 0.5F, 0.0F});
+    put_time_vector(file_id, c4f, {0.0F, 0.0F, 0.0F});
+    put_time_vector(file_id, c3h, {0.75F, 0.25F});
+    put_time_vector(file_id, c4h, {0.0F, 0.0F});
   }
   check_nc(nc_close(file_id), "close fixture");
 }
@@ -403,7 +439,10 @@ void expect_close(const float actual, const float expected, const std::string_vi
   return false;
 }
 
-void assert_successful_candidate(const std::filesystem::path& output) {
+void assert_successful_candidate(
+    const std::filesystem::path& output,
+    const bool pressure_refresh = false,
+    const std::filesystem::path& pressure_refresh_metadata_source = {}) {
   int file_id = -1;
   check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open output");
   assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") == "true");
@@ -417,6 +456,22 @@ void assert_successful_candidate(const std::filesystem::path& output) {
   assert(read_double_attr(file_id, "TYWRF_PARENT_GRID_RATIO") == 5.0);
   assert(read_double_attr(file_id, "TYWRF_SELECTED_FIELD_CHANGED_POINTS") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_INTERPOLATED_POINTS") > 0.0);
+  if (pressure_refresh) {
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_PROVIDER_OK") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_STAGING_OK") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE") == pressure_refresh_metadata_source.string());
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS") > 0.0);
+  } else {
+    assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
+    assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
+  }
   const auto state_variables = read_text_attr(file_id, "TYWRF_STATE_VARIABLES");
   assert(contains_csv_value(state_variables, "PB"));
   assert(contains_csv_value(state_variables, "PHB"));
@@ -440,10 +495,29 @@ void assert_successful_candidate(const std::filesystem::path& output) {
 
   expect_close(read_3d_value(file_id, "T", 1, 9, 9), linear_3d(1, 9, 9, 30'000.0F, 1.0F, 10.0F, 100.0F), "T preserved exposed");
   expect_close(read_3d_value(file_id, "PH", 2, 9, 9), linear_3d(2, 9, 9, 40'000.0F, 1.0F, 10.0F, 100.0F), "PH preserved exposed");
-  expect_close(read_3d_value(file_id, "P", 1, 9, 9), linear_3d(1, 9, 9, 60'000.0F, 1.0F, 10.0F, 100.0F), "P preserved exposed");
-  expect_close(read_3d_value(file_id, "PB", 1, 9, 9), linear_3d(1, 9, 9, 80'000.0F, 1.0F, 10.0F, 100.0F), "PB preserved");
-  expect_close(read_3d_value(file_id, "PHB", 2, 9, 9), linear_3d(2, 9, 9, 90'000.0F, 1.0F, 10.0F, 100.0F), "PHB preserved");
-  expect_close(read_2d_value(file_id, "MUB", 9, 9), linear_2d(9, 9, 100'000.0F, 1.0F, 10.0F), "MUB preserved");
+  const auto preserved_exposed_p = linear_3d(1, 9, 9, 60'000.0F, 1.0F, 10.0F, 100.0F);
+  if (pressure_refresh) {
+    const auto refreshed_p = read_3d_value(file_id, "P", 1, 9, 9);
+    assert(std::isfinite(refreshed_p));
+    assert(std::fabs(refreshed_p - preserved_exposed_p) > kTolerance);
+  } else {
+    expect_close(read_3d_value(file_id, "P", 1, 9, 9), preserved_exposed_p, "P preserved exposed");
+  }
+  const auto preserved_pb = linear_3d(1, 9, 9, 80'000.0F, 1.0F, 10.0F, 100.0F);
+  const auto preserved_phb = linear_3d(2, 9, 9, 90'000.0F, 1.0F, 10.0F, 100.0F);
+  const auto preserved_mub = linear_2d(9, 9, 100'000.0F, 1.0F, 10.0F);
+  if (pressure_refresh) {
+    assert(std::isfinite(read_3d_value(file_id, "PB", 1, 9, 9)));
+    assert(std::fabs(read_3d_value(file_id, "PB", 1, 9, 9) - preserved_pb) > kTolerance);
+    assert(std::isfinite(read_3d_value(file_id, "PHB", 2, 9, 9)));
+    assert(std::fabs(read_3d_value(file_id, "PHB", 2, 9, 9) - preserved_phb) > kTolerance);
+    assert(std::isfinite(read_2d_value(file_id, "MUB", 9, 9)));
+    assert(std::fabs(read_2d_value(file_id, "MUB", 9, 9) - preserved_mub) > kTolerance);
+  } else {
+    expect_close(read_3d_value(file_id, "PB", 1, 9, 9), preserved_pb, "PB preserved");
+    expect_close(read_3d_value(file_id, "PHB", 2, 9, 9), preserved_phb, "PHB preserved");
+    expect_close(read_2d_value(file_id, "MUB", 9, 9), preserved_mub, "MUB preserved");
+  }
   expect_close(read_2d_value(file_id, "PSFC", 9, 9), linear_2d(9, 9, 110'000.0F, 1.0F, 10.0F), "PSFC preserved");
   expect_close(read_2d_value(file_id, "U10", 9, 9), linear_2d(9, 9, 120'000.0F, 1.0F, 10.0F), "U10 preserved");
   expect_close(read_2d_value(file_id, "V10", 9, 9), linear_2d(9, 9, 130'000.0F, 1.0F, 10.0F), "V10 preserved");
@@ -525,13 +599,37 @@ int main(const int argc, char** argv) {
     const auto d01_start = root / "wrfout_d01_2025-07-26_00:00:00";
     const auto d02_start = root / "wrfout_d02_2025-07-26_00:00:00";
     const auto template_path = root / "wrfout_d02_template";
+    const auto pressure_template_path = root / "wrfout_d02_pressure_template";
     const auto output = root / "tywrf_selected_field_d02_2025-07-26_00:10:00";
+    const auto pressure_output =
+        root / "tywrf_selected_field_pressure_d02_2025-07-26_00:10:00";
+    const auto missing_pressure_output =
+        root / "tywrf_selected_field_missing_pressure_d02_2025-07-26_00:10:00";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
     create_wrf_fixture(d02_start, 2000.0, FixtureShape{10, 10}, true, false, true);
     create_wrf_fixture(template_path, 2000.0, FixtureShape{10, 10}, false, false);
+    create_wrf_fixture(
+        pressure_template_path,
+        2000.0,
+        FixtureShape{10, 10},
+        false,
+        false,
+        false,
+        true);
 
     run_command(base_command(executable, d01_start, d02_start, template_path, output));
     assert_successful_candidate(output);
+
+    run_command(
+        base_command(executable, d01_start, d02_start, pressure_template_path, pressure_output) +
+        " --pressure-refresh");
+    assert_successful_candidate(pressure_output, true, pressure_template_path);
+
+    const auto missing_pressure_status = run_command_status(
+        base_command(executable, d01_start, d02_start, template_path, missing_pressure_output) +
+        " --pressure-refresh >/dev/null 2>&1");
+    assert(missing_pressure_status != 0);
+    assert(!std::filesystem::exists(missing_pressure_output));
     run_rejection_tests(executable, d01_start, d02_start, template_path, root);
 
     std::filesystem::remove_all(root);

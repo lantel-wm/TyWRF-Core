@@ -353,24 +353,69 @@ The strict field arrays had full finite coverage. The first failing field is
 `0.907405` is the largest blocker. `T`, `PH`, and `QVAPOR` pass their strict
 thresholds. This remains a failed gate and must be reported as such.
 
-The remaining diagnostic/output gaps are separate from the field RMSE result:
-an accepted `SLP`/MSLP variable is unavailable, `U10` is currently absent in
-the v0 smoke output, and therefore the full MSLP/storm-center/Vmax portions of
-the strict d02 gate are still incomplete. The lack of SLP must not be hidden by
-a `PSFC` proxy, and missing `U10` must remain a hard output gap for Vmax10m
-diagnostics.
+The remaining diagnostic/output gaps after D35 were separate from the field
+RMSE result: accepted `SLP`/MSLP was unavailable, `U10` was absent in the v0
+smoke output, and the full MSLP/storm-center/Vmax portions of the strict d02
+gate were incomplete. The lack of SLP must not be hidden by a `PSFC` proxy, and
+missing or start-state-only 10 m winds must remain hard output/producer gaps
+for Vmax10m diagnostics.
 
-Round D36 validation priorities are:
+Round D36 validation status is a plumbing/output completeness improvement, not
+a gate pass. Commit `7d8d37c` makes `selected_field_cycle` default output cover
+the strict fields plus available cycle-start-backed `PB`, `PHB`, `MUB`,
+`PSFC`, `U10`, `V10`, `T2`, `Q2`, `RAINC`, and `RAINNC`. Metadata and derived
+SLP/rainfall side artifacts no longer block report generation by themselves,
+but the real KROSA gate still fails numerically and diagnostically.
 
-- preserve near-surface and core start fields where they are non-oracle and
-  needed for gate diagnostics or `derive_mslp.py`;
-- inspect `run_cycle_gate_with_slp.py` requirements for candidate variables,
-  metadata, derived-output locations, and failure modes before changing the
-  candidate writer;
-- evaluate pressure-refresh integration only as a start-state/provider-backed
-  candidate producer. It may use KROSA provider metadata and staged start-state
-  fields, but it must not use reference-end fields, diagnostic closure output,
-  or any shortcut whose purpose is only to make SLP/P diagnostics pass.
+The D36 strict field result at `2025-07-26_00:10:00` is:
+
+- failed first field: `U`, normalized RMSE `0.117875`;
+- additional failed strict fields: `V` `0.134244`, `MU` `0.133382`, and `P`
+  `0.907405`;
+- passed strict fields: `T`, `PH`, and `QVAPOR`.
+
+The D36 TC diagnostic result is:
+
+- storm center error `150.622 km`, failed against the `20 km` threshold;
+- minimum SLP error `0.364 hPa`, passed against the `5 hPa` threshold;
+- Vmax error `0.769 m s-1`, passed against the `5 m s-1` threshold.
+
+`U10` and `V10` comparisons still fail as field comparisons because those
+variables are preserved cycle-start values, not outputs from a real surface
+diagnostics producer. This distinction must remain visible in validation
+reports: a passing Vmax diagnostic from preserved fields does not close the
+surface-diagnostics producer blocker.
+
+Positive selected-field candidate metadata may be used only for the
+non-oracle `selected_field_cycle` candidate file. It cannot be transferred to
+diagnostic closure files, diagnostic pressure-refresh files, remap-only
+outputs, derived SLP copies, derived rainfall copies, report JSON, oracle
+outputs, reference-copy outputs, or any artifact using reference-end truth.
+Default gate tooling must continue to evaluate the candidate's own metadata
+and candidate kind; helper telemetry cannot override or repair missing,
+negative, or incompatible candidate metadata.
+
+Round D37 pressure-refresh validation work is opt-in and must be
+cycle-start/provider-backed. If any required pressure-refresh input is missing,
+shape-incompatible, non-finite, from `00:10` reference-end truth, or otherwise
+not provider-backed for the same domain and cycle-start context, the run must
+abort. It must not fall back to a diagnostic closure, a `PSFC`/SLP proxy, WRF
+end-state deltas, later restart truth, or metadata-only success.
+
+The first D37 real KROSA opt-in smoke is a negative numerical result. The
+candidate generated successfully with `--pressure-refresh`, provider/staging
+and pressure compute reported success, and `1,053,150` `P` points changed.
+However, the `00:10` strict gate still failed and `P` normalized RMSE worsened
+to `5.806413`; D36 without opt-in was `0.907405`. `U`, `V`, and `MU` remained
+failed, `T`, `PH`, and `QVAPOR` remained passed, storm-center error remained
+`150.622 km`, and MSLP/Vmax still passed. Treat this as safe opt-in plumbing
+plus a provider/static consistency diagnostic, not as a validation improvement.
+
+Moving-nest static/coordinate production and surface diagnostics are now
+explicit validation blockers. Validation must not use `00:10` reference-end
+`XLAT`, `XLONG`, `HGT`, or other static/coordinate fields as oracle truth for
+the shifted d02 candidate, and must not use SLP or `U10` shortcuts to bypass
+the missing real producers.
 
 Example:
 
