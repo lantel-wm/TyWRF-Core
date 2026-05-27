@@ -774,6 +774,33 @@ gate fails, the report must identify the first failed field or TC diagnostic
 and the sequence must stop; no `00:20` validation is allowed until `00:10`
 passes.
 
+Round D54 records the post-D53 validation state. D53 moved the normal
+`selected_field_cycle --pressure-refresh` path from fail-closed to
+gate-eligible only when strict same-artifact readiness and transactional apply
+evidence pass. That promotion means the candidate may enter the strict gate; it
+does not mean the gate passed.
+
+The D53 real KROSA d02 `2025-07-26_00:10:00` gate failed after candidate
+metadata passed. The first failed field was `U` with normalized RMSE
+`0.117875`. Additional strict field failures were `V` `0.134244`, `MU`
+`0.133382`, and `P` `6.33495`. Passing strict fields were `T` `0.013121`,
+`PH` `0.017410`, and `QVAPOR` `0.017017`. TC diagnostics still failed storm
+center distance at `43.483 km`; minimum SLP error `0.364 hPa` and Vmax error
+`0.769 m s-1` passed.
+
+D54 validation work must therefore diagnose the `U` first failure and the
+pressure-refresh numerical `P` error before any `00:20` progression. Passing
+pressure-refresh apply contracts, terrain parity, mutation audits, or report
+count parity is not enough: candidate `P` must show numerical compatibility
+against the `00:10` WRF reference through the normal strict gate.
+
+Audit tools and diagnostic reports may explain reference coverage, metadata
+eligibility, candidate provenance, and failed metrics, but they are
+diagnostic-only. They must not generate candidates, repair candidate metadata,
+or replace `cycle_gate.py` evidence. The hidden
+`--experimental-pressure-refresh-apply` seam remains diagnostic-only,
+non-gate, and non-integrator output.
+
 Example:
 
 ```bash
@@ -861,7 +888,8 @@ records `PSFC` separately as a pressure proxy. The report includes
 `available_pressure_proxy_candidates`, and `cycle_count`; use `--format table`
 for a compact terminal summary. `--interval-minutes` can audit alternate minute
 cadences, while `--interval-hours` remains available for older 6 h coverage
-checks.
+checks. This tool is diagnostic-only: it audits reference/candidate coverage and
+does not produce gate candidates or supply gate-pass evidence.
 
 `tools/baseline_candidate.py` generates explicitly marked baseline candidate
 `wrfout` files without running a TyWRF-Core integrator. `persistence` copies

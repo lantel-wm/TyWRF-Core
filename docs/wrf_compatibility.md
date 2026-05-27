@@ -957,6 +957,37 @@ evidence. The first real validation after D53 must still be the progressive
 `2025-07-26_00:10:00` gate; if it fails, reports must name the first failed
 field or diagnostic and must not advance to `00:20`.
 
+## Round D54 Post-D53 Compatibility State
+
+D53 promoted the normal `selected_field_cycle --pressure-refresh` path from a
+fail-closed guard to gate-eligible output only under strict readiness:
+start-state static refresh, `moved_candidate_HGT` provider terrain, passing
+base-state and pressure dry-runs, clean overlap/halo/invalid/skipped checks,
+and successful transactional apply for the same candidate. This is a
+compatibility eligibility state, not WRF numerical compatibility.
+
+The D53 real KROSA d02 `2025-07-26_00:10:00` gate failed after candidate
+metadata passed. The first failed field was `U` normalized RMSE `0.117875`;
+`V` `0.134244`, `MU` `0.133382`, and pressure-refresh `P` `6.33495` also
+failed. `T` `0.013121`, `PH` `0.017410`, and `QVAPOR` `0.017017` passed.
+Storm-center distance remained failed at `43.483 km`, while minimum SLP error
+`0.364 hPa` and Vmax error `0.769 m s-1` passed.
+
+D54 compatibility work must keep the path stopped at `00:10`. The next
+candidate-facing work is diagnosis of the `U` first failure and the numerical
+`P` pressure-refresh error; no `00:20` progression is compatible until the
+normal strict `00:10` gate passes. Passing apply contracts, moved-terrain
+parity, or report-count parity only proves readiness plumbing. It does not
+show WRF-compatible pressure until `P` is compared numerically against the
+`00:10` WRF reference and meets the gate threshold.
+
+Audit reports are compatibility diagnostics only. They may describe metadata,
+reference coverage, provenance, changed fields, or why the gate failed, but
+they must not produce candidates, repair a candidate into gate eligibility, or
+substitute for strict-gate evidence. The hidden
+`--experimental-pressure-refresh-apply` seam remains diagnostic-only,
+non-gate, and non-integrator output.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

@@ -612,6 +612,29 @@ Round D53 keeps strict normal pressure-refresh promotion outside closure scope:
   provider substitutes, direct parent interpolation of `P`, diagnostic/probe/
   hidden artifacts, and any readiness telemetry presented as gate evidence.
 
+Round D54 records the post-D53 failure boundary:
+
+- D53 moved normal `selected_field_cycle --pressure-refresh` from fail-closed
+  to gate-eligible only under strict same-artifact readiness and transactional
+  apply. That is not a closure success and not a validation pass.
+- The D53 real KROSA d02 `2025-07-26_00:10:00` gate failed after metadata
+  passed. First failure was `U` normalized RMSE `0.117875`; `V` `0.134244`,
+  `MU` `0.133382`, and `P` `6.33495` also failed. `T` `0.013121`, `PH`
+  `0.017410`, and `QVAPOR` `0.017017` passed. Storm-center error
+  `43.483 km` failed; minimum SLP error `0.364 hPa` and Vmax error
+  `0.769 m s-1` passed.
+- D54 must diagnose the `U` first failure and the pressure-refresh numerical
+  `P` error before any `00:20` progression. A closure must not patch `U`, `V`,
+  `MU`, `P`, or storm center, and must not reinterpret pressure-refresh apply
+  contract/parity as WRF-compatible `P`.
+- Audit tools and diagnostic reports are observation-only. They may explain
+  metadata eligibility, provenance, changed fields, or failures, but they must
+  not produce candidates, repair metadata, or count as gate evidence.
+- The hidden `--experimental-pressure-refresh-apply` seam remains
+  diagnostic-only, non-gate, and non-integrator output. Its reports and
+  metadata cannot be converted into closure evidence, candidate evidence, or a
+  `00:10` gate pass.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

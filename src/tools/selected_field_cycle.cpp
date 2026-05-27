@@ -118,6 +118,10 @@ struct StaticFieldSet {
   tywrf::FieldStorage2D<float> hgt;
 };
 
+[[nodiscard]] const char* bool_text(const bool value) noexcept {
+  return value ? "true" : "false";
+}
+
 [[nodiscard]] tywrf::dynamics::KrosaBaseStateProviderTerrainOverride
 make_moved_candidate_hgt_terrain_override(const StaticFieldSet& output_static) {
   return {
@@ -690,6 +694,7 @@ struct PressureRefreshReadiness {
   bool pressure_compute_dry_run_ok = false;
   std::uint64_t would_refresh_p_point_count = 0;
   std::uint64_t dry_run_invalid_p_point_count = 0;
+  std::uint64_t dry_run_skipped_p_point_count = 0;
   std::uint64_t pressure_compute_dry_run_report_target_column_count = 0;
   std::uint64_t pressure_compute_dry_run_report_refreshed_point_count = 0;
   std::uint64_t pressure_compute_dry_run_report_invalid_point_count = 0;
@@ -712,6 +717,7 @@ struct PressureRefreshReadiness {
            pressure_compute_dry_run && pressure_compute_dry_run_called &&
            pressure_compute_dry_run_ok && would_refresh_p_point_count > 0 &&
            dry_run_invalid_p_point_count == 0 &&
+           dry_run_skipped_p_point_count == 0 &&
            pressure_compute_dry_run_report_target_column_count > 0 &&
            pressure_compute_dry_run_report_refreshed_point_count ==
                would_refresh_p_point_count &&
@@ -761,6 +767,8 @@ struct PressureRefreshReadiness {
     readiness.would_refresh_p_point_count = dry_run.would_refresh_p_point_count;
     readiness.dry_run_invalid_p_point_count =
         dry_run.dry_run_invalid_p_point_count;
+    readiness.dry_run_skipped_p_point_count =
+        dry_run.pressure_compute_dry_run_report.skipped_point_count;
     readiness.pressure_compute_dry_run_report_target_column_count =
         dry_run.pressure_compute_dry_run_report.target_column_count;
     readiness.pressure_compute_dry_run_report_refreshed_point_count =
@@ -791,6 +799,7 @@ struct PressureRefreshReadiness {
       readiness.pressure_compute_dry_run_ok &&
       readiness.would_refresh_p_point_count > 0 &&
       readiness.dry_run_invalid_p_point_count == 0 &&
+      readiness.dry_run_skipped_p_point_count == 0 &&
       readiness.pressure_compute_dry_run_report_target_column_count > 0 &&
       readiness.pressure_compute_dry_run_report_refreshed_point_count ==
           readiness.would_refresh_p_point_count &&
@@ -848,6 +857,8 @@ struct PressureRefreshReadiness {
           << readiness.would_refresh_p_point_count;
   message << "; dry_run_invalid_p_point_count="
           << readiness.dry_run_invalid_p_point_count;
+  message << "; dry_run_skipped_p_point_count="
+          << readiness.dry_run_skipped_p_point_count;
   message << "; pressure_compute_dry_run_report_target_column_count="
           << readiness.pressure_compute_dry_run_report_target_column_count;
   message << "; pressure_compute_dry_run_report_refreshed_point_count="
@@ -1019,6 +1030,8 @@ void probe_pressure_refresh_dry_run_contract(
           << "; would_refresh_p_point_count=" << dry_run_report.would_refresh_p_point_count
           << "; dry_run_invalid_p_point_count="
           << dry_run_report.dry_run_invalid_p_point_count
+          << "; dry_run_skipped_p_point_count="
+          << dry_run_report.pressure_compute_dry_run_report.skipped_point_count
           << "; pressure_compute_dry_run_report_target_column_count="
           << dry_run_report.pressure_compute_dry_run_report.target_column_count
           << "; pressure_compute_dry_run_report_refreshed_point_count="
@@ -1259,6 +1272,114 @@ void write_int_attr(
       "write global integer attribute");
 }
 
+void write_pressure_refresh_readiness_attrs(
+    const NetcdfHandle& file,
+    const PressureRefreshReadiness& readiness) {
+  write_text_attr(file, "TYWRF_PRESSURE_REFRESH_READINESS_READY", bool_text(readiness.ready()));
+  write_text_attr(
+      file,
+      "TYWRF_THERMODYNAMIC_BASE_STATE_CONSISTENCY_READY",
+      bool_text(readiness.thermodynamic_base_state_consistency_ready));
+  write_text_attr(
+      file,
+      "TYWRF_PROVIDER_TERRAIN_USES_MOVED_CANDIDATE_HGT",
+      bool_text(readiness.provider_terrain_uses_moved_candidate_hgt));
+  write_text_attr(
+      file,
+      "TYWRF_PROVIDER_BASE_STATE_RECONSTRUCT_OK",
+      bool_text(readiness.provider_base_state_reconstruct_ok));
+  write_text_attr(
+      file,
+      "TYWRF_BASE_STATE_SYNC_CONTRACT_OK",
+      bool_text(readiness.base_state_sync_contract_ok));
+  write_text_attr(
+      file, "TYWRF_BASE_STATE_SYNC_DRY_RUN", bool_text(readiness.base_state_sync_dry_run));
+  write_text_attr(
+      file, "TYWRF_BASE_STATE_SYNC_APPLIED", bool_text(readiness.base_state_sync_applied));
+  write_double_attr(
+      file, "TYWRF_WOULD_SYNC_PB_POINT_COUNT", static_cast<double>(readiness.would_sync_pb_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_WOULD_SYNC_MUB_POINT_COUNT",
+      static_cast<double>(readiness.would_sync_mub_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_WOULD_SYNC_PHB_POINT_COUNT",
+      static_cast<double>(readiness.would_sync_phb_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_SYNC_OVERLAP_WRITE_COUNT",
+      static_cast<double>(readiness.sync_overlap_write_count));
+  write_double_attr(
+      file, "TYWRF_SYNC_HALO_WRITE_COUNT", static_cast<double>(readiness.sync_halo_write_count));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_REFRESH_DRY_RUN_COMPUTE_CALLED",
+      bool_text(readiness.pressure_refresh_compute_called));
+  write_text_attr(
+      file, "TYWRF_PRESSURE_COMPUTE_DRY_RUN", bool_text(readiness.pressure_compute_dry_run));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_CALLED",
+      bool_text(readiness.pressure_compute_dry_run_called));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_OK",
+      bool_text(readiness.pressure_compute_dry_run_ok));
+  write_double_attr(
+      file,
+      "TYWRF_WOULD_REFRESH_P_POINT_COUNT",
+      static_cast<double>(readiness.would_refresh_p_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DRY_RUN_INVALID_P_POINT_COUNT",
+      static_cast<double>(readiness.dry_run_invalid_p_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DRY_RUN_SKIPPED_P_POINT_COUNT",
+      static_cast<double>(readiness.dry_run_skipped_p_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_TARGET_COLUMN_COUNT",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_target_column_count));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_REFRESHED_POINT_COUNT",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_refreshed_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_INVALID_POINT_COUNT",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_invalid_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_SKIPPED_POINT_COUNT",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_skipped_point_count));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_TOUCHED_OVERLAP_CELLS",
+      bool_text(readiness.pressure_compute_dry_run_report_touched_overlap_cells));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_TOUCHED_HALO_CELLS",
+      bool_text(readiness.pressure_compute_dry_run_report_touched_halo_cells));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_REFRESH_DRY_RUN_APPLIED",
+      bool_text(readiness.pressure_refresh_applied));
+  if (!readiness.provider_terrain_source_name.empty()) {
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_READINESS_PROVIDER_TERRAIN_SOURCE",
+        readiness.provider_terrain_source_name);
+  }
+  if (!readiness.provider_terrain_provenance.empty()) {
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_READINESS_PROVIDER_TERRAIN_PROVENANCE",
+        readiness.provider_terrain_provenance);
+  }
+}
+
 [[nodiscard]] std::string join_variables(const std::vector<std::string>& variables) {
   std::ostringstream joined;
   for (std::size_t index = 0; index < variables.size(); ++index) {
@@ -1277,6 +1398,17 @@ void stamp_gate_metadata(
     const CandidateReport& report) {
   const bool experimental_pressure_refresh_apply =
       options.experimental_pressure_refresh_apply && report.pressure_refresh.has_value();
+  std::optional<PressureRefreshReadiness> pressure_refresh_readiness;
+  if (report.pressure_refresh.has_value()) {
+    pressure_refresh_readiness = evaluate_pressure_refresh_readiness(report);
+  }
+  const bool pressure_refresh_applied_to_candidate =
+      report.pressure_refresh.has_value() && !experimental_pressure_refresh_apply;
+  const bool pressure_refresh_gate_candidate =
+      pressure_refresh_applied_to_candidate && pressure_refresh_readiness.has_value() &&
+      pressure_refresh_readiness->ready();
+  const bool gate_candidate =
+      report.pressure_refresh.has_value() ? pressure_refresh_gate_candidate : true;
   const NetcdfHandle file(options.output_path, NetcdfHandle::Mode::write);
   file.check(nc_redef(file.id()), "enter define mode");
   write_double_attr(file, "DX", resolution.dx);
@@ -1284,15 +1416,9 @@ void stamp_gate_metadata(
   write_text_attr(
       file,
       "TYWRF_DIAGNOSTIC_ONLY",
-      experimental_pressure_refresh_apply ? "true" : "false");
-  write_text_attr(
-      file,
-      "TYWRF_GATE_CANDIDATE",
-      experimental_pressure_refresh_apply ? "false" : "true");
-  write_text_attr(
-      file,
-      "TYWRF_INTEGRATOR_OUTPUT",
-      experimental_pressure_refresh_apply ? "false" : "true");
+      bool_text(experimental_pressure_refresh_apply));
+  write_text_attr(file, "TYWRF_GATE_CANDIDATE", bool_text(gate_candidate));
+  write_text_attr(file, "TYWRF_INTEGRATOR_OUTPUT", bool_text(gate_candidate));
   write_text_attr(file, "TYWRF_VALIDATION_GATE_ONLY", "false");
   write_text_attr(
       file,
@@ -1377,6 +1503,9 @@ void stamp_gate_metadata(
         file,
         "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY",
         experimental_pressure_refresh_apply ? "true" : "false");
+    if (pressure_refresh_readiness.has_value()) {
+      write_pressure_refresh_readiness_attrs(file, *pressure_refresh_readiness);
+    }
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_PROVIDER_OK", "true");
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_STAGING_OK", "true");
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED", "true");
@@ -1565,6 +1694,153 @@ void write_json_number(
   stream << (pretty ? "\n" : "");
 }
 
+void write_pressure_refresh_readiness_json(
+    std::ostream& stream,
+    const PressureRefreshReadiness& readiness,
+    const bool pretty) {
+  write_json_bool(stream, "pressure_refresh_readiness_ready", readiness.ready(), true, pretty);
+  write_json_bool(
+      stream,
+      "thermodynamic_base_state_consistency_ready",
+      readiness.thermodynamic_base_state_consistency_ready,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "provider_terrain_uses_moved_candidate_hgt",
+      readiness.provider_terrain_uses_moved_candidate_hgt,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "provider_base_state_reconstruct_ok",
+      readiness.provider_base_state_reconstruct_ok,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "base_state_sync_contract_ok", readiness.base_state_sync_contract_ok, true, pretty);
+  write_json_bool(stream, "base_state_sync_dry_run", readiness.base_state_sync_dry_run, true, pretty);
+  write_json_bool(stream, "base_state_sync_applied", readiness.base_state_sync_applied, true, pretty);
+  write_json_number(
+      stream,
+      "would_sync_pb_point_count",
+      static_cast<double>(readiness.would_sync_pb_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "would_sync_mub_point_count",
+      static_cast<double>(readiness.would_sync_mub_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "would_sync_phb_point_count",
+      static_cast<double>(readiness.would_sync_phb_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "sync_overlap_write_count",
+      static_cast<double>(readiness.sync_overlap_write_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "sync_halo_write_count",
+      static_cast<double>(readiness.sync_halo_write_count),
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "pressure_refresh_dry_run_compute_called",
+      readiness.pressure_refresh_compute_called,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "pressure_compute_dry_run", readiness.pressure_compute_dry_run, true, pretty);
+  write_json_bool(
+      stream,
+      "pressure_compute_dry_run_called",
+      readiness.pressure_compute_dry_run_called,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "pressure_compute_dry_run_ok", readiness.pressure_compute_dry_run_ok, true, pretty);
+  write_json_number(
+      stream,
+      "would_refresh_p_point_count",
+      static_cast<double>(readiness.would_refresh_p_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "dry_run_invalid_p_point_count",
+      static_cast<double>(readiness.dry_run_invalid_p_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "dry_run_skipped_p_point_count",
+      static_cast<double>(readiness.dry_run_skipped_p_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_compute_dry_run_report_target_column_count",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_target_column_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_compute_dry_run_report_refreshed_point_count",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_refreshed_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_compute_dry_run_report_invalid_point_count",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_invalid_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_compute_dry_run_report_skipped_point_count",
+      static_cast<double>(readiness.pressure_compute_dry_run_report_skipped_point_count),
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "pressure_compute_dry_run_report_touched_overlap_cells",
+      readiness.pressure_compute_dry_run_report_touched_overlap_cells,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "pressure_compute_dry_run_report_touched_halo_cells",
+      readiness.pressure_compute_dry_run_report_touched_halo_cells,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "pressure_refresh_dry_run_applied",
+      readiness.pressure_refresh_applied,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_refresh_readiness_provider_terrain_source",
+      readiness.provider_terrain_source_name,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_refresh_readiness_provider_terrain_provenance",
+      readiness.provider_terrain_provenance,
+      true,
+      pretty);
+}
+
 void print_report(
     const Options& options,
     const Resolution resolution,
@@ -1573,6 +1849,17 @@ void print_report(
   const bool pretty = options.pretty;
   const bool experimental_pressure_refresh_apply =
       options.experimental_pressure_refresh_apply && report.pressure_refresh.has_value();
+  std::optional<PressureRefreshReadiness> pressure_refresh_readiness;
+  if (report.pressure_refresh.has_value()) {
+    pressure_refresh_readiness = evaluate_pressure_refresh_readiness(report);
+  }
+  const bool pressure_refresh_applied_to_candidate =
+      report.pressure_refresh.has_value() && !experimental_pressure_refresh_apply;
+  const bool pressure_refresh_gate_candidate =
+      pressure_refresh_applied_to_candidate && pressure_refresh_readiness.has_value() &&
+      pressure_refresh_readiness->ready();
+  const bool gate_candidate =
+      report.pressure_refresh.has_value() ? pressure_refresh_gate_candidate : true;
   std::cout << "{" << (pretty ? "\n" : "");
   write_json_string(
       std::cout,
@@ -1590,10 +1877,8 @@ void print_report(
           : "selected_field_integrator_v0",
       true,
       pretty);
-  write_json_bool(
-      std::cout, "gate_candidate", !experimental_pressure_refresh_apply, true, pretty);
-  write_json_bool(
-      std::cout, "integrator_output", !experimental_pressure_refresh_apply, true, pretty);
+  write_json_bool(std::cout, "gate_candidate", gate_candidate, true, pretty);
+  write_json_bool(std::cout, "integrator_output", gate_candidate, true, pretty);
   write_json_bool(std::cout, "validation_gate_only", false, true, pretty);
   if (experimental_pressure_refresh_apply) {
     write_json_bool(std::cout, "experimental_pressure_refresh_apply", true, true, pretty);
@@ -1663,6 +1948,9 @@ void print_report(
                                             : "applied_to_candidate",
         true,
         pretty);
+    if (pressure_refresh_readiness.has_value()) {
+      write_pressure_refresh_readiness_json(std::cout, *pressure_refresh_readiness, pretty);
+    }
     write_json_bool(
         std::cout,
         "pressure_refresh_terrain_override_used",
