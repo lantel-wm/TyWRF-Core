@@ -131,13 +131,36 @@ input/restart/interp/smooth state without history output, so `wrfout` missing
 `ALB` is expected.
 
 The narrow `PB + T_INIT -> ALB` helper is safe only for same-domain, same-time
-inputs that already contain `PB` and `T_INIT`. The KROSA start-domain provider
-must instead reconstruct `PB`, `T_INIT`, and `MUB` from `HT`/`HGT`, `P_TOP`,
-`C3F`/`C4F`, `C3H`/`C4H`, and WRF constants, then derive `ALB` from the
-reconstructed base state. Later restart `ALB` may be used only as a
-probe/smoke sample and must not serve as d02 start-time validation truth.
-`PHB` reconstruction for `hypsometric_opt=2` remains a later log-linear
-full-level contract, not evidence that pressure refresh is complete.
+inputs that already contain `PB` and `T_INIT`. The complete KROSA start-domain
+base-state provider targeted in round D27 is:
+
+```text
+HGT/P_TOP/C3F/C4F/C3H/C4H/WRF base-atmosphere constants
+  -> PB/T_INIT/MUB/ALB/PHB
+```
+
+The provider reconstructs `PB`, `T_INIT`, and `MUB`, derives `ALB` from that
+same-domain base state, and reconstructs `PHB` on full levels for KROSA
+`hypsometric_opt=2`:
+
+```text
+PHB(i,1,j) = HGT(i,j) * g
+pfu = C3F(k  ) * MUB(i,j) + C4F(k  ) + P_TOP
+pfd = C3F(k-1) * MUB(i,j) + C4F(k-1) + P_TOP
+phm = C3H(k-1) * MUB(i,j) + C4H(k-1) + P_TOP
+PHB(i,k,j) = PHB(i,k-1,j) + ALB(i,k-1,j) * phm * log(pfd / pfu)
+```
+
+This full-level `PHB` reconstruction must be paired with mass-level `ALB` and
+column `MUB` from the same domain and same valid time. Later restart `ALB` or
+`PHB` may be used only as a probe/smoke sample and must not serve as d02
+start-time validation truth.
+
+Completing the provider is not evidence that pressure refresh is complete. The
+pressure-refresh compute path remains unwired from skeleton/remap, so staging,
+diagnostic parent-fill, provider-probe, and oracle/reference-copy outputs must
+not be counted as gate passes until pressure-refresh compute is truly wired and
+the 10 min gate passes.
 
 Example:
 

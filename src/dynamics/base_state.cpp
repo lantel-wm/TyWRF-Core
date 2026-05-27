@@ -90,6 +90,13 @@ template <typename LhsReal, typename RhsReal>
   return active_nx(lhs) == active_nx(rhs) && active_ny(lhs) == active_ny(rhs);
 }
 
+template <typename LhsReal, typename RhsReal>
+[[nodiscard]] constexpr bool same_horizontal_active_shape(
+    const FieldView3D<LhsReal>& lhs,
+    const FieldView3D<RhsReal>& rhs) noexcept {
+  return active_nx(lhs) == active_nx(rhs) && active_ny(lhs) == active_ny(rhs);
+}
+
 template <typename Real>
 [[nodiscard]] constexpr FieldView3D<const Real> const_view(
     const FieldView3D<Real>& field) noexcept {
@@ -157,6 +164,11 @@ template <typename Real>
   return alb.data != nullptr;
 }
 
+[[nodiscard]] constexpr bool has_optional_phb(
+    const FieldView3D<float>& phb) noexcept {
+  return phb.data != nullptr;
+}
+
 [[nodiscard]] std::uint64_t invalid_active_input_count(
     const BaseStateReconstructionInputs& inputs) noexcept {
   std::uint64_t invalid_count = 0;
@@ -217,6 +229,69 @@ template <typename Real>
       options.base_potential_temperature_k,
       options.specific_heat_cp,
       options.cvpm};
+}
+
+[[nodiscard]] bool valid_phb_column_pressures(
+    const double mub,
+    const KrosaMassBaseStateReconstructionInputs& inputs,
+    const KrosaMassBaseStateReconstructionOptions& options,
+    const std::int32_t mass_k) noexcept {
+  const auto p_top = static_cast<double>(inputs.p_top_pa);
+  const auto pfu =
+      static_cast<double>(inputs.c3f.values[mass_k + 1]) * mub +
+      static_cast<double>(inputs.c4f.values[mass_k + 1]) + p_top;
+  const auto pfd = static_cast<double>(inputs.c3f.values[mass_k]) * mub +
+                   static_cast<double>(inputs.c4f.values[mass_k]) + p_top;
+  const auto phm = static_cast<double>(inputs.c3h.values[mass_k]) * mub +
+                   static_cast<double>(inputs.c4h.values[mass_k]) + p_top;
+  return std::isfinite(pfu) && std::isfinite(pfd) && std::isfinite(phm) &&
+         pfu > 0.0 && pfd > 0.0 && phm > 0.0 && pfd > pfu &&
+         std::isfinite(std::log(pfd / pfu)) &&
+         std::isfinite(static_cast<double>(options.gravity));
+}
+
+[[nodiscard]] bool reconstruct_phb_column(
+    const std::int32_t i,
+    const std::int32_t j,
+    const double terrain_height_m,
+    const double mub,
+    const KrosaMassBaseStateReconstructionInputs& inputs,
+    const KrosaMassBaseStateReconstructionOutputs& outputs,
+    const KrosaMassBaseStateReconstructionOptions& options) noexcept {
+  const auto phb_i = outputs.phb.halo.i_lower + i;
+  const auto phb_j = outputs.phb.halo.j_lower + j;
+  outputs.phb(phb_i, phb_j, outputs.phb.halo.k_lower) =
+      static_cast<float>(terrain_height_m * static_cast<double>(options.gravity));
+
+  const auto p_top = static_cast<double>(inputs.p_top_pa);
+  for (std::int32_t k = 0; k < active_nz(outputs.pb); ++k) {
+    const auto pfu =
+        static_cast<double>(inputs.c3f.values[k + 1]) * mub +
+        static_cast<double>(inputs.c4f.values[k + 1]) + p_top;
+    const auto pfd = static_cast<double>(inputs.c3f.values[k]) * mub +
+                     static_cast<double>(inputs.c4f.values[k]) + p_top;
+    const auto phm = static_cast<double>(inputs.c3h.values[k]) * mub +
+                     static_cast<double>(inputs.c4h.values[k]) + p_top;
+    const auto alb = static_cast<double>(outputs.alb(
+        outputs.alb.halo.i_lower + i,
+        outputs.alb.halo.j_lower + j,
+        outputs.alb.halo.k_lower + k));
+    if (!std::isfinite(alb)) {
+      return false;
+    }
+
+    const auto previous_phb = static_cast<double>(outputs.phb(
+        phb_i,
+        phb_j,
+        outputs.phb.halo.k_lower + k));
+    const auto next_phb = previous_phb + alb * phm * std::log(pfd / pfu);
+    if (!std::isfinite(next_phb)) {
+      return false;
+    }
+    outputs.phb(phb_i, phb_j, outputs.phb.halo.k_lower + k + 1) =
+        static_cast<float>(next_phb);
+  }
+  return true;
 }
 
 }  // namespace
@@ -334,11 +409,37 @@ KrosaMassBaseStateReconstructionReport reconstruct_krosa_mass_base_state(
     return report;
   }
 
+  if (has_optional_phb(outputs.phb)) {
+    if (!valid_canonical_view(outputs.phb) ||
+        !same_horizontal_active_shape(outputs.pb, outputs.phb) ||
+        active_nz(outputs.phb) != active_nz(outputs.pb) + 1) {
+      report.result = result(
+          nest::NestStatus::invalid_contract,
+          "optional KROSA PHB output must be a canonical full-level view");
+      return report;
+    }
+    if (!has_optional_alb(outputs.alb)) {
+      report.result = result(
+          nest::NestStatus::invalid_contract,
+          "optional KROSA PHB reconstruction requires an ALB output view");
+      return report;
+    }
+  }
+
   if (!valid_coefficients(inputs.c3h, active_nz(outputs.pb)) ||
       !valid_coefficients(inputs.c4h, active_nz(outputs.pb))) {
     report.result = result(
         nest::NestStatus::invalid_contract,
         "KROSA base-state C3H/C4H counts must match mass levels");
+    return report;
+  }
+
+  if (has_optional_phb(outputs.phb) &&
+      (!valid_coefficients(inputs.c3f, active_nz(outputs.pb) + 1) ||
+       !valid_coefficients(inputs.c4f, active_nz(outputs.pb) + 1))) {
+    report.result = result(
+        nest::NestStatus::invalid_contract,
+        "KROSA base-state C3F/C4F counts must match full levels");
     return report;
   }
 
@@ -350,10 +451,13 @@ KrosaMassBaseStateReconstructionReport reconstruct_krosa_mass_base_state(
     return report;
   }
 
-  if (!finite_coefficients(inputs.c3h) || !finite_coefficients(inputs.c4h)) {
+  if (!finite_coefficients(inputs.c3h) || !finite_coefficients(inputs.c4h) ||
+      (has_optional_phb(outputs.phb) &&
+       (!finite_coefficients(inputs.c3f) ||
+        !finite_coefficients(inputs.c4f)))) {
     report.result = result(
         nest::NestStatus::invalid_contract,
-        "KROSA base-state C3H/C4H coefficients must be finite");
+        "KROSA base-state vertical coefficients must be finite");
     return report;
   }
 
@@ -393,6 +497,10 @@ KrosaMassBaseStateReconstructionReport reconstruct_krosa_mass_base_state(
         }
         if (p_strat > 0.0 && pb < p_strat) {
           ++report.unsupported_stratosphere_point_count;
+        }
+        if (has_optional_phb(outputs.phb) &&
+            !valid_phb_column_pressures(mub, inputs, options, k)) {
+          ++report.invalid_point_count;
         }
       }
     }
@@ -465,6 +573,28 @@ KrosaMassBaseStateReconstructionReport reconstruct_krosa_mass_base_state(
     }
     report.reused_alb_helper = true;
     report.wrote_alb = alb_report.wrote_alb;
+  }
+
+  if (has_optional_phb(outputs.phb)) {
+    for (std::int32_t j = 0; j < active_ny(outputs.pb); ++j) {
+      for (std::int32_t i = 0; i < active_nx(outputs.pb); ++i) {
+        const auto h_i = inputs.terrain_height_m.halo.i_lower + i;
+        const auto h_j = inputs.terrain_height_m.halo.j_lower + j;
+        const auto terrain =
+            static_cast<double>(inputs.terrain_height_m(h_i, h_j));
+        const auto mub = static_cast<double>(outputs.mub(
+            outputs.mub.halo.i_lower + i,
+            outputs.mub.halo.j_lower + j));
+        if (!reconstruct_phb_column(i, j, terrain, mub, inputs, outputs, options)) {
+          report.result = result(
+              nest::NestStatus::invalid_contract,
+              "KROSA PHB reconstruction requires finite log-linear inputs");
+          return report;
+        }
+      }
+    }
+    report.wrote_phb = true;
+    report.phb_full_level_reconstruction_implemented = true;
   }
 
   report.result = ok_result();

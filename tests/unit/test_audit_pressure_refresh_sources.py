@@ -20,9 +20,11 @@ def _write_source(
     path: Path,
     *,
     include_alb: bool = True,
+    include_phb: bool = True,
     include_terrain: bool = True,
     include_direct_pb_t_init: bool = False,
     bad_alb_shape: bool = False,
+    bad_phb_shape: bool = False,
     p_top_as_attr: bool = False,
 ) -> None:
     with netCDF4.Dataset(path, "w") as dataset:
@@ -75,6 +77,15 @@ def _write_source(
             )
             alb[0, :, :, :] = 1.0
 
+        if include_phb:
+            west_east_dim = "west_east_bad" if bad_phb_shape else "west_east"
+            phb = dataset.createVariable(
+                "PHB",
+                "f4",
+                ("Time", "bottom_top_stag", "south_north", west_east_dim),
+            )
+            phb[0, :, :, :] = 100.0
+
 
 def _entry(name: str, domain: str, path: Path, **overrides: object) -> SourceEntry:
     payload = {
@@ -111,8 +122,12 @@ def test_audit_reports_complete_source_as_seedable_and_clean_only_when_marked(
     assert entry["p_top_source"] == "time_variable"
     assert entry["alb_available"] is True
     assert entry["direct_alb_source"] is True
+    assert entry["direct_phb_present"] is True
+    assert entry["direct_phb_shape_valid"] is True
     assert entry["base_state_reconstruction_inputs_complete"] is True
     assert entry["missing_base_state_reconstruction_inputs"] == []
+    assert entry["phb_reconstruction_inputs_complete"] is True
+    assert entry["missing_phb_reconstruction_inputs"] == []
     assert entry["base_state_terrain_source"] == "HGT"
     assert entry["base_state_reconstruction_input_presence"] == {
         "HT": False,
@@ -131,6 +146,10 @@ def test_audit_reports_complete_source_as_seedable_and_clean_only_when_marked(
     assert entry["missing_direct_pb_t_init_inputs"] == ["PB", "T_INIT"]
     assert entry["base_state_reconstruction_required"] is False
     assert entry["recommended_next_source"] is None
+    assert (
+        entry["full_provider_recommended_source"]
+        == "wrf_start_domain_phb_hypsometric_opt2_reconstruction"
+    )
     assert entry["diagnostic_only"] is True
     assert entry["can_seed_pressure_refresh"] is True
     assert entry["suitable_for_start_time_truth"] is True
@@ -160,6 +179,32 @@ def test_audit_reports_d02_start_time_missing_alb_as_blocker(tmp_path: Path) -> 
         "d02_start_wrfout"
     ]
     assert payload["summary"]["base_state_reconstruction_missing_inputs_by_entry"] == {}
+    assert payload["summary"]["direct_phb_present_count"] == 1
+    assert payload["summary"]["direct_phb_present_entries"] == ["d02_start_wrfout"]
+    assert payload["summary"]["direct_phb_shape_valid_count"] == 1
+    assert payload["summary"]["direct_phb_shape_valid_entries"] == ["d02_start_wrfout"]
+    assert payload["summary"]["direct_phb_shape_invalid_entries"] == []
+    assert payload["summary"]["phb_reconstruction_required_inputs"] == [
+        "HT/HGT",
+        "P_TOP",
+        "C3F",
+        "C4F",
+        "C3H",
+        "C4H",
+    ]
+    assert payload["summary"]["phb_reconstruction_inputs_complete_count"] == 1
+    assert payload["summary"]["phb_reconstruction_inputs_complete_entries"] == [
+        "d02_start_wrfout"
+    ]
+    assert payload["summary"]["phb_reconstruction_missing_inputs_by_entry"] == {}
+    assert payload["summary"]["full_provider_recommended"] is True
+    assert payload["summary"]["full_provider_recommended_entries"] == [
+        "d02_start_wrfout"
+    ]
+    assert (
+        payload["summary"]["full_provider_recommended_source"]
+        == "wrf_start_domain_phb_hypsometric_opt2_reconstruction"
+    )
     assert payload["summary"]["direct_pb_t_init_path_available_count"] == 0
     assert payload["summary"]["direct_pb_t_init_path_available_entries"] == []
     assert payload["summary"]["base_state_reconstruction_required"] is True
@@ -179,11 +224,19 @@ def test_audit_reports_d02_start_time_missing_alb_as_blocker(tmp_path: Path) -> 
     assert entry["p_top_source"] == "global_attribute"
     assert entry["alb_available"] is False
     assert entry["direct_alb_source"] is False
+    assert entry["direct_phb_present"] is True
+    assert entry["direct_phb_shape_valid"] is True
     assert entry["base_state_reconstruction_inputs_complete"] is True
     assert entry["missing_base_state_reconstruction_inputs"] == []
+    assert entry["phb_reconstruction_inputs_complete"] is True
+    assert entry["missing_phb_reconstruction_inputs"] == []
     assert entry["base_state_terrain_source"] == "HGT"
     assert entry["base_state_reconstruction_required"] is True
     assert entry["recommended_next_source"] == "wrf_start_domain_base_state_reconstruction"
+    assert (
+        entry["full_provider_recommended_source"]
+        == "wrf_start_domain_phb_hypsometric_opt2_reconstruction"
+    )
     assert entry["can_seed_pressure_refresh"] is False
     assert entry["suitable_for_start_time_truth"] is False
 
@@ -206,14 +259,23 @@ def test_audit_reports_missing_reconstruction_inputs_for_d02_start_time(
     assert payload["summary"]["base_state_reconstruction_missing_inputs_by_entry"] == {
         "d02_start_wrfout": ["HT/HGT"]
     }
+    assert payload["summary"]["phb_reconstruction_missing_inputs_by_entry"] == {
+        "d02_start_wrfout": ["HT/HGT"]
+    }
+    assert payload["summary"]["full_provider_recommended_source"] is None
     entry = payload["entries"][0]
     assert entry["missing_names"] == ["ALB"]
     assert entry["base_state_reconstruction_inputs_complete"] is False
     assert entry["missing_base_state_reconstruction_inputs"] == ["HT/HGT"]
+    assert entry["direct_phb_present"] is True
+    assert entry["direct_phb_shape_valid"] is True
+    assert entry["phb_reconstruction_inputs_complete"] is False
+    assert entry["missing_phb_reconstruction_inputs"] == ["HT/HGT"]
     assert entry["base_state_terrain_source"] is None
     assert entry["base_state_reconstruction_input_presence"]["HT/HGT"] is False
     assert entry["base_state_reconstruction_required"] is False
     assert entry["recommended_next_source"] is None
+    assert entry["full_provider_recommended_source"] is None
 
 
 def test_audit_reports_optional_direct_pb_t_init_path(tmp_path: Path) -> None:
@@ -249,8 +311,20 @@ def test_audit_reports_nonexistent_candidate(tmp_path: Path) -> None:
     assert entry["status"] == "nonexistent"
     assert entry["missing_names"] == []
     assert entry["direct_alb_source"] is False
+    assert entry["direct_phb_present"] is False
+    assert entry["direct_phb_shape_valid"] is False
+    assert entry["phb_reconstruction_inputs_complete"] is False
+    assert entry["missing_phb_reconstruction_inputs"] == [
+        "HT/HGT",
+        "P_TOP",
+        "C3F",
+        "C4F",
+        "C3H",
+        "C4H",
+    ]
     assert entry["base_state_reconstruction_required"] is False
     assert entry["recommended_next_source"] is None
+    assert entry["full_provider_recommended_source"] is None
     assert entry["can_seed_pressure_refresh"] is False
 
 
@@ -267,9 +341,40 @@ def test_audit_reports_bad_shape_as_error(tmp_path: Path) -> None:
     assert entry["missing_names"] == []
     assert "ALB has shape (2, 3, 5), expected (2, 3, 4)" in entry["message"]
     assert entry["direct_alb_source"] is False
+    assert entry["direct_phb_present"] is True
+    assert entry["direct_phb_shape_valid"] is True
+    assert entry["phb_reconstruction_inputs_complete"] is False
     assert entry["base_state_reconstruction_required"] is False
     assert entry["recommended_next_source"] is None
+    assert entry["full_provider_recommended_source"] is None
     assert entry["can_seed_pressure_refresh"] is False
+
+
+def test_audit_reports_direct_phb_shape_invalid_without_making_phb_required(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "bad_phb_shape.nc"
+    _write_source(source, bad_phb_shape=True)
+
+    payload = json.loads(
+        report_to_json(audit_pressure_refresh_sources([_entry("bad_phb", "d01", source)]))
+    )
+
+    assert payload["status"] == "ok"
+    assert payload["summary"]["direct_phb_present_count"] == 1
+    assert payload["summary"]["direct_phb_shape_valid_count"] == 0
+    assert payload["summary"]["direct_phb_shape_invalid_entries"] == ["bad_phb"]
+    assert payload["summary"]["phb_reconstruction_inputs_complete_count"] == 1
+    entry = payload["entries"][0]
+    assert entry["status"] == "ok"
+    assert entry["direct_phb_present"] is True
+    assert entry["direct_phb_shape_valid"] is False
+    assert entry["phb_reconstruction_inputs_complete"] is True
+    assert entry["missing_phb_reconstruction_inputs"] == []
+    assert (
+        entry["full_provider_recommended_source"]
+        == "wrf_start_domain_phb_hypsometric_opt2_reconstruction"
+    )
 
 
 def test_later_restart_is_not_clean_truth_without_explicit_manifest_flag(
@@ -285,8 +390,14 @@ def test_later_restart_is_not_clean_truth_without_explicit_manifest_flag(
     entry = payload["entries"][0]
     assert entry["status"] == "ok"
     assert entry["direct_alb_source"] is True
+    assert entry["direct_phb_present"] is True
+    assert entry["direct_phb_shape_valid"] is True
     assert entry["base_state_reconstruction_required"] is False
     assert entry["recommended_next_source"] is None
+    assert (
+        entry["full_provider_recommended_source"]
+        == "wrf_start_domain_phb_hypsometric_opt2_reconstruction"
+    )
     assert entry["can_seed_pressure_refresh"] is True
     assert entry["suitable_for_start_time_truth"] is False
 
@@ -318,6 +429,8 @@ def test_later_restart_direct_alb_does_not_clear_d02_start_time_blocker(
     assert entries["d02_start_wrfout"]["base_state_reconstruction_required"] is True
     assert entries["d02_start_wrfout"]["suitable_for_start_time_truth"] is False
     assert entries["d02_later_restart"]["direct_alb_source"] is True
+    assert entries["d02_later_restart"]["direct_phb_present"] is True
+    assert entries["d02_later_restart"]["direct_phb_shape_valid"] is True
     assert entries["d02_later_restart"]["suitable_for_start_time_truth"] is False
 
 

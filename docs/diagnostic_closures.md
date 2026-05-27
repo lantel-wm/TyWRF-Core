@@ -43,15 +43,35 @@ output, so missing `ALB` in `wrfout` is expected.
 
 The narrow `PB + T_INIT -> ALB` helper is valid only when same-domain,
 same-time `PB` and `T_INIT` are already available. It is a helper, not the
-KROSA d02 start-time provider. The KROSA provider must reconstruct `PB`,
-`T_INIT`, and `MUB` from `HT`/`HGT`, `P_TOP`, `C3F`/`C4F`, `C3H`/`C4H`, and
-WRF constants, then derive `ALB` from that reconstructed base state. Later
-restart-file `ALB` can only support probe/smoke checks and must not be promoted
-to d02 start-time validation truth.
+complete KROSA d02 start-time provider. Round D27 targets the full base-state
+provider:
 
-`PHB` for `hypsometric_opt=2` remains a later log-linear full-level
-reconstruction contract. It must not be described as already completed pressure
-refresh, and it does not make parent-fill or closure output gate-eligible.
+```text
+HGT/P_TOP/C3F/C4F/C3H/C4H/WRF base-atmosphere constants
+  -> PB/T_INIT/MUB/ALB/PHB
+```
+
+The provider reconstructs `PB`, `T_INIT`, and `MUB`, derives `ALB` from that
+same-domain base state, and reconstructs `PHB` on full levels for KROSA
+`hypsometric_opt=2` with the WRF log-linear relation:
+
+```text
+PHB(i,1,j) = HGT(i,j) * g
+pfu = C3F(k  ) * MUB(i,j) + C4F(k  ) + P_TOP
+pfd = C3F(k-1) * MUB(i,j) + C4F(k-1) + P_TOP
+phm = C3H(k-1) * MUB(i,j) + C4H(k-1) + P_TOP
+PHB(i,k,j) = PHB(i,k-1,j) + ALB(i,k-1,j) * phm * log(pfd / pfu)
+```
+
+This `PHB` reconstruction must be paired with mass-level `ALB` and column
+`MUB` from the same domain and same valid time. Later restart-file `ALB` or
+`PHB` can only support probe/smoke checks and must not be promoted to d02
+start-time validation truth.
+
+Completing the provider does not complete pressure refresh. The
+pressure-refresh compute path remains unwired from skeleton/remap, so
+parent-fill, staging, provider-probe, and closure outputs are still
+non-physical and not gate-eligible.
 
 ## Hard Prohibitions
 

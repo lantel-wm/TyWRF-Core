@@ -48,6 +48,8 @@ struct KrosaMassBaseStateReconstructionInputs {
   FieldView2D<const float> terrain_height_m;
   BaseStateVerticalCoefficientView c3h;
   BaseStateVerticalCoefficientView c4h;
+  BaseStateVerticalCoefficientView c3f;
+  BaseStateVerticalCoefficientView c4f;
   float p_top_pa = 0.0F;
 };
 
@@ -57,6 +59,9 @@ struct KrosaMassBaseStateReconstructionOutputs {
   FieldView2D<float> mub;
   // Optional. Leave data null to reconstruct only PB/T_INIT/MUB.
   FieldView3D<float> alb;
+  // Optional full-level PHB. Requires ALB output plus C3F/C4F full-level
+  // coefficients; active_nz must be mass active_nz + 1.
+  FieldView3D<float> phb;
 };
 
 struct KrosaMassBaseStateReconstructionOptions {
@@ -93,6 +98,7 @@ struct KrosaMassBaseStateReconstructionReport {
   bool wrote_t_init = false;
   bool wrote_mub = false;
   bool wrote_alb = false;
+  bool wrote_phb = false;
   bool phb_full_level_reconstruction_implemented = false;
 
   [[nodiscard]] constexpr bool ok() const noexcept {
@@ -120,8 +126,18 @@ struct KrosaMassBaseStateReconstructionReport {
 //   T_INIT = T_base(PB) * (p00/PB) ** (Rd/Cp) - T0
 //
 // If an ALB output view is supplied, ALB is derived with
-// reconstruct_alb_from_pb_t_init after PB/T_INIT are available. Full-level PHB
-// log-linear reconstruction is intentionally not implemented here.
+// reconstruct_alb_from_pb_t_init after PB/T_INIT are available. If a full-level
+// PHB output view is supplied, this uses the KROSA HYPSOMETRIC_OPT=2 log-linear
+// branch only:
+//
+//   PHB[k=0] = HGT * g
+//   pfu      = C3F[k+1] * MUB + C4F[k+1] + P_TOP
+//   pfd      = C3F[k]   * MUB + C4F[k]   + P_TOP
+//   phm      = C3H[k]   * MUB + C4H[k]   + P_TOP
+//   PHB[k+1] = PHB[k] + ALB[k] * phm * log(pfd / pfu)
+//
+// PHB reconstruction requires an ALB output view; this helper does not read
+// later restart ALB or any NetCDF source.
 [[nodiscard]] KrosaMassBaseStateReconstructionReport
 reconstruct_krosa_mass_base_state(
     const KrosaMassBaseStateReconstructionInputs& inputs,

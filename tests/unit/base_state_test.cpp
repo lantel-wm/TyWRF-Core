@@ -21,6 +21,12 @@ tywrf::FieldLayout3D make_layout() {
       tywrf::Halo3D{1, 1, 1, 1, 1, 1});
 }
 
+tywrf::FieldLayout3D make_full_layout() {
+  return tywrf::make_field_layout(
+      tywrf::ActiveShape3D{3, 2, 3},
+      tywrf::Halo3D{1, 1, 1, 1, 1, 1});
+}
+
 tywrf::FieldLayout2D make_surface_layout() {
   return tywrf::make_field_layout(
       tywrf::ActiveShape2D{3, 2},
@@ -165,6 +171,25 @@ make_mass_inputs(
       static_cast<const tywrf::FieldStorage2D<float>&>(terrain).view(),
       {c3h.data(), static_cast<std::int32_t>(c3h.size())},
       {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+      {},
+      {},
+      p_top_pa};
+}
+
+[[nodiscard]] tywrf::dynamics::KrosaMassBaseStateReconstructionInputs
+make_mass_inputs(
+    tywrf::FieldStorage2D<float>& terrain,
+    const std::array<float, 2>& c3h,
+    const std::array<float, 2>& c4h,
+    const std::array<float, 3>& c3f,
+    const std::array<float, 3>& c4f,
+    const float p_top_pa) noexcept {
+  return {
+      static_cast<const tywrf::FieldStorage2D<float>&>(terrain).view(),
+      {c3h.data(), static_cast<std::int32_t>(c3h.size())},
+      {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+      {c3f.data(), static_cast<std::int32_t>(c3f.size())},
+      {c4f.data(), static_cast<std::int32_t>(c4f.size())},
       p_top_pa};
 }
 
@@ -174,10 +199,20 @@ make_mass_outputs(
     tywrf::FieldStorage3D<float>& t_init,
     tywrf::FieldStorage2D<float>& mub,
     tywrf::FieldStorage3D<float>& alb) noexcept {
-  return {pb.view(), t_init.view(), mub.view(), alb.view()};
+  return {pb.view(), t_init.view(), mub.view(), alb.view(), {}};
 }
 
-void test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb() {
+[[nodiscard]] tywrf::dynamics::KrosaMassBaseStateReconstructionOutputs
+make_mass_outputs(
+    tywrf::FieldStorage3D<float>& pb,
+    tywrf::FieldStorage3D<float>& t_init,
+    tywrf::FieldStorage2D<float>& mub,
+    tywrf::FieldStorage3D<float>& alb,
+    tywrf::FieldStorage3D<float>& phb) noexcept {
+  return {pb.view(), t_init.view(), mub.view(), alb.view(), phb.view()};
+}
+
+void test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb_phb() {
   const tywrf::dynamics::KrosaMassBaseStateReconstructionOptions
       default_options{};
   const auto expected_default_cvpm =
@@ -189,21 +224,25 @@ void test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb() {
   constexpr float p_top = 5'000.0F;
   const std::array<float, 2> c3h{0.72F, 0.28F};
   const std::array<float, 2> c4h{750.0F, 125.0F};
+  const std::array<float, 3> c3f{1.0F, 0.5F, 0.0F};
+  const std::array<float, 3> c4f{0.0F, 0.0F, 0.0F};
 
   tywrf::FieldStorage2D<float> terrain(make_surface_layout());
   tywrf::FieldStorage3D<float> pb(make_layout());
   tywrf::FieldStorage3D<float> t_init(make_layout());
   tywrf::FieldStorage2D<float> mub(make_surface_layout());
   tywrf::FieldStorage3D<float> alb(make_layout());
+  tywrf::FieldStorage3D<float> phb(make_full_layout());
   fill_terrain(terrain);
   std::fill(pb.data(), pb.data() + pb.size(), kSentinel);
   std::fill(t_init.data(), t_init.data() + t_init.size(), kSentinel);
   std::fill(mub.data(), mub.data() + mub.size(), kSentinel);
   std::fill(alb.data(), alb.data() + alb.size(), kSentinel);
+  std::fill(phb.data(), phb.data() + phb.size(), kSentinel);
 
   const auto report = tywrf::dynamics::reconstruct_krosa_mass_base_state(
-      make_mass_inputs(terrain, c3h, c4h, p_top),
-      make_mass_outputs(pb, t_init, mub, alb));
+      make_mass_inputs(terrain, c3h, c4h, c3f, c4f, p_top),
+      make_mass_outputs(pb, t_init, mub, alb, phb));
 
   assert(report.ok());
   assert(report.used_wrf_surface_pressure_formula);
@@ -214,7 +253,8 @@ void test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb() {
   assert(report.wrote_t_init);
   assert(report.wrote_mub);
   assert(report.wrote_alb);
-  assert(!report.phb_full_level_reconstruction_implemented);
+  assert(report.wrote_phb);
+  assert(report.phb_full_level_reconstruction_implemented);
   assert(report.reconstructed_column_count == 6);
   assert(report.reconstructed_point_count == 12);
 
@@ -225,6 +265,7 @@ void test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb() {
   const auto t_view = t_init.view();
   const auto mub_view = mub.view();
   const auto alb_view = alb.view();
+  const auto phb_view = phb.view();
   for (std::int32_t j = surface_layout.j_begin(); j < surface_layout.j_end();
        ++j) {
     for (std::int32_t i = surface_layout.i_begin(); i < surface_layout.i_end();
@@ -232,6 +273,15 @@ void test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb() {
       const auto p_surf = expected_surface_pressure(terrain_view(i, j));
       const auto expected_mub = static_cast<float>(p_surf - p_top);
       assert(std::abs(mub_view(i, j) - expected_mub) < 1.0e-3F);
+      const auto full_i = phb.layout().i_begin() + i - surface_layout.i_begin();
+      const auto full_j = phb.layout().j_begin() + j - surface_layout.j_begin();
+      auto expected_phb =
+          static_cast<double>(terrain_view(i, j)) *
+          static_cast<double>(default_options.gravity);
+      assert(std::abs(
+                 static_cast<double>(
+                     phb_view(full_i, full_j, phb.layout().k_begin())) -
+                 expected_phb) < 1.0e-4);
       for (std::int32_t k = mass_layout.k_begin(); k < mass_layout.k_end();
            ++k) {
         const auto kk = k - mass_layout.k_begin();
@@ -248,6 +298,29 @@ void test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb() {
             expected_alb(expected_pb, expected_theta);
         assert(std::abs(alb_view(i, j, k) - expected_inverse_density) <
                1.0e-7F);
+
+        const auto phb_mub = static_cast<double>(mub_view(i, j));
+        const auto pfu =
+            static_cast<double>(c3f[static_cast<std::size_t>(kk + 1)]) *
+                phb_mub +
+            static_cast<double>(c4f[static_cast<std::size_t>(kk + 1)]) +
+            p_top;
+        const auto pfd =
+            static_cast<double>(c3f[static_cast<std::size_t>(kk)]) *
+                phb_mub +
+            static_cast<double>(c4f[static_cast<std::size_t>(kk)]) + p_top;
+        const auto phm =
+            static_cast<double>(c3h[static_cast<std::size_t>(kk)]) *
+                phb_mub +
+            static_cast<double>(c4h[static_cast<std::size_t>(kk)]) + p_top;
+        expected_phb += static_cast<double>(expected_inverse_density) * phm *
+                        std::log(pfd / pfu);
+        assert(std::abs(
+                   static_cast<double>(phb_view(
+                       full_i,
+                       full_j,
+                       phb.layout().k_begin() + kk + 1)) -
+                   expected_phb) < 1.0e-2);
       }
     }
   }
@@ -257,11 +330,14 @@ void test_krosa_mass_base_state_only_writes_active_cells() {
   constexpr float p_top = 5'000.0F;
   const std::array<float, 2> c3h{0.65F, 0.35F};
   const std::array<float, 2> c4h{0.0F, 0.0F};
+  const std::array<float, 3> c3f{1.0F, 0.5F, 0.0F};
+  const std::array<float, 3> c4f{0.0F, 0.0F, 0.0F};
   tywrf::FieldStorage2D<float> terrain(make_surface_layout());
   tywrf::FieldStorage3D<float> pb(make_layout());
   tywrf::FieldStorage3D<float> t_init(make_layout());
   tywrf::FieldStorage2D<float> mub(make_surface_layout());
   tywrf::FieldStorage3D<float> alb(make_layout());
+  tywrf::FieldStorage3D<float> phb(make_full_layout());
   fill_terrain(terrain);
   const std::vector<float> terrain_before(
       terrain.data(), terrain.data() + terrain.size());
@@ -269,10 +345,11 @@ void test_krosa_mass_base_state_only_writes_active_cells() {
   std::fill(t_init.data(), t_init.data() + t_init.size(), kSentinel);
   std::fill(mub.data(), mub.data() + mub.size(), kSentinel);
   std::fill(alb.data(), alb.data() + alb.size(), kSentinel);
+  std::fill(phb.data(), phb.data() + phb.size(), kSentinel);
 
   const auto report = tywrf::dynamics::reconstruct_krosa_mass_base_state(
-      make_mass_inputs(terrain, c3h, c4h, p_top),
-      make_mass_outputs(pb, t_init, mub, alb));
+      make_mass_inputs(terrain, c3h, c4h, c3f, c4f, p_top),
+      make_mass_outputs(pb, t_init, mub, alb, phb));
   assert(report.ok());
   assert(std::equal(
       terrain.data(), terrain.data() + terrain.size(), terrain_before.begin()));
@@ -288,6 +365,19 @@ void test_krosa_mass_base_state_only_writes_active_cells() {
         assert(active || pb.view()(i, j, k) == kSentinel);
         assert(active || t_init.view()(i, j, k) == kSentinel);
         assert(active || alb.view()(i, j, k) == kSentinel);
+      }
+    }
+  }
+
+  const auto full_layout = phb.layout();
+  for (std::int32_t j = 0; j < full_layout.ny; ++j) {
+    for (std::int32_t k = 0; k < full_layout.nz; ++k) {
+      for (std::int32_t i = 0; i < full_layout.nx; ++i) {
+        const bool active =
+            i >= full_layout.i_begin() && i < full_layout.i_end() &&
+            j >= full_layout.j_begin() && j < full_layout.j_end() &&
+            k >= full_layout.k_begin() && k < full_layout.k_end();
+        assert(active || phb.view()(i, j, k) == kSentinel);
       }
     }
   }
@@ -321,6 +411,8 @@ void test_krosa_mass_base_state_validates_shape_stride_and_coefficients() {
       {const_view(bad_terrain),
        {c3h.data(), static_cast<std::int32_t>(c3h.size())},
        {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+       {},
+       {},
        p_top},
       make_mass_outputs(pb, t_init, mub, alb));
   assert(!report.ok());
@@ -330,12 +422,83 @@ void test_krosa_mass_base_state_validates_shape_stride_and_coefficients() {
       {static_cast<const tywrf::FieldStorage2D<float>&>(terrain).view(),
        {c3h.data(), 1},
        {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+       {},
+       {},
        p_top},
       make_mass_outputs(pb, t_init, mub, alb));
   assert(!report.ok());
   assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
 
   assert(std::all_of(pb.data(), pb.data() + pb.size(), [](const float value) {
+    return value == kSentinel;
+  }));
+}
+
+void test_krosa_mass_base_state_phb_shape_mismatch_fails_without_writing() {
+  constexpr float p_top = 5'000.0F;
+  const std::array<float, 2> c3h{0.8F, 0.2F};
+  const std::array<float, 2> c4h{0.0F, 0.0F};
+  const std::array<float, 3> c3f{1.0F, 0.5F, 0.0F};
+  const std::array<float, 3> c4f{0.0F, 0.0F, 0.0F};
+  tywrf::FieldStorage2D<float> terrain(make_surface_layout());
+  tywrf::FieldStorage3D<float> pb(make_layout());
+  tywrf::FieldStorage3D<float> t_init(make_layout());
+  tywrf::FieldStorage2D<float> mub(make_surface_layout());
+  tywrf::FieldStorage3D<float> alb(make_layout());
+  tywrf::FieldStorage3D<float> bad_phb(make_layout());
+  fill_terrain(terrain);
+  std::fill(pb.data(), pb.data() + pb.size(), kSentinel);
+  std::fill(t_init.data(), t_init.data() + t_init.size(), kSentinel);
+  std::fill(mub.data(), mub.data() + mub.size(), kSentinel);
+  std::fill(alb.data(), alb.data() + alb.size(), kSentinel);
+  std::fill(bad_phb.data(), bad_phb.data() + bad_phb.size(), kSentinel);
+
+  const auto report = tywrf::dynamics::reconstruct_krosa_mass_base_state(
+      make_mass_inputs(terrain, c3h, c4h, c3f, c4f, p_top),
+      make_mass_outputs(pb, t_init, mub, alb, bad_phb));
+
+  assert(!report.ok());
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(std::all_of(pb.data(), pb.data() + pb.size(), [](const float value) {
+    return value == kSentinel;
+  }));
+  assert(std::all_of(
+      t_init.data(), t_init.data() + t_init.size(), [](const float value) {
+        return value == kSentinel;
+      }));
+  assert(std::all_of(mub.data(), mub.data() + mub.size(), [](const float value) {
+    return value == kSentinel;
+  }));
+  assert(std::all_of(alb.data(), alb.data() + alb.size(), [](const float value) {
+    return value == kSentinel;
+  }));
+  assert(std::all_of(
+      bad_phb.data(), bad_phb.data() + bad_phb.size(), [](const float value) {
+        return value == kSentinel;
+      }));
+}
+
+void test_krosa_mass_base_state_phb_requires_alb_output() {
+  constexpr float p_top = 5'000.0F;
+  const std::array<float, 2> c3h{0.8F, 0.2F};
+  const std::array<float, 2> c4h{0.0F, 0.0F};
+  const std::array<float, 3> c3f{1.0F, 0.5F, 0.0F};
+  const std::array<float, 3> c4f{0.0F, 0.0F, 0.0F};
+  tywrf::FieldStorage2D<float> terrain(make_surface_layout());
+  tywrf::FieldStorage3D<float> pb(make_layout());
+  tywrf::FieldStorage3D<float> t_init(make_layout());
+  tywrf::FieldStorage2D<float> mub(make_surface_layout());
+  tywrf::FieldStorage3D<float> phb(make_full_layout());
+  fill_terrain(terrain);
+  std::fill(phb.data(), phb.data() + phb.size(), kSentinel);
+
+  const auto report = tywrf::dynamics::reconstruct_krosa_mass_base_state(
+      make_mass_inputs(terrain, c3h, c4h, c3f, c4f, p_top),
+      {pb.view(), t_init.view(), mub.view(), {}, phb.view()});
+
+  assert(!report.ok());
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(std::all_of(phb.data(), phb.data() + phb.size(), [](const float value) {
     return value == kSentinel;
   }));
 }
@@ -373,7 +536,7 @@ void test_krosa_mass_base_state_invalid_input_and_stratosphere_contract() {
   assert(!report.phb_full_level_reconstruction_implemented);
 }
 
-void test_krosa_mass_base_state_pod_and_phb_not_implemented_contract() {
+void test_krosa_mass_base_state_pod_and_optional_phb_absent_contract() {
   static_assert(std::is_standard_layout_v<
                 tywrf::dynamics::BaseStateVerticalCoefficientView>);
   static_assert(std::is_trivially_copyable_v<
@@ -405,10 +568,11 @@ void test_krosa_mass_base_state_pod_and_phb_not_implemented_contract() {
 
   const auto report = tywrf::dynamics::reconstruct_krosa_mass_base_state(
       make_mass_inputs(terrain, c3h, c4h, 5'000.0F),
-      {pb.view(), t_init.view(), mub.view(), {}});
+      {pb.view(), t_init.view(), mub.view(), {}, {}});
   assert(report.ok());
   assert(!report.wrote_alb);
   assert(!report.reused_alb_helper);
+  assert(!report.wrote_phb);
   assert(!report.phb_full_level_reconstruction_implemented);
 }
 
@@ -583,11 +747,13 @@ void test_surface_albedo_and_restart_truth_are_not_inputs() {
 }  // namespace
 
 int main() {
-  test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb();
+  test_krosa_mass_base_state_formula_reconstructs_pb_t_init_mub_alb_phb();
   test_krosa_mass_base_state_only_writes_active_cells();
   test_krosa_mass_base_state_validates_shape_stride_and_coefficients();
+  test_krosa_mass_base_state_phb_shape_mismatch_fails_without_writing();
+  test_krosa_mass_base_state_phb_requires_alb_output();
   test_krosa_mass_base_state_invalid_input_and_stratosphere_contract();
-  test_krosa_mass_base_state_pod_and_phb_not_implemented_contract();
+  test_krosa_mass_base_state_pod_and_optional_phb_absent_contract();
   test_formula_reconstructs_wrf_inverse_base_density_alb();
   test_bad_shape_returns_invalid_contract_without_writing();
   test_nonfinite_or_nonpositive_input_returns_invalid_contract();

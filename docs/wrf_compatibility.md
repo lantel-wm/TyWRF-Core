@@ -250,12 +250,39 @@ source of truth and must not read later restart-file `ALB` as validation truth.
 Later restart-file `ALB` may be used only as a probe or smoke reference for
 shape and range checks.
 
-The KROSA non-restart `start_domain` provider contract is broader: reconstruct
-`PB`, `T_INIT`, and `MUB` from `HT`/`HGT`, `P_TOP`, `C3F`/`C4F`,
-`C3H`/`C4H`, and WRF constants, then derive `ALB` from the reconstructed
-same-domain base state. `PHB` reconstruction for `hypsometric_opt=2` remains a
-future log-linear full-level contract; it must not be documented or treated as
-an already completed pressure-refresh compute path.
+Round D27 targets the complete KROSA non-restart `start_domain` base-state
+provider:
+
+```text
+HGT/P_TOP/C3F/C4F/C3H/C4H/WRF base-atmosphere constants
+  -> PB/T_INIT/MUB/ALB/PHB
+```
+
+The provider reconstructs `PB`, `T_INIT`, and `MUB` from terrain, hybrid
+coordinate coefficients, model top, and the WRF base-atmosphere constants, then
+derives `ALB` from that reconstructed same-domain base state. For KROSA
+`hypsometric_opt=2`, `PHB` is a log-linear full-level reconstruction, not a
+mass-level field. With WRF-style 1-based vertical indexing:
+
+```text
+PHB(i,1,j) = HGT(i,j) * g
+pfu = C3F(k  ) * MUB(i,j) + C4F(k  ) + P_TOP
+pfd = C3F(k-1) * MUB(i,j) + C4F(k-1) + P_TOP
+phm = C3H(k-1) * MUB(i,j) + C4H(k-1) + P_TOP
+PHB(i,k,j) = PHB(i,k-1,j) + ALB(i,k-1,j) * phm * log(pfd / pfu)
+```
+
+The `PHB` full-level provider must use `ALB` and `MUB` from the same domain and
+same valid time. Mixing a full-level `PHB` reconstruction with mass-level
+`ALB`/`MUB` from another time or a later restart is not compatible with the
+KROSA start-time contract. Even after this provider is complete, the
+pressure-refresh compute path is still not invoked from the skeleton/remap
+sequence; staging fields, diagnostic outputs, and provider probes remain
+non-gate artifacts until a real pressure refresh is wired and validated.
+
+Later restart-file `ALB` or `PHB` may be used only for probe/smoke checks such
+as shape, finite range, and formula sanity. It must not be promoted to d02
+start-time validation truth.
 
 Diagnostic parent-fill candidates remain marked `not_physical`,
 `diagnostic_only`, and `gate_candidate = false`. They are non-physical,
