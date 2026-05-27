@@ -176,6 +176,121 @@ int run_staging_test() {
   return failures == 0 ? 0 : 1;
 }
 
+int run_packing_test() {
+  {
+    const std::array<std::size_t, 3> shape{2, 3, 4};
+    std::vector<float> raw(shape[0] * shape[1] * shape[2]);
+    for (std::size_t k = 0; k < shape[0]; ++k) {
+      for (std::size_t j = 0; j < shape[1]; ++j) {
+        for (std::size_t i = 0; i < shape[2]; ++i) {
+          raw[((k * shape[1]) + j) * shape[2] + i] =
+              static_cast<float>(100 * k + 10 * j + i);
+        }
+      }
+    }
+
+    const auto packed = tywrf::io::pack_fdda_3d_raw_to_canonical(raw, shape);
+    expect(packed.layout.nx == 4 && packed.layout.ny == 3 &&
+               packed.layout.nz == 2,
+           "FDDA packed layout extents");
+    for (std::size_t k = 0; k < shape[0]; ++k) {
+      for (std::size_t j = 0; j < shape[1]; ++j) {
+        for (std::size_t i = 0; i < shape[2]; ++i) {
+          const auto expected = static_cast<float>(100 * k + 10 * j + i);
+          const auto canonical_index = ((j * shape[0]) + k) * shape[2] + i;
+          expect(packed.values.at(canonical_index) == expected,
+                 "FDDA raw k,j,i packs to canonical j,k,i");
+          expect(packed.at(i, j, k) == expected, "FDDA packed at()");
+        }
+      }
+    }
+  }
+
+  {
+    const std::array<std::size_t, 3> shape{2, 3, 4};
+    std::vector<float> raw(shape[0] * shape[1] * shape[2]);
+    for (std::size_t bdy = 0; bdy < shape[0]; ++bdy) {
+      for (std::size_t k = 0; k < shape[1]; ++k) {
+        for (std::size_t j = 0; j < shape[2]; ++j) {
+          raw[((bdy * shape[1]) + k) * shape[2] + j] =
+              static_cast<float>(100 * bdy + 10 * k + j);
+        }
+      }
+    }
+
+    const auto packed =
+        tywrf::io::pack_boundary_x_side_raw_to_canonical(raw, shape);
+    expect(packed.layout.nx == 2 && packed.layout.ny == 4 &&
+               packed.layout.nz == 3,
+           "X-side boundary packed layout extents");
+    for (std::size_t bdy = 0; bdy < shape[0]; ++bdy) {
+      for (std::size_t k = 0; k < shape[1]; ++k) {
+        for (std::size_t j = 0; j < shape[2]; ++j) {
+          const auto expected = static_cast<float>(100 * bdy + 10 * k + j);
+          const auto canonical_index = ((j * shape[1]) + k) * shape[0] + bdy;
+          expect(packed.values.at(canonical_index) == expected,
+                 "X-side raw bdy,k,j packs to canonical i=bdy,j,k");
+          expect(packed.at(bdy, j, k) == expected, "X-side packed at()");
+        }
+      }
+    }
+  }
+
+  {
+    const std::array<std::size_t, 3> shape{3, 2, 4};
+    std::vector<float> raw(shape[0] * shape[1] * shape[2]);
+    for (std::size_t bdy = 0; bdy < shape[0]; ++bdy) {
+      for (std::size_t k = 0; k < shape[1]; ++k) {
+        for (std::size_t i = 0; i < shape[2]; ++i) {
+          raw[((bdy * shape[1]) + k) * shape[2] + i] =
+              static_cast<float>(100 * bdy + 10 * k + i);
+        }
+      }
+    }
+
+    const auto packed =
+        tywrf::io::pack_boundary_y_side_raw_to_canonical(raw, shape);
+    expect(packed.layout.nx == 4 && packed.layout.ny == 3 &&
+               packed.layout.nz == 2,
+           "Y-side boundary packed layout extents");
+    for (std::size_t bdy = 0; bdy < shape[0]; ++bdy) {
+      for (std::size_t k = 0; k < shape[1]; ++k) {
+        for (std::size_t i = 0; i < shape[2]; ++i) {
+          const auto expected = static_cast<float>(100 * bdy + 10 * k + i);
+          const auto canonical_index = ((bdy * shape[1]) + k) * shape[2] + i;
+          expect(packed.values.at(canonical_index) == expected,
+                 "Y-side raw bdy,k,i packs to canonical i,j=bdy,k");
+          expect(packed.at(i, bdy, k) == expected, "Y-side packed at()");
+        }
+      }
+    }
+  }
+
+  expect_frame_error(
+      [] {
+        const std::array<std::size_t, 2> shape{2, 3};
+        const std::vector<float> raw(shape[0] * shape[1], 1.0F);
+        (void)tywrf::io::pack_fdda_3d_raw_to_canonical(raw, shape);
+      },
+      "raw packing should reject non-3D rank");
+  expect_frame_error(
+      [] {
+        const std::array<std::size_t, 3> shape{2, 0, 3};
+        const std::vector<float> raw(1, 1.0F);
+        (void)tywrf::io::pack_boundary_x_side_raw_to_canonical(raw, shape);
+      },
+      "raw packing should reject empty extents");
+  expect_frame_error(
+      [] {
+        const std::array<std::size_t, 3> shape{2, 3, 4};
+        const std::vector<float> raw(23, 1.0F);
+        (void)tywrf::io::pack_boundary_y_side_raw_to_canonical(raw, shape);
+      },
+      "raw packing should reject value count mismatches");
+
+  return failures == 0 ? 0 : 1;
+}
+
 int run_reference_smoke_test() {
   const auto root = reference_dir();
   const auto wrfbdy = root / "wrfbdy_d01";
@@ -244,6 +359,9 @@ int main() {
       return status;
     }
     if (const int status = run_staging_test(); status != 0) {
+      return status;
+    }
+    if (const int status = run_packing_test(); status != 0) {
       return status;
     }
     if (const int status = run_reference_smoke_test(); status != 0) {

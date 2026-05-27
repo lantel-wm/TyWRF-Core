@@ -86,6 +86,25 @@ struct ForcingStagedSlice {
   ForcingFieldBuffer field;
 };
 
+struct CanonicalForcingLayout {
+  std::size_t nx = 0;
+  std::size_t ny = 0;
+  std::size_t nz = 0;
+  std::size_t value_count = 0;
+
+  [[nodiscard]] std::size_t index(
+      std::size_t i,
+      std::size_t j,
+      std::size_t k) const;
+};
+
+struct PackedForcingField {
+  CanonicalForcingLayout layout{};
+  std::vector<float> values;
+
+  [[nodiscard]] float at(std::size_t i, std::size_t j, std::size_t k) const;
+};
+
 struct SpectralNudgingVariableMapping {
   std::string canonical_name;
   std::string old_variable_name;
@@ -108,6 +127,23 @@ struct SpectralNudgingVariableMapping {
 
 [[nodiscard]] ForcingStagedSlice stage_forcing_time_slice(
     const ForcingTimeSlice& slice);
+
+[[nodiscard]] CanonicalForcingLayout make_canonical_forcing_layout(
+    std::size_t nx,
+    std::size_t ny,
+    std::size_t nz);
+
+[[nodiscard]] PackedForcingField pack_fdda_3d_raw_to_canonical(
+    std::span<const float> raw_values,
+    std::span<const std::size_t> raw_shape);
+
+[[nodiscard]] PackedForcingField pack_boundary_x_side_raw_to_canonical(
+    std::span<const float> raw_values,
+    std::span<const std::size_t> raw_shape);
+
+[[nodiscard]] PackedForcingField pack_boundary_y_side_raw_to_canonical(
+    std::span<const float> raw_values,
+    std::span<const std::size_t> raw_shape);
 
 [[nodiscard]] std::vector<SpectralNudgingVariableMapping>
 krosa_spectral_nudging_variable_mappings();

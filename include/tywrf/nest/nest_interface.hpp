@@ -27,6 +27,14 @@ enum class IndexBase : std::uint8_t {
   one_based,
 };
 
+enum class HorizontalStagger : std::uint8_t {
+  mass,
+  u,
+  v,
+  w_full,
+  surface,
+};
+
 struct NestResult {
   NestStatus status = NestStatus::ok;
   const char* message = "";
@@ -66,6 +74,63 @@ struct ParentChildFootprint {
   std::int32_t span_i_parent_cells = 0;
   std::int32_t span_j_parent_cells = 0;
   IndexBase index_base = IndexBase::one_based;
+};
+
+struct DomainPose {
+  NestResult result{NestStatus::ok, "ok"};
+  HorizontalDomainDescriptor parent;
+  HorizontalDomainDescriptor domain;
+  ParentChildPosition parent_position;
+  ParentChildFootprint parent_footprint;
+  std::int32_t parent_grid_ratio = 0;
+};
+
+struct NestPose {
+  ParentChildDescriptor relationship;
+  DomainPose child;
+};
+
+struct PoseDelta {
+  NestResult result{NestStatus::ok, "ok"};
+  std::int32_t parent_di = 0;
+  std::int32_t parent_dj = 0;
+  std::int32_t child_di = 0;
+  std::int32_t child_dj = 0;
+  std::int32_t parent_to_child_ratio = 0;
+
+  [[nodiscard]] constexpr bool ok() const noexcept {
+    return result.ok();
+  }
+};
+
+struct RemapWindow {
+  HorizontalStagger stagger = HorizontalStagger::mass;
+  std::int32_t old_i_begin = 0;
+  std::int32_t old_j_begin = 0;
+  std::int32_t new_i_begin = 0;
+  std::int32_t new_j_begin = 0;
+  std::int32_t extent_i = 0;
+  std::int32_t extent_j = 0;
+  std::int32_t old_i_offset_from_new = 0;
+  std::int32_t old_j_offset_from_new = 0;
+
+  [[nodiscard]] constexpr bool empty() const noexcept {
+    return extent_i <= 0 || extent_j <= 0;
+  }
+};
+
+struct RemapPlan {
+  NestResult result{NestStatus::ok, "ok"};
+  PoseDelta delta;
+  RemapWindow mass;
+  RemapWindow u;
+  RemapWindow v;
+  RemapWindow w_full;
+  RemapWindow surface;
+
+  [[nodiscard]] constexpr bool ok() const noexcept {
+    return result.ok();
+  }
 };
 
 struct DomainMovingNestConfig {
@@ -138,6 +203,12 @@ struct SpectralNudgingConfig {
 [[nodiscard]] ParentChildPosition make_krosa_initial_d02_position() noexcept;
 [[nodiscard]] MovingNestConfig make_krosa_moving_nest_config() noexcept;
 [[nodiscard]] SpectralNudgingConfig make_krosa_spectral_nudging_config() noexcept;
+[[nodiscard]] DomainPose make_domain_pose(
+    const ParentChildDescriptor& descriptor,
+    const ParentChildPosition& position) noexcept;
+[[nodiscard]] NestPose make_nest_pose(
+    const ParentChildDescriptor& descriptor,
+    const ParentChildPosition& position) noexcept;
 
 [[nodiscard]] NestResult validate_parent_child_descriptor(
     const ParentChildDescriptor& descriptor) noexcept;
@@ -159,6 +230,21 @@ struct SpectralNudgingConfig {
 [[nodiscard]] NestResult validate_spectral_nudging_config(
     const SpectralNudgingConfig& config) noexcept;
 
+[[nodiscard]] PoseDelta pose_delta(
+    const DomainPose& from,
+    const DomainPose& to,
+    std::int32_t parent_to_child_ratio) noexcept;
+[[nodiscard]] PoseDelta pose_delta(
+    const NestPose& from,
+    const NestPose& to) noexcept;
+
+[[nodiscard]] RemapPlan build_remap_plan(
+    const DomainPose& from,
+    const DomainPose& to) noexcept;
+[[nodiscard]] RemapPlan build_remap_plan(
+    const NestPose& from,
+    const NestPose& to) noexcept;
+
 [[nodiscard]] ExchangeResult interpolate_parent_to_child(
     const ExchangeContract& contract) noexcept;
 
@@ -167,5 +253,6 @@ struct SpectralNudgingConfig {
 [[nodiscard]] std::string_view nest_status_name(NestStatus status) noexcept;
 [[nodiscard]] std::string_view exchange_operation_name(ExchangeOperation operation) noexcept;
 [[nodiscard]] std::string_view nudging_field_name(NudgingField field) noexcept;
+[[nodiscard]] std::string_view horizontal_stagger_name(HorizontalStagger stagger) noexcept;
 
 }  // namespace tywrf::nest

@@ -113,6 +113,34 @@ void validate_config(const ForcingFrameSelectorConfig& config) {
   return product;
 }
 
+[[nodiscard]] ForcingFieldLayout validate_raw_pack_input(
+    std::span<const float> raw_values,
+    std::span<const std::size_t> raw_shape) {
+  if (raw_shape.size() != 3) {
+    throw ForcingFrameError("raw forcing pack requires rank 3 input");
+  }
+  for (const auto extent : raw_shape) {
+    if (extent == 0) {
+      throw ForcingFrameError("raw forcing pack requires non-empty extents");
+    }
+  }
+
+  auto raw_layout = make_forcing_field_layout(raw_shape);
+  if (raw_values.size() != raw_layout.value_count) {
+    throw ForcingFrameError("raw forcing value count does not match input shape");
+  }
+  return raw_layout;
+}
+
+[[nodiscard]] std::size_t raw_index_3d(
+    const ForcingFieldLayout& layout,
+    const std::size_t dim0,
+    const std::size_t dim1,
+    const std::size_t dim2) {
+  return dim0 * layout.strides[0] + dim1 * layout.strides[1] +
+         dim2 * layout.strides[2];
+}
+
 }  // namespace
 
 ForcingFrameSelector::ForcingFrameSelector(ForcingFrameSelectorConfig config)
@@ -240,6 +268,27 @@ ForcingFieldView ForcingFieldBuffer::view() noexcept {
   return {values.data(), layout};
 }
 
+std::size_t CanonicalForcingLayout::index(
+    const std::size_t i,
+    const std::size_t j,
+    const std::size_t k) const {
+  if (i >= nx || j >= ny || k >= nz) {
+    throw ForcingFrameError("canonical forcing index is outside layout extent");
+  }
+  return ((j * nz) + k) * nx + i;
+}
+
+float PackedForcingField::at(
+    const std::size_t i,
+    const std::size_t j,
+    const std::size_t k) const {
+  const auto linear_index = layout.index(i, j, k);
+  if (linear_index >= values.size()) {
+    throw ForcingFrameError("packed forcing value count does not match layout");
+  }
+  return values[linear_index];
+}
+
 ForcingStagedSlice stage_forcing_time_slice(const ForcingTimeSlice& slice) {
   ForcingStagedSlice staged;
   staged.variable_name = slice.metadata.name;
@@ -250,6 +299,86 @@ ForcingStagedSlice stage_forcing_time_slice(const ForcingTimeSlice& slice) {
     throw ForcingFrameError("forcing time-slice value count does not match layout");
   }
   return staged;
+}
+
+CanonicalForcingLayout make_canonical_forcing_layout(
+    const std::size_t nx,
+    const std::size_t ny,
+    const std::size_t nz) {
+  if (nx == 0 || ny == 0 || nz == 0) {
+    throw ForcingFrameError("canonical forcing layout requires non-empty extents");
+  }
+  const std::array<std::size_t, 3> shape{ny, nz, nx};
+  return CanonicalForcingLayout{nx, ny, nz, checked_product(shape)};
+}
+
+PackedForcingField pack_fdda_3d_raw_to_canonical(
+    std::span<const float> raw_values,
+    std::span<const std::size_t> raw_shape) {
+  const auto raw_layout = validate_raw_pack_input(raw_values, raw_shape);
+  const auto nz = raw_shape[0];
+  const auto ny = raw_shape[1];
+  const auto nx = raw_shape[2];
+
+  PackedForcingField packed;
+  packed.layout = make_canonical_forcing_layout(nx, ny, nz);
+  packed.values.assign(packed.layout.value_count, 0.0F);
+
+  for (std::size_t k = 0; k < nz; ++k) {
+    for (std::size_t j = 0; j < ny; ++j) {
+      for (std::size_t i = 0; i < nx; ++i) {
+        packed.values[packed.layout.index(i, j, k)] =
+            raw_values[raw_index_3d(raw_layout, k, j, i)];
+      }
+    }
+  }
+  return packed;
+}
+
+PackedForcingField pack_boundary_x_side_raw_to_canonical(
+    std::span<const float> raw_values,
+    std::span<const std::size_t> raw_shape) {
+  const auto raw_layout = validate_raw_pack_input(raw_values, raw_shape);
+  const auto bdy_width = raw_shape[0];
+  const auto nz = raw_shape[1];
+  const auto ny = raw_shape[2];
+
+  PackedForcingField packed;
+  packed.layout = make_canonical_forcing_layout(bdy_width, ny, nz);
+  packed.values.assign(packed.layout.value_count, 0.0F);
+
+  for (std::size_t bdy = 0; bdy < bdy_width; ++bdy) {
+    for (std::size_t k = 0; k < nz; ++k) {
+      for (std::size_t j = 0; j < ny; ++j) {
+        packed.values[packed.layout.index(bdy, j, k)] =
+            raw_values[raw_index_3d(raw_layout, bdy, k, j)];
+      }
+    }
+  }
+  return packed;
+}
+
+PackedForcingField pack_boundary_y_side_raw_to_canonical(
+    std::span<const float> raw_values,
+    std::span<const std::size_t> raw_shape) {
+  const auto raw_layout = validate_raw_pack_input(raw_values, raw_shape);
+  const auto bdy_width = raw_shape[0];
+  const auto nz = raw_shape[1];
+  const auto nx = raw_shape[2];
+
+  PackedForcingField packed;
+  packed.layout = make_canonical_forcing_layout(nx, bdy_width, nz);
+  packed.values.assign(packed.layout.value_count, 0.0F);
+
+  for (std::size_t bdy = 0; bdy < bdy_width; ++bdy) {
+    for (std::size_t k = 0; k < nz; ++k) {
+      for (std::size_t i = 0; i < nx; ++i) {
+        packed.values[packed.layout.index(i, bdy, k)] =
+            raw_values[raw_index_3d(raw_layout, bdy, k, i)];
+      }
+    }
+  }
+  return packed;
 }
 
 std::vector<SpectralNudgingVariableMapping> krosa_spectral_nudging_variable_mappings() {

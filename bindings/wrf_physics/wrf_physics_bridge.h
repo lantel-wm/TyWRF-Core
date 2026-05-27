@@ -1,13 +1,50 @@
 #ifndef TYWRF_WRF_PHYSICS_BRIDGE_H
 #define TYWRF_WRF_PHYSICS_BRIDGE_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define TYWRF_PHYSICS_ABI_VERSION 1
+#define TYWRF_PHYSICS_ABI_VERSION_V1 1
+#define TYWRF_PHYSICS_ABI_VERSION_V2 2
+#define TYWRF_PHYSICS_ABI_VERSION TYWRF_PHYSICS_ABI_VERSION_V1
+
+#define TYWRF_PHYSICS_CAPABILITY_NONE UINT64_C(0)
+#define TYWRF_PHYSICS_CAPABILITY_DRIVER_CONTEXT (UINT64_C(1) << 0)
+#define TYWRF_PHYSICS_CAPABILITY_DERIVED_STATE (UINT64_C(1) << 1)
+#define TYWRF_PHYSICS_CAPABILITY_STATIC_MASK (UINT64_C(1) << 2)
+#define TYWRF_PHYSICS_CAPABILITY_SURFACE_STATE (UINT64_C(1) << 3)
+#define TYWRF_PHYSICS_CAPABILITY_SOIL_SNOW (UINT64_C(1) << 4)
+#define TYWRF_PHYSICS_CAPABILITY_TENDENCIES (UINT64_C(1) << 5)
+#define TYWRF_PHYSICS_CAPABILITY_ACCUMULATORS (UINT64_C(1) << 6)
+#define TYWRF_PHYSICS_CAPABILITY_RADIATION_RRTMG (UINT64_C(1) << 7)
+#define TYWRF_PHYSICS_CAPABILITY_SLAB_OCEAN (UINT64_C(1) << 8)
+#define TYWRF_PHYSICS_CAPABILITY_PROCESS_GLOBAL (UINT64_C(1) << 9)
+
+typedef struct TywrfPhysicsBlockHeader {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  uint64_t capabilities;
+  const void* next;
+} TywrfPhysicsBlockHeader;
+
+#define TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE \
+  ((uint32_t)sizeof(TywrfPhysicsBlockHeader))
+
+static inline int tywrf_physics_block_header_has_min_size(
+    const TywrfPhysicsBlockHeader* header,
+    const uint32_t min_size) {
+  return header != NULL && header->struct_size >= min_size;
+}
+
+static inline int tywrf_physics_block_header_has_abi(
+    const TywrfPhysicsBlockHeader* header,
+    const uint32_t abi_version) {
+  return header != NULL && header->abi_version == abi_version;
+}
 
 typedef enum TywrfPhysicsStatus {
   TYWRF_PHYSICS_STATUS_STUB_VALIDATED = 0,

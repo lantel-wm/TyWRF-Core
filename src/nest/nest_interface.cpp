@@ -28,6 +28,24 @@ namespace {
          domain.mass_ny > 0 && domain.namelist_e_we > 0 && domain.namelist_e_sn > 0;
 }
 
+[[nodiscard]] constexpr bool same_horizontal_domain(
+    const HorizontalDomainDescriptor& lhs,
+    const HorizontalDomainDescriptor& rhs) noexcept {
+  return lhs.domain_id == rhs.domain_id && lhs.grid_spacing_m == rhs.grid_spacing_m &&
+         lhs.mass_nx == rhs.mass_nx && lhs.mass_ny == rhs.mass_ny &&
+         lhs.namelist_e_we == rhs.namelist_e_we &&
+         lhs.namelist_e_sn == rhs.namelist_e_sn;
+}
+
+[[nodiscard]] constexpr bool same_parent_child_descriptor(
+    const ParentChildDescriptor& lhs,
+    const ParentChildDescriptor& rhs) noexcept {
+  return same_horizontal_domain(lhs.parent, rhs.parent) &&
+         same_horizontal_domain(lhs.child, rhs.child) &&
+         lhs.parent_grid_ratio == rhs.parent_grid_ratio &&
+         lhs.parent_time_step_ratio == rhs.parent_time_step_ratio;
+}
+
 [[nodiscard]] constexpr std::int32_t lower_bound(
     const IndexBase index_base,
     const std::int32_t corral_dist_parent_cells) noexcept {
@@ -41,6 +59,128 @@ namespace {
     const std::int32_t corral_dist_parent_cells) noexcept {
   return index_base == IndexBase::one_based ? namelist_extent - corral_dist_parent_cells
                                             : namelist_extent - 1 - corral_dist_parent_cells;
+}
+
+[[nodiscard]] NestResult validate_domain_pose(const DomainPose& pose) noexcept {
+  if (!pose.result.ok()) {
+    return pose.result;
+  }
+  if (!positive_domain(pose.parent) || !positive_domain(pose.domain)) {
+    return result(NestStatus::invalid_configuration, "domain pose descriptor must be positive");
+  }
+  if (pose.parent_grid_ratio <= 0) {
+    return result(NestStatus::invalid_configuration, "domain pose ratio must be positive");
+  }
+  if (pose.parent.grid_spacing_m != pose.domain.grid_spacing_m * pose.parent_grid_ratio) {
+    return result(
+        NestStatus::unsupported_resolution,
+        "domain pose spacing must match parent_grid_ratio");
+  }
+  if (pose.domain.grid_spacing_m != 2'000) {
+    return result(NestStatus::unsupported_resolution, "TyWRF-Core v1 requires d02 at 2 km");
+  }
+  if (pose.domain.mass_nx % pose.parent_grid_ratio != 0 ||
+      pose.domain.mass_ny % pose.parent_grid_ratio != 0) {
+    return result(
+        NestStatus::invalid_configuration,
+        "domain pose mass dimensions must be divisible by parent_grid_ratio");
+  }
+  if (pose.parent_position.index_base != pose.parent_footprint.index_base) {
+    return result(NestStatus::invalid_contract, "domain pose index bases must match");
+  }
+
+  const auto expected_span_i = pose.domain.mass_nx / pose.parent_grid_ratio;
+  const auto expected_span_j = pose.domain.mass_ny / pose.parent_grid_ratio;
+  if (pose.parent_footprint.span_i_parent_cells != expected_span_i ||
+      pose.parent_footprint.span_j_parent_cells != expected_span_j ||
+      pose.parent_footprint.i_parent_start != pose.parent_position.i_parent_start ||
+      pose.parent_footprint.j_parent_start != pose.parent_position.j_parent_start ||
+      pose.parent_footprint.i_parent_end !=
+          pose.parent_footprint.i_parent_start + expected_span_i ||
+      pose.parent_footprint.j_parent_end !=
+          pose.parent_footprint.j_parent_start + expected_span_j) {
+    return result(NestStatus::invalid_contract, "domain pose footprint is inconsistent");
+  }
+
+  const auto i_lower = lower_bound(pose.parent_position.index_base, 0);
+  const auto j_lower = lower_bound(pose.parent_position.index_base, 0);
+  const auto i_upper = upper_bound(pose.parent.namelist_e_we, pose.parent_position.index_base, 0);
+  const auto j_upper = upper_bound(pose.parent.namelist_e_sn, pose.parent_position.index_base, 0);
+  if (pose.parent_footprint.i_parent_start < i_lower ||
+      pose.parent_footprint.j_parent_start < j_lower ||
+      pose.parent_footprint.i_parent_end > i_upper ||
+      pose.parent_footprint.j_parent_end > j_upper) {
+    return result(NestStatus::out_of_bounds, "domain pose footprint is outside parent domain");
+  }
+
+  return ok_result();
+}
+
+[[nodiscard]] NestResult validate_remap_pair(
+    const DomainPose& from,
+    const DomainPose& to,
+    const std::int32_t parent_to_child_ratio) noexcept {
+  if (const auto from_status = validate_domain_pose(from); !from_status.ok()) {
+    return from_status;
+  }
+  if (const auto to_status = validate_domain_pose(to); !to_status.ok()) {
+    return to_status;
+  }
+  if (!same_horizontal_domain(from.parent, to.parent) ||
+      !same_horizontal_domain(from.domain, to.domain) ||
+      from.parent_grid_ratio != to.parent_grid_ratio) {
+    return result(NestStatus::invalid_contract, "remap poses must describe the same child grid");
+  }
+  if (from.parent_position.index_base != to.parent_position.index_base) {
+    return result(NestStatus::invalid_contract, "remap poses must use the same index base");
+  }
+  if (parent_to_child_ratio <= 0) {
+    return result(NestStatus::invalid_configuration, "pose delta ratio must be positive");
+  }
+  if (parent_to_child_ratio != from.parent_grid_ratio) {
+    return result(NestStatus::invalid_contract, "pose delta ratio must match parent_grid_ratio");
+  }
+  return ok_result();
+}
+
+[[nodiscard]] RemapWindow make_window(
+    const HorizontalStagger stagger,
+    const std::int32_t mass_nx,
+    const std::int32_t mass_ny,
+    const PoseDelta& delta) noexcept {
+  auto nx = mass_nx;
+  auto ny = mass_ny;
+  if (stagger == HorizontalStagger::u) {
+    ++nx;
+  } else if (stagger == HorizontalStagger::v) {
+    ++ny;
+  }
+
+  RemapWindow window{};
+  window.stagger = stagger;
+  if (delta.child_di >= 0) {
+    window.old_i_begin = delta.child_di;
+    window.new_i_begin = 0;
+    window.extent_i = nx - delta.child_di;
+  } else {
+    window.old_i_begin = 0;
+    window.new_i_begin = -delta.child_di;
+    window.extent_i = nx + delta.child_di;
+  }
+
+  if (delta.child_dj >= 0) {
+    window.old_j_begin = delta.child_dj;
+    window.new_j_begin = 0;
+    window.extent_j = ny - delta.child_dj;
+  } else {
+    window.old_j_begin = 0;
+    window.new_j_begin = -delta.child_dj;
+    window.extent_j = ny + delta.child_dj;
+  }
+
+  window.old_i_offset_from_new = window.old_i_begin - window.new_i_begin;
+  window.old_j_offset_from_new = window.old_j_begin - window.new_j_begin;
+  return window;
 }
 
 [[nodiscard]] NestResult validate_exchange_common(
@@ -117,6 +257,38 @@ SpectralNudgingConfig make_krosa_spectral_nudging_config() noexcept {
           NudgingFieldBinding{NudgingField::mu, "MU_NDG_OLD", "MU_NDG_NEW", false},
       },
   };
+}
+
+DomainPose make_domain_pose(
+    const ParentChildDescriptor& descriptor,
+    const ParentChildPosition& position) noexcept {
+  DomainPose pose{};
+  pose.parent = descriptor.parent;
+  pose.domain = descriptor.child;
+  pose.parent_position = position;
+  pose.parent_grid_ratio = descriptor.parent_grid_ratio;
+
+  if (const auto descriptor_status = validate_parent_child_descriptor(descriptor);
+      !descriptor_status.ok()) {
+    pose.result = descriptor_status;
+    return pose;
+  }
+
+  pose.parent_footprint = parent_child_footprint(descriptor, position);
+  if (const auto position_status = validate_parent_child_position(descriptor, position);
+      !position_status.ok()) {
+    pose.result = position_status;
+    return pose;
+  }
+
+  pose.result = ok_result();
+  return pose;
+}
+
+NestPose make_nest_pose(
+    const ParentChildDescriptor& descriptor,
+    const ParentChildPosition& position) noexcept {
+  return {descriptor, make_domain_pose(descriptor, position)};
 }
 
 NestResult validate_parent_child_descriptor(
@@ -288,6 +460,76 @@ NestResult validate_spectral_nudging_config(
   return ok_result();
 }
 
+PoseDelta pose_delta(
+    const DomainPose& from,
+    const DomainPose& to,
+    const std::int32_t parent_to_child_ratio) noexcept {
+  PoseDelta delta{};
+  delta.parent_to_child_ratio = parent_to_child_ratio;
+
+  if (const auto pair_status = validate_remap_pair(from, to, parent_to_child_ratio);
+      !pair_status.ok()) {
+    delta.result = pair_status;
+    return delta;
+  }
+
+  delta.parent_di = to.parent_position.i_parent_start - from.parent_position.i_parent_start;
+  delta.parent_dj = to.parent_position.j_parent_start - from.parent_position.j_parent_start;
+  delta.child_di = delta.parent_di * parent_to_child_ratio;
+  delta.child_dj = delta.parent_dj * parent_to_child_ratio;
+  delta.result = ok_result();
+  return delta;
+}
+
+PoseDelta pose_delta(const NestPose& from, const NestPose& to) noexcept {
+  if (!same_parent_child_descriptor(from.relationship, to.relationship)) {
+    PoseDelta delta{};
+    delta.result =
+        result(NestStatus::invalid_contract, "nest poses must use the same relationship");
+    return delta;
+  }
+  return pose_delta(from.child, to.child, from.relationship.parent_grid_ratio);
+}
+
+RemapPlan build_remap_plan(const DomainPose& from, const DomainPose& to) noexcept {
+  RemapPlan plan{};
+  plan.delta = pose_delta(from, to, from.parent_grid_ratio);
+  if (!plan.delta.ok()) {
+    plan.result = plan.delta.result;
+    return plan;
+  }
+
+  plan.mass = make_window(
+      HorizontalStagger::mass, from.domain.mass_nx, from.domain.mass_ny, plan.delta);
+  plan.u = make_window(
+      HorizontalStagger::u, from.domain.mass_nx, from.domain.mass_ny, plan.delta);
+  plan.v = make_window(
+      HorizontalStagger::v, from.domain.mass_nx, from.domain.mass_ny, plan.delta);
+  plan.w_full = make_window(
+      HorizontalStagger::w_full, from.domain.mass_nx, from.domain.mass_ny, plan.delta);
+  plan.surface = make_window(
+      HorizontalStagger::surface, from.domain.mass_nx, from.domain.mass_ny, plan.delta);
+
+  if (plan.mass.empty() || plan.u.empty() || plan.v.empty() || plan.w_full.empty() ||
+      plan.surface.empty()) {
+    plan.result = result(NestStatus::out_of_bounds, "remap poses do not overlap");
+    return plan;
+  }
+
+  plan.result = ok_result();
+  return plan;
+}
+
+RemapPlan build_remap_plan(const NestPose& from, const NestPose& to) noexcept {
+  if (!same_parent_child_descriptor(from.relationship, to.relationship)) {
+    RemapPlan plan{};
+    plan.result =
+        result(NestStatus::invalid_contract, "nest poses must use the same relationship");
+    return plan;
+  }
+  return build_remap_plan(from.child, to.child);
+}
+
 ExchangeResult interpolate_parent_to_child(const ExchangeContract& contract) noexcept {
   if (const auto common = validate_exchange_common(contract, true); !common.ok()) {
     return exchange_result(
@@ -356,6 +598,22 @@ std::string_view nudging_field_name(const NudgingField field) noexcept {
       return "PH";
     case NudgingField::mu:
       return "MU";
+  }
+  return "unknown";
+}
+
+std::string_view horizontal_stagger_name(const HorizontalStagger stagger) noexcept {
+  switch (stagger) {
+    case HorizontalStagger::mass:
+      return "mass";
+    case HorizontalStagger::u:
+      return "U";
+    case HorizontalStagger::v:
+      return "V";
+    case HorizontalStagger::w_full:
+      return "W_full";
+    case HorizontalStagger::surface:
+      return "surface";
   }
   return "unknown";
 }

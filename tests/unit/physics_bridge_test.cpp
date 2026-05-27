@@ -4,6 +4,7 @@
 #include "wrf_physics_bridge.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -19,6 +20,16 @@ void expect(const bool condition, const std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+void expect_capability_bit(
+    const std::uint64_t bit,
+    const std::string_view label,
+    std::uint64_t& seen_bits) {
+  expect(bit != 0U, std::string(label) + " capability is nonzero");
+  expect((bit & (bit - 1U)) == 0U, std::string(label) + " capability is a single bit");
+  expect((seen_bits & bit) == 0U, std::string(label) + " capability does not overlap");
+  seen_bits |= bit;
 }
 
 tywrf::Grid make_test_grid() {
@@ -55,6 +66,23 @@ void expect_status(
 }  // namespace
 
 int main() {
+  static_assert(TYWRF_PHYSICS_ABI_VERSION == TYWRF_PHYSICS_ABI_VERSION_V1);
+  static_assert(TYWRF_PHYSICS_ABI_VERSION_V1 == 1);
+  static_assert(TYWRF_PHYSICS_ABI_VERSION_V2 == 2);
+
+  static_assert(std::is_standard_layout_v<TywrfPhysicsBlockHeader>);
+  static_assert(std::is_trivially_copyable_v<TywrfPhysicsBlockHeader>);
+  static_assert(offsetof(TywrfPhysicsBlockHeader, struct_size) == 0);
+  static_assert(offsetof(TywrfPhysicsBlockHeader, abi_version) == sizeof(std::uint32_t));
+  static_assert(offsetof(TywrfPhysicsBlockHeader, capabilities) == 2 * sizeof(std::uint32_t));
+  static_assert(offsetof(TywrfPhysicsBlockHeader, next) >=
+                offsetof(TywrfPhysicsBlockHeader, capabilities) + sizeof(std::uint64_t));
+  static_assert(sizeof(TywrfPhysicsBlockHeader) >=
+                offsetof(TywrfPhysicsBlockHeader, next) + sizeof(void*));
+  static_assert(alignof(TywrfPhysicsBlockHeader) >= alignof(std::uint64_t));
+  static_assert(alignof(TywrfPhysicsBlockHeader) >= alignof(void*));
+  static_assert(TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE == sizeof(TywrfPhysicsBlockHeader));
+
   static_assert(std::is_standard_layout_v<TywrfPhysicsField2D>);
   static_assert(std::is_trivially_copyable_v<TywrfPhysicsField2D>);
   static_assert(std::is_standard_layout_v<TywrfPhysicsField3D>);
@@ -67,6 +95,81 @@ int main() {
   static_assert(std::is_trivially_copyable_v<TywrfPhysicsStaging>);
   static_assert(std::is_standard_layout_v<TywrfPhysicsDiagnostics>);
   static_assert(std::is_trivially_copyable_v<TywrfPhysicsDiagnostics>);
+
+  expect(TYWRF_PHYSICS_CAPABILITY_NONE == 0U, "empty v2 capability set is zero");
+
+  std::uint64_t seen_capabilities = 0;
+  expect_capability_bit(
+      TYWRF_PHYSICS_CAPABILITY_DRIVER_CONTEXT, "driver_context", seen_capabilities);
+  expect_capability_bit(
+      TYWRF_PHYSICS_CAPABILITY_DERIVED_STATE, "derived_state", seen_capabilities);
+  expect_capability_bit(
+      TYWRF_PHYSICS_CAPABILITY_STATIC_MASK, "static_mask", seen_capabilities);
+  expect_capability_bit(
+      TYWRF_PHYSICS_CAPABILITY_SURFACE_STATE, "surface_state", seen_capabilities);
+  expect_capability_bit(TYWRF_PHYSICS_CAPABILITY_SOIL_SNOW, "soil_snow", seen_capabilities);
+  expect_capability_bit(TYWRF_PHYSICS_CAPABILITY_TENDENCIES, "tendencies", seen_capabilities);
+  expect_capability_bit(
+      TYWRF_PHYSICS_CAPABILITY_ACCUMULATORS, "accumulators", seen_capabilities);
+  expect_capability_bit(
+      TYWRF_PHYSICS_CAPABILITY_RADIATION_RRTMG, "radiation_rrtmg", seen_capabilities);
+  expect_capability_bit(TYWRF_PHYSICS_CAPABILITY_SLAB_OCEAN, "slab_ocean", seen_capabilities);
+  expect_capability_bit(
+      TYWRF_PHYSICS_CAPABILITY_PROCESS_GLOBAL, "process_global", seen_capabilities);
+
+  TywrfPhysicsBlockHeader v2_header{
+      .struct_size = TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE,
+      .abi_version = TYWRF_PHYSICS_ABI_VERSION_V2,
+      .capabilities = TYWRF_PHYSICS_CAPABILITY_DRIVER_CONTEXT |
+                      TYWRF_PHYSICS_CAPABILITY_DERIVED_STATE |
+                      TYWRF_PHYSICS_CAPABILITY_STATIC_MASK,
+      .next = nullptr,
+  };
+  expect(
+      v2_header.struct_size == sizeof(TywrfPhysicsBlockHeader),
+      "v2 block header struct_size matches layout");
+  expect(v2_header.abi_version == 2U, "v2 block header advertises ABI version 2");
+  expect(
+      (v2_header.capabilities & TYWRF_PHYSICS_CAPABILITY_DRIVER_CONTEXT) != 0U,
+      "v2 block header carries requested capabilities");
+  expect(
+      (v2_header.capabilities & TYWRF_PHYSICS_CAPABILITY_PROCESS_GLOBAL) == 0U,
+      "v2 block header omits absent capabilities");
+  expect(v2_header.next == nullptr, "v2 block header next may terminate the sidecar chain");
+  expect(
+      tywrf_physics_block_header_has_min_size(
+          &v2_header, TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE) != 0,
+      "v2 block header accepts its minimum size");
+  expect(
+      tywrf_physics_block_header_has_abi(&v2_header, TYWRF_PHYSICS_ABI_VERSION_V2) != 0,
+      "v2 block header ABI predicate accepts v2");
+
+  auto larger_v2_header = v2_header;
+  larger_v2_header.struct_size += 16U;
+  expect(
+      tywrf_physics_block_header_has_min_size(
+          &larger_v2_header, TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE) != 0,
+      "v2 block header tolerates larger compatible blocks");
+
+  auto short_v2_header = v2_header;
+  short_v2_header.struct_size = TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE - 1U;
+  expect(
+      tywrf_physics_block_header_has_min_size(
+          &short_v2_header, TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE) == 0,
+      "v2 block header rejects short blocks");
+
+  auto v1_header = v2_header;
+  v1_header.abi_version = TYWRF_PHYSICS_ABI_VERSION_V1;
+  expect(
+      tywrf_physics_block_header_has_abi(&v1_header, TYWRF_PHYSICS_ABI_VERSION_V2) == 0,
+      "v2 block header ABI predicate rejects v1");
+  expect(
+      tywrf_physics_block_header_has_min_size(
+          nullptr, TYWRF_PHYSICS_BLOCK_HEADER_STRUCT_SIZE) == 0,
+      "v2 block header size predicate rejects null");
+  expect(
+      tywrf_physics_block_header_has_abi(nullptr, TYWRF_PHYSICS_ABI_VERSION_V2) == 0,
+      "v2 block header ABI predicate rejects null");
 
   const auto grid = make_test_grid();
   tywrf::State<double> state(grid);
