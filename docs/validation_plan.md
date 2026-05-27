@@ -716,6 +716,35 @@ Validation must continue rejecting `00:10` reference-end truth, restart
 artifact gate evidence, scratch telemetry, unreachable guarded apply plumbing,
 and controlled-seam outputs presented as gate evidence.
 
+Round D52 validation covers transactional apply semantics and selected-field
+experimental report parity without opening the default pressure-refresh guard.
+The normal `selected_field_cycle --pressure-refresh` path still runs under
+`thermodynamic_base_state_consistency_ready=false` and must fail closed with
+nonzero exit, no output file, no candidate writes, no
+`pressure_refresh_applied=true`, and no change to the default selected-field
+candidate numerical path.
+
+Hook validation for D52 must require transactional behavior: pressure refresh
+computes into scratch buffers first, checks the full postcondition, and writes
+candidate fields only after that postcondition succeeds. Any failed scratch
+compute, invalid value, overlap/halo safety failure, count mismatch, or partial
+compute result must leave the candidate completely unchanged.
+
+The selected-field experimental apply seam may be validated only for report
+parity. Its report should record pressure-refresh target, refreshed, skipped,
+and invalid counts; overlap and halo flags; changed counts for `P`, `PB`,
+`MUB`, `PHB`, and unchanged-field audits where available; plus consistency
+flags showing whether target/refreshed/changed counts agree. These fields are
+not strict-gate metrics and must not be interpreted as a `00:10` pass.
+
+Hidden seam output remains diagnostic-only, not gate-eligible, and not normal
+integrator output. Validation must require negative gate/integrator metadata
+such as `TYWRF_DIAGNOSTIC_ONLY=true`, `TYWRF_GATE_CANDIDATE=false`, and
+`TYWRF_INTEGRATOR_OUTPUT=false`. It must still reject `00:10` reference-end
+truth, restart `PHB`/`ALB` provider substitutes, direct parent interpolation of
+`P`, diagnostic artifact gate evidence, and hidden seam output presented as
+gate evidence.
+
 Example:
 
 ```bash

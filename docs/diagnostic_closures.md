@@ -565,6 +565,29 @@ outside closure scope:
   gate evidence, scratch telemetry, unreachable apply plumbing, and controlled
   seam outputs presented as gate evidence.
 
+Round D52 keeps transactional apply and selected-field report parity outside
+closure scope:
+
+- D52 still does not open the default selected-field `--pressure-refresh`
+  guard. The normal path must fail closed with nonzero exit, no output file, no
+  candidate writes, no `pressure_refresh_applied=true`, and no change to the
+  default selected-field numerical path.
+- Hook transactional apply is not a closure. The hook must compute pressure
+  refresh into scratch buffers first, accept the postcondition there, and only
+  then write allowed candidate fields. If the postcondition fails, the candidate
+  must remain completely unchanged.
+- Selected-field experimental apply report parity is audit evidence only. It
+  may record target/refreshed/skipped/invalid counts, overlap and halo flags,
+  changed counts, and consistency flags, but those fields do not produce a
+  closure and do not make the output gate-eligible.
+- Hidden seam output remains diagnostic-only, non-gate, and not normal
+  integrator output. A closure must not convert it, its metadata, or its report
+  into pressure production or gate evidence.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  provider substitutes, direct parent interpolation of `P`, diagnostic artifact
+  gate evidence, and any transactional/report-parity or hidden-seam artifact
+  presented as a gate pass.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

@@ -887,6 +887,42 @@ seam proof is readiness evidence only until a real selected-field
 `--pressure-refresh` candidate is produced by the normal guarded path and
 passes the progressive `00:10` gate.
 
+## Round D52 Transactional Apply And Report Parity Boundary
+
+D52 still must not open the selected-field `--pressure-refresh` guard by
+default. The normal `thermodynamic_base_state_consistency_ready=false` contract
+remains fail-closed: nonzero exit, no output file, no candidate writes, no
+`pressure_refresh_applied=true`, and no change to the default selected-field
+candidate numerical path.
+
+The hook apply target is transactional. A pressure refresh must first compute
+into scratch buffers and evaluate the full postcondition there. Only after the
+postcondition succeeds may the hook write allowed fields into the candidate. If
+scratch compute fails, produces invalid values, touches unsafe regions, or has
+inconsistent counts, the candidate must remain completely unchanged, including
+`P`, `PB`, `MUB`, `PHB`, remapped overlap cells, halo cells, and unrelated
+fields.
+
+The selected-field experimental apply seam remains report-parity evidence only.
+If explicitly enabled, its JSON/report and metadata must record the pressure
+refresh target, refreshed, skipped, and invalid counts; overlap and halo safety
+flags; changed counts for candidate fields; and consistency flags comparing
+target/refreshed/changed counts. These records do not make the seam output a
+normal candidate.
+
+Hidden seam output remains diagnostic-only, non-gate, and not normal integrator
+output. It must carry negative gate/integrator metadata such as
+`TYWRF_DIAGNOSTIC_ONLY=true`, `TYWRF_GATE_CANDIDATE=false`, and
+`TYWRF_INTEGRATOR_OUTPUT=false`, and must not be promoted into default CLI
+behavior or compatibility-pass evidence.
+
+D52 keeps the same shortcut bans as D51: no `00:10` reference-end truth, no
+restart `PHB`/`ALB` provider substitute, no direct parent interpolation of `P`,
+and no diagnostic artifact gate evidence. Transactional hook tests, report
+parity, and hidden seam outputs are readiness evidence only until the normal
+guarded selected-field path produces a real candidate and passes the progressive
+`00:10` gate.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

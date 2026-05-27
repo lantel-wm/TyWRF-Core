@@ -815,7 +815,7 @@ void test_pressure_compute_dry_run_invalid_points_fail_closed_without_modifying_
   assert_state_unchanged(state, before);
 }
 
-void test_real_apply_invalid_points_fail_closed_and_preserve_write_boundary() {
+void test_real_apply_invalid_points_rolls_back_candidate_state() {
   const auto metadata = make_metadata();
   const auto plan = make_plan();
 
@@ -840,7 +840,13 @@ void test_real_apply_invalid_points_fail_closed_and_preserve_write_boundary() {
   assert(!report.pressure_compute_dry_run);
   assert_no_pressure_compute_dry_run_call(report);
   assert(report.base_state_sync_contract_ok);
-  assert(report.base_state_sync_applied);
+  assert(!report.base_state_sync_applied);
+  assert(report.would_sync_pb_point_count == 20);
+  assert(report.would_sync_mub_point_count == 10);
+  assert(report.would_sync_phb_point_count == 30);
+  assert(report.synced_pb_point_count == 0);
+  assert(report.synced_mub_point_count == 0);
+  assert(report.synced_phb_point_count == 0);
   assert(report.compute_report.target_column_count == 10);
   assert(report.compute_report.refreshed_point_count == 18);
   assert(report.compute_report.invalid_point_count == 2);
@@ -850,19 +856,92 @@ void test_real_apply_invalid_points_fail_closed_and_preserve_write_boundary() {
   assert(!report.touched_overlap_cells);
   assert(!report.touched_halo_cells);
   assert_provider_reports_are_non_gate(report);
-  assert_state_unchanged_except_pressure_apply_outputs(state, before);
-  assert_pressure_apply_overlap_and_halo_unchanged(state, before, plan);
+  assert_state_unchanged(state, before);
+}
 
-  const auto p_layout = state.p.layout();
-  const auto p_view = state.p.view();
-  for (std::int32_t k = 0; k < p_layout.active_nz(); ++k) {
-    const auto ii = p_layout.i_begin() + kInvalidExposedI;
-    const auto jj = p_layout.j_begin() + kInvalidExposedJ;
-    const auto kk = p_layout.k_begin() + k;
-    assert(
-        p_view(ii, jj, kk) ==
-        before.p[p_layout.index(ii, jj, kk)]);
-  }
+void test_real_apply_staging_failure_rolls_back_candidate_state() {
+  const auto metadata = make_metadata();
+  const auto plan = make_plan();
+
+  tywrf::State<float> state(make_grid());
+  fill_state(state);
+  state.mu = tywrf::FieldStorage2D<float>{};
+  const auto before = snapshot_state(state);
+
+  const auto report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          state,
+          metadata);
+
+  assert(!report.ok());
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(report.provider_ok);
+  assert(!report.staging_ok);
+  assert(!report.pressure_refresh_applied);
+  assert(!report.calls_pressure_refresh_compute);
+  assert(!report.base_state_sync_dry_run);
+  assert(!report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
+  assert(report.base_state_sync_contract_ok);
+  assert(!report.base_state_sync_applied);
+  assert(report.would_sync_pb_point_count == 20);
+  assert(report.would_sync_mub_point_count == 10);
+  assert(report.would_sync_phb_point_count == 30);
+  assert(report.synced_pb_point_count == 0);
+  assert(report.synced_mub_point_count == 0);
+  assert(report.synced_phb_point_count == 0);
+  assert(report.compute_report.refreshed_point_count == 0);
+  assert(!report.touched_overlap_cells);
+  assert(!report.touched_halo_cells);
+  assert_provider_reports_are_non_gate(report);
+  assert_state_unchanged(state, before);
+}
+
+void test_real_apply_postcondition_failure_rolls_back_candidate_state() {
+  const auto metadata = make_metadata();
+  const auto plan = make_plan();
+
+  tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+  options.pressure_refresh.region =
+      tywrf::dynamics::PressureRefreshRegion::full_active_columns;
+
+  tywrf::State<float> state(make_grid());
+  fill_state(state);
+  const auto before = snapshot_state(state);
+
+  const auto report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          state,
+          metadata,
+          options);
+
+  assert(!report.ok());
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(report.provider_ok);
+  assert(report.staging_ok);
+  assert(!report.pressure_refresh_applied);
+  assert(report.calls_pressure_refresh_compute);
+  assert(!report.base_state_sync_dry_run);
+  assert(!report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
+  assert(report.base_state_sync_contract_ok);
+  assert(!report.base_state_sync_applied);
+  assert(report.would_sync_pb_point_count == 20);
+  assert(report.would_sync_mub_point_count == 10);
+  assert(report.would_sync_phb_point_count == 30);
+  assert(report.synced_pb_point_count == 0);
+  assert(report.synced_mub_point_count == 0);
+  assert(report.synced_phb_point_count == 0);
+  assert(report.compute_report.target_column_count == 12);
+  assert(report.compute_report.full_column_mode);
+  assert(report.compute_report.touched_overlap_cells);
+  assert(!report.compute_report.touched_halo_cells);
+  assert(report.touched_overlap_cells);
+  assert(!report.touched_halo_cells);
+  assert_provider_reports_are_non_gate(report);
+  assert_state_unchanged(state, before);
 }
 
 void test_pressure_compute_dry_run_requires_base_state_dry_run_without_modifying_state() {
@@ -1231,7 +1310,9 @@ int main() {
   test_dry_run_reports_contract_without_modifying_state_or_compute();
   test_pressure_compute_scratch_dry_run_reports_would_refresh_without_modifying_state();
   test_pressure_compute_dry_run_invalid_points_fail_closed_without_modifying_state();
-  test_real_apply_invalid_points_fail_closed_and_preserve_write_boundary();
+  test_real_apply_invalid_points_rolls_back_candidate_state();
+  test_real_apply_staging_failure_rolls_back_candidate_state();
+  test_real_apply_postcondition_failure_rolls_back_candidate_state();
   test_pressure_compute_dry_run_requires_base_state_dry_run_without_modifying_state();
   test_dry_run_with_terrain_override_reports_source_without_modifying_state();
   test_pressure_compute_scratch_dry_run_with_terrain_override_reports_source();

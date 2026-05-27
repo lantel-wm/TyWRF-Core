@@ -158,6 +158,32 @@ template <typename Real>
 }
 
 template <typename Real>
+[[nodiscard]] constexpr FieldView2D<const Real> const_view(
+    const FieldView2D<Real>& field) noexcept {
+  return {
+      field.data,
+      field.nx,
+      field.ny,
+      field.stride_i,
+      field.stride_j,
+      field.halo};
+}
+
+template <typename Real>
+[[nodiscard]] constexpr FieldView3D<const Real> const_view(
+    const FieldView3D<Real>& field) noexcept {
+  return {
+      field.data,
+      field.nx,
+      field.ny,
+      field.nz,
+      field.stride_i,
+      field.stride_k,
+      field.stride_j,
+      field.halo};
+}
+
+template <typename Real>
 [[nodiscard]] std::uint64_t exposed_point_count_2d(
     const nest::RemapWindow& window,
     const FieldView2D<Real>& target) noexcept {
@@ -335,42 +361,42 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
   report.would_sync_phb_point_count =
       exposed_point_count_3d(plan.w_full, state_view.phb);
 
-  if (options.base_state_sync_dry_run) {
-    if (!options.pressure_compute_dry_run) {
-      return report;
-    }
+  if (options.base_state_sync_dry_run && !options.pressure_compute_dry_run) {
+    return report;
+  }
 
-    FieldStorage3D<float> scratch_p(new_child.p.layout());
-    FieldStorage3D<float> scratch_pb(new_child.pb.layout());
-    FieldStorage3D<float> scratch_phb(new_child.phb.layout());
-    FieldStorage2D<float> scratch_mub(new_child.mub.layout());
-    copy_storage(new_child.p, scratch_p);
-    copy_storage(new_child.pb, scratch_pb);
-    copy_storage(new_child.phb, scratch_phb);
-    copy_storage(new_child.mub, scratch_mub);
+  FieldStorage3D<float> scratch_p(new_child.p.layout());
+  FieldStorage3D<float> scratch_pb(new_child.pb.layout());
+  FieldStorage3D<float> scratch_phb(new_child.phb.layout());
+  FieldStorage2D<float> scratch_mub(new_child.mub.layout());
+  copy_storage(new_child.p, scratch_p);
+  copy_storage(new_child.pb, scratch_pb);
+  copy_storage(new_child.phb, scratch_phb);
+  copy_storage(new_child.mub, scratch_mub);
 
-    auto scratch_view = state_view;
-    scratch_view.p = scratch_p.view();
-    scratch_view.pb = scratch_pb.view();
-    scratch_view.phb = scratch_phb.view();
-    scratch_view.mub = scratch_mub.view();
+  auto scratch_view = state_view;
+  scratch_view.p = scratch_p.view();
+  scratch_view.pb = scratch_pb.view();
+  scratch_view.phb = scratch_phb.view();
+  scratch_view.mub = scratch_mub.view();
 
-    (void)sync_exposed_3d(plan.mass, provider_views.pb, scratch_view.pb);
-    (void)sync_exposed_2d(plan.surface, provider_views.mub, scratch_view.mub);
-    (void)sync_exposed_3d(plan.w_full, provider_views.phb, scratch_view.phb);
+  (void)sync_exposed_3d(plan.mass, provider_views.pb, scratch_view.pb);
+  (void)sync_exposed_2d(plan.surface, provider_views.mub, scratch_view.mub);
+  (void)sync_exposed_3d(plan.w_full, provider_views.phb, scratch_view.phb);
 
-    const auto staging = make_krosa_pressure_refresh_inputs(
-        scratch_view,
-        provider_views.alb,
-        metadata,
-        PressureRefreshAlbSource::base_state_reconstruction_provider);
-    report.staging_report = staging.report;
-    report.staging_ok = staging.ok();
-    if (!report.staging_ok) {
-      report.result = report.staging_report.result;
-      return report;
-    }
+  const auto staging = make_krosa_pressure_refresh_inputs(
+      scratch_view,
+      provider_views.alb,
+      metadata,
+      PressureRefreshAlbSource::base_state_reconstruction_provider);
+  report.staging_report = staging.report;
+  report.staging_ok = staging.ok();
+  if (!report.staging_ok) {
+    report.result = report.staging_report.result;
+    return report;
+  }
 
+  if (options.pressure_compute_dry_run) {
     report.pressure_compute_dry_run_called = true;
     report.pressure_compute_dry_run_report =
         refresh_krosa_moving_nest_pressure(
@@ -391,28 +417,6 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
     return report;
   }
 
-  report.synced_pb_point_count =
-      sync_exposed_3d(plan.mass, provider_views.pb, state_view.pb);
-  report.synced_mub_point_count =
-      sync_exposed_2d(plan.surface, provider_views.mub, state_view.mub);
-  report.synced_phb_point_count =
-      sync_exposed_3d(plan.w_full, provider_views.phb, state_view.phb);
-  report.base_state_sync_applied =
-      report.synced_pb_point_count > 0 || report.synced_mub_point_count > 0 ||
-      report.synced_phb_point_count > 0;
-
-  const auto staging = make_krosa_pressure_refresh_inputs(
-      state_view,
-      provider_views.alb,
-      metadata,
-      PressureRefreshAlbSource::base_state_reconstruction_provider);
-  report.staging_report = staging.report;
-  report.staging_ok = staging.ok();
-  if (!report.staging_ok) {
-    report.result = report.staging_report.result;
-    return report;
-  }
-
   report.calls_pressure_refresh_compute = true;
   report.compute_report =
       refresh_krosa_moving_nest_pressure(
@@ -423,6 +427,23 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
   report.pressure_refresh_applied = report.result.ok();
   report.touched_overlap_cells = report.compute_report.touched_overlap_cells;
   report.touched_halo_cells = report.compute_report.touched_halo_cells;
+  if (!report.pressure_refresh_applied) {
+    return report;
+  }
+
+  (void)sync_exposed_3d(plan.mass, const_view(scratch_view.p), state_view.p);
+  report.synced_pb_point_count =
+      sync_exposed_3d(plan.mass, const_view(scratch_view.pb), state_view.pb);
+  report.synced_mub_point_count =
+      sync_exposed_2d(
+          plan.surface,
+          const_view(scratch_view.mub),
+          state_view.mub);
+  report.synced_phb_point_count =
+      sync_exposed_3d(plan.w_full, const_view(scratch_view.phb), state_view.phb);
+  report.base_state_sync_applied =
+      report.synced_pb_point_count > 0 || report.synced_mub_point_count > 0 ||
+      report.synced_phb_point_count > 0;
   return report;
 }
 

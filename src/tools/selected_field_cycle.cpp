@@ -103,6 +103,12 @@ struct CandidateReport {
   double cen_lon = 0.0;
 };
 
+struct PressureRefreshReportParity {
+  bool changed_p_matches_refreshed_point_count = false;
+  bool invalid_and_skipped_points_zero = false;
+  bool overlap_halo_untouched = false;
+};
+
 struct StaticFieldSet {
   explicit StaticFieldSet(const tywrf::Grid& grid)
       : xlat(grid.surface_layout()), xlong(grid.surface_layout()), hgt(grid.surface_layout()) {}
@@ -118,6 +124,21 @@ make_moved_candidate_hgt_terrain_override(const StaticFieldSet& output_static) {
       .terrain_height_m = output_static.hgt.view(),
       .source_name = "moved_candidate_HGT",
       .provenance = "override:moved_candidate_HGT"};
+}
+
+[[nodiscard]] PressureRefreshReportParity pressure_refresh_report_parity(
+    const CandidateReport& candidate_report,
+    const tywrf::dynamics::KrosaPressureRefreshHookReport& pressure_report) {
+  return {
+      .changed_p_matches_refreshed_point_count =
+          candidate_report.pressure_refresh_changed_p_points ==
+          pressure_report.compute_report.refreshed_point_count,
+      .invalid_and_skipped_points_zero =
+          pressure_report.compute_report.invalid_point_count == 0 &&
+          pressure_report.compute_report.skipped_point_count == 0,
+      .overlap_halo_untouched =
+          !pressure_report.compute_report.touched_overlap_cells &&
+          !pressure_report.compute_report.touched_halo_cells};
 }
 
 class NetcdfHandle {
@@ -1295,6 +1316,7 @@ void stamp_gate_metadata(
       static_cast<double>(report.interpolation.interpolated_point_count));
   if (report.pressure_refresh.has_value()) {
     const auto& pressure = *report.pressure_refresh;
+    const auto parity = pressure_refresh_report_parity(report, pressure);
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_OPT_IN", "true");
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_APPLIED", "true");
     write_text_attr(
@@ -1344,6 +1366,34 @@ void stamp_gate_metadata(
         static_cast<double>(pressure.synced_phb_point_count));
     write_double_attr(
         file,
+        "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT",
+        static_cast<double>(pressure.compute_report.target_column_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_REFRESHED_COLUMN_COUNT",
+        static_cast<double>(pressure.compute_report.refreshed_column_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT",
+        static_cast<double>(pressure.compute_report.refreshed_point_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_SKIPPED_POINT_COUNT",
+        static_cast<double>(pressure.compute_report.skipped_point_count));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_INVALID_POINT_COUNT",
+        static_cast<double>(pressure.compute_report.invalid_point_count));
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_TOUCHED_OVERLAP_CELLS",
+        pressure.compute_report.touched_overlap_cells ? "true" : "false");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_TOUCHED_HALO_CELLS",
+        pressure.compute_report.touched_halo_cells ? "true" : "false");
+    write_double_attr(
+        file,
         "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS",
         static_cast<double>(pressure.compute_report.refreshed_point_count));
     write_double_attr(
@@ -1362,6 +1412,18 @@ void stamp_gate_metadata(
         file,
         "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS",
         static_cast<double>(report.pressure_refresh_changed_phb_points));
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT",
+        parity.changed_p_matches_refreshed_point_count ? "true" : "false");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_INVALID_AND_SKIPPED_POINTS_ZERO",
+        parity.invalid_and_skipped_points_zero ? "true" : "false");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED",
+        parity.overlap_halo_untouched ? "true" : "false");
   }
   if (experimental_pressure_refresh_apply) {
     write_text_attr(
@@ -1533,6 +1595,7 @@ void print_report(
       pretty);
   if (report.pressure_refresh.has_value()) {
     const auto& pressure = *report.pressure_refresh;
+    const auto parity = pressure_refresh_report_parity(report, pressure);
     write_json_bool(std::cout, "pressure_refresh_opt_in", true, true, pretty);
     write_json_bool(std::cout, "pressure_refresh_applied", true, true, pretty);
     write_json_bool(std::cout, "pressure_refresh_provider_ok", true, true, pretty);
@@ -1583,6 +1646,48 @@ void print_report(
         pretty);
     write_json_number(
         std::cout,
+        "pressure_refresh_target_column_count",
+        static_cast<double>(pressure.compute_report.target_column_count),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_refreshed_column_count",
+        static_cast<double>(pressure.compute_report.refreshed_column_count),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_refreshed_point_count",
+        static_cast<double>(pressure.compute_report.refreshed_point_count),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_skipped_point_count",
+        static_cast<double>(pressure.compute_report.skipped_point_count),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_invalid_point_count",
+        static_cast<double>(pressure.compute_report.invalid_point_count),
+        true,
+        pretty);
+    write_json_bool(
+        std::cout,
+        "pressure_refresh_touched_overlap_cells",
+        pressure.compute_report.touched_overlap_cells,
+        true,
+        pretty);
+    write_json_bool(
+        std::cout,
+        "pressure_refresh_touched_halo_cells",
+        pressure.compute_report.touched_halo_cells,
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
         "pressure_refresh_refreshed_p_points",
         static_cast<double>(pressure.compute_report.refreshed_point_count),
         true,
@@ -1609,6 +1714,24 @@ void print_report(
         std::cout,
         "pressure_refresh_changed_phb_points",
         static_cast<double>(report.pressure_refresh_changed_phb_points),
+        true,
+        pretty);
+    write_json_bool(
+        std::cout,
+        "pressure_refresh_changed_p_matches_refreshed_point_count",
+        parity.changed_p_matches_refreshed_point_count,
+        true,
+        pretty);
+    write_json_bool(
+        std::cout,
+        "pressure_refresh_invalid_and_skipped_points_zero",
+        parity.invalid_and_skipped_points_zero,
+        true,
+        pretty);
+    write_json_bool(
+        std::cout,
+        "pressure_refresh_overlap_halo_untouched",
+        parity.overlap_halo_untouched,
         false,
         pretty);
   }

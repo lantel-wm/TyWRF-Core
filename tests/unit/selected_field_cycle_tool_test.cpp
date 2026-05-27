@@ -523,11 +523,37 @@ void assert_successful_candidate(
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS") > 0.0);
-    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS") > 0.0);
-    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS") > 0.0);
+    const auto target_columns =
+        read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT");
+    const auto refreshed_columns =
+        read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_COLUMN_COUNT");
+    const auto refreshed_points =
+        read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT");
+    const auto refreshed_p_points =
+        read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS");
+    const auto changed_p_points =
+        read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS");
+    assert(target_columns > 0.0);
+    assert(refreshed_columns == target_columns);
+    assert(refreshed_points > 0.0);
+    assert(refreshed_p_points == refreshed_points);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SKIPPED_POINT_COUNT") == 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_INVALID_POINT_COUNT") == 0.0);
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TOUCHED_OVERLAP_CELLS") == "false");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TOUCHED_HALO_CELLS") == "false");
+    assert(changed_p_points == refreshed_points);
+    assert(changed_p_points > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS") > 0.0);
+    assert(
+        read_text_attr(
+            file_id,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT") == "true");
+    assert(
+        read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_INVALID_AND_SKIPPED_POINTS_ZERO") ==
+        "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED") == "true");
   } else {
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
@@ -648,6 +674,46 @@ void assert_successful_candidate(
   return static_cast<std::uint64_t>(std::stoull(log.substr(digit_begin, digit_end - digit_begin)));
 }
 
+[[nodiscard]] double json_number_field(
+    const std::string& json,
+    const std::string_view name) {
+  const std::string marker = "\"" + std::string(name) + "\":";
+  const auto value_begin = json.find(marker);
+  assert(value_begin != std::string::npos);
+  std::size_t digit_begin = value_begin + marker.size();
+  while (digit_begin < json.size() &&
+         std::isspace(static_cast<unsigned char>(json[digit_begin]))) {
+    ++digit_begin;
+  }
+  std::size_t digit_end = digit_begin;
+  while (digit_end < json.size() && json[digit_end] != ',' && json[digit_end] != '\n' &&
+         json[digit_end] != '}') {
+    ++digit_end;
+  }
+  assert(digit_end > digit_begin);
+  const auto value = std::stod(json.substr(digit_begin, digit_end - digit_begin));
+  assert(std::isfinite(value));
+  return value;
+}
+
+[[nodiscard]] bool json_bool_field(
+    const std::string& json,
+    const std::string_view name) {
+  const std::string marker = "\"" + std::string(name) + "\":";
+  const auto value_begin = json.find(marker);
+  assert(value_begin != std::string::npos);
+  std::size_t bool_begin = value_begin + marker.size();
+  while (bool_begin < json.size() &&
+         std::isspace(static_cast<unsigned char>(json[bool_begin]))) {
+    ++bool_begin;
+  }
+  if (json.compare(bool_begin, 4, "true") == 0) {
+    return true;
+  }
+  assert(json.compare(bool_begin, 5, "false") == 0);
+  return false;
+}
+
 void assert_pressure_refresh_not_ready(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
@@ -755,10 +821,34 @@ void assert_experimental_pressure_refresh_apply(
   assert(log.find("\"pressure_refresh_terrain_source\": \"HGT\"") == std::string::npos);
   assert(log.find("\"pressure_refresh_terrain_provenance\": \"override:moved_candidate_HGT\"") !=
          std::string::npos);
-  assert(log.find("\"pressure_refresh_changed_p_points\": ") != std::string::npos);
-  assert(log.find("\"pressure_refresh_changed_pb_points\": ") != std::string::npos);
-  assert(log.find("\"pressure_refresh_changed_mub_points\": ") != std::string::npos);
-  assert(log.find("\"pressure_refresh_changed_phb_points\": ") != std::string::npos);
+  const auto target_columns = json_number_field(log, "pressure_refresh_target_column_count");
+  const auto refreshed_columns =
+      json_number_field(log, "pressure_refresh_refreshed_column_count");
+  const auto refreshed_points =
+      json_number_field(log, "pressure_refresh_refreshed_point_count");
+  const auto refreshed_p_points =
+      json_number_field(log, "pressure_refresh_refreshed_p_points");
+  const auto skipped_points = json_number_field(log, "pressure_refresh_skipped_point_count");
+  const auto invalid_points = json_number_field(log, "pressure_refresh_invalid_point_count");
+  const auto changed_p_points = json_number_field(log, "pressure_refresh_changed_p_points");
+  const auto changed_pb_points = json_number_field(log, "pressure_refresh_changed_pb_points");
+  const auto changed_mub_points = json_number_field(log, "pressure_refresh_changed_mub_points");
+  const auto changed_phb_points = json_number_field(log, "pressure_refresh_changed_phb_points");
+  assert(target_columns > 0.0);
+  assert(refreshed_columns == target_columns);
+  assert(refreshed_points > 0.0);
+  assert(refreshed_p_points == refreshed_points);
+  assert(skipped_points == 0.0);
+  assert(invalid_points == 0.0);
+  assert(!json_bool_field(log, "pressure_refresh_touched_overlap_cells"));
+  assert(!json_bool_field(log, "pressure_refresh_touched_halo_cells"));
+  assert(changed_p_points == refreshed_points);
+  assert(changed_pb_points > 0.0);
+  assert(changed_mub_points > 0.0);
+  assert(changed_phb_points > 0.0);
+  assert(json_bool_field(log, "pressure_refresh_changed_p_matches_refreshed_point_count"));
+  assert(json_bool_field(log, "pressure_refresh_invalid_and_skipped_points_zero"));
+  assert(json_bool_field(log, "pressure_refresh_overlap_halo_untouched"));
   assert_successful_candidate(output, true, template_path, true);
 }
 
