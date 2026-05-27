@@ -629,6 +629,28 @@ rejecting reference-end truth, restart `PHB`/`ALB` provider substitutes, direct
 parent interpolation of `P`, diagnostic artifact gate evidence, and scratch
 telemetry as gate evidence.
 
+Round D49 validation records only terrain-source parity for a future
+selected-field pressure-refresh apply path. The dry-run guard already uses the
+moved candidate `HGT` terrain override; D49 preparation requires any later
+reachable apply path to use that same moved-terrain provider input so dry-run
+and apply semantics do not diverge before apply is enabled.
+
+This parity is not a validation result. It does not mean
+`selected_field_cycle --pressure-refresh` produced an output file or refreshed
+candidate pressure. While `thermodynamic_base_state_consistency_ready=false`,
+validation must expect fail-closed behavior: nonzero exit, no output, no
+candidate writes to `P`, `PB`, `PHB`, or `MUB`, and no
+`pressure_refresh_applied=true`. The default selected-field candidate numerical
+path remains unchanged.
+
+Even after future apply-path terrain parity is in place, validation must not
+count scratch telemetry or an unreachable guarded apply path as a gate pass. The
+real `2025-07-26_00:10:00` selected-field gate remains failed on `U`, `V`,
+`MU`, `P`, and storm-center distance. Validation must continue rejecting
+`00:10` reference-end truth, restart `PHB`/`ALB` provider substitutes, direct
+parent interpolation of `P`, diagnostic artifact gate evidence, and scratch or
+unreachable-apply telemetry presented as gate evidence.
+
 Example:
 
 ```bash

@@ -797,6 +797,32 @@ reference-end truth, restart `PHB`/`ALB` as a provider substitute, direct
 parent interpolation of `P`, diagnostic artifact gate evidence, and treating
 scratch dry-run telemetry as gate evidence.
 
+## Round D49 Future Apply Terrain-Parity Boundary
+
+D49 preparation is limited to semantic parity between the future selected-field
+pressure-refresh apply path and the existing dry-run path. If a later readiness
+change makes the apply path reachable, that path must use the same moved
+candidate `HGT` terrain override that the dry-run provider probe uses, rather
+than silently falling back to metadata terrain.
+
+This is an apply-before-enable alignment only. It does not mean
+`selected_field_cycle --pressure-refresh` has generated output, refreshed
+candidate `P`, or become gate-eligible. While
+`thermodynamic_base_state_consistency_ready=false`, the opt-in path must still
+fail closed with a nonzero exit and no output file. It must not write `P`,
+`PB`, `PHB`, or `MUB`, and it must not report
+`pressure_refresh_applied=true`.
+
+The default selected-field candidate numerical path remains unchanged and
+continues to preserve start-state-owned pressure and base-state fields. Even
+when future apply-path terrain parity is ready, scratch telemetry and an
+unreachable guarded apply path are not compatibility gate evidence. The real
+`2025-07-26_00:10:00` selected-field gate remains failed on `U`, `V`, `MU`,
+`P`, and storm-center distance. Shortcuts remain forbidden: `00:10`
+reference-end truth, restart `PHB`/`ALB` as a provider substitute, direct
+parent interpolation of `P`, diagnostic artifact gate evidence, and treating
+scratch telemetry or unreachable apply plumbing as a gate pass.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

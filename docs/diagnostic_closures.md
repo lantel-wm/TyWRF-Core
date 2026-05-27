@@ -494,6 +494,29 @@ Round D48 keeps selected-field scratch telemetry outside closure scope:
   provider substitutes, direct parent interpolation of `P`, diagnostic artifact
   gate evidence, and scratch telemetry presented as gate evidence.
 
+Round D49 keeps future apply-path terrain parity outside closure scope:
+
+- D49 preparation only aligns the future selected-field pressure-refresh apply
+  path with the dry-run path so both use the same moved candidate `HGT` terrain
+  override when reconstructing provider-backed pressure-refresh staging.
+- This terrain parity is not a closure output, not pressure-refresh output, and
+  not evidence that `selected_field_cycle --pressure-refresh` produced a
+  candidate file.
+- While `thermodynamic_base_state_consistency_ready=false`, the opt-in path
+  must still fail closed with a nonzero exit, no output file, no candidate
+  writes to `P`, `PB`, `PHB`, or `MUB`, and no
+  `pressure_refresh_applied=true`.
+- The default selected-field numerical path remains unchanged and must not be
+  closure-patched.
+- Even if future apply-path terrain parity is ready, closures must not treat
+  scratch telemetry or an unreachable guarded apply path as a gate pass. The
+  real `2025-07-26_00:10:00` gate remains failed on `U`, `V`, `MU`, `P`, and
+  storm-center distance.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  provider substitutes, direct parent interpolation of `P`, diagnostic artifact
+  gate evidence, and scratch or unreachable-apply telemetry presented as gate
+  evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

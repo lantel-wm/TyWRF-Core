@@ -634,9 +634,12 @@ void assert_pressure_refresh_not_ready(
          std::string::npos);
   assert(log.find("provider_terrain_uses_moved_candidate_hgt=true") !=
          std::string::npos);
+  assert(log.find("provider_terrain_uses_moved_candidate_hgt=false") ==
+         std::string::npos);
   assert(log.find("provider_base_state_reconstruct_ok=true") != std::string::npos);
   assert(log.find("provider_terrain_source=moved_candidate_HGT") !=
          std::string::npos);
+  assert(log.find("provider_terrain_source=metadata") == std::string::npos);
   assert(log.find("provider_terrain_provenance=override:moved_candidate_HGT") !=
          std::string::npos);
   assert(log.find("base_state_sync_contract_ok=true") != std::string::npos);

@@ -108,6 +108,14 @@ struct StaticFieldSet {
   tywrf::FieldStorage2D<float> hgt;
 };
 
+[[nodiscard]] tywrf::dynamics::KrosaBaseStateProviderTerrainOverride
+make_moved_candidate_hgt_terrain_override(const StaticFieldSet& output_static) {
+  return {
+      .terrain_height_m = output_static.hgt.view(),
+      .source_name = "moved_candidate_HGT",
+      .provenance = "override:moved_candidate_HGT"};
+}
+
 class NetcdfHandle {
  public:
   enum class Mode {
@@ -835,10 +843,7 @@ void probe_pressure_refresh_provider_readiness(
   require_pressure_refresh_inputs_ready(inputs);
 
   tywrf::dynamics::KrosaBaseStateProvider provider;
-  const tywrf::dynamics::KrosaBaseStateProviderTerrainOverride terrain_override{
-      .terrain_height_m = output_static.hgt.view(),
-      .source_name = "moved_candidate_HGT",
-      .provenance = "override:moved_candidate_HGT"};
+  const auto terrain_override = make_moved_candidate_hgt_terrain_override(output_static);
   auto provider_report =
       provider.reconstruct(candidate.grid, inputs.metadata, terrain_override);
   const bool uses_moved_candidate_hgt =
@@ -879,10 +884,7 @@ void probe_pressure_refresh_dry_run_contract(
       {.time_index = options.template_time_index});
   require_pressure_refresh_inputs_ready(inputs);
 
-  const tywrf::dynamics::KrosaBaseStateProviderTerrainOverride terrain_override{
-      .terrain_height_m = output_static.hgt.view(),
-      .source_name = "moved_candidate_HGT",
-      .provenance = "override:moved_candidate_HGT"};
+  const auto terrain_override = make_moved_candidate_hgt_terrain_override(output_static);
   tywrf::dynamics::KrosaPressureRefreshHookOptions hook_options{};
   hook_options.terrain_override = &terrain_override;
   hook_options.base_state_sync_dry_run = true;
@@ -994,6 +996,7 @@ void require_pressure_refresh_hook_success(
 void apply_pressure_refresh(
     const Options& options,
     tywrf::State<float>& candidate,
+    const StaticFieldSet& output_static,
     CandidateReport& report) {
   tywrf::FieldStorage3D<float> direct_alb(candidate.grid.mass_layout());
   const auto metadata = tywrf::io::read_krosa_pressure_refresh_inputs(
@@ -1005,10 +1008,14 @@ void apply_pressure_refresh(
 
   const std::vector<float> p_before(
       candidate.p.data(), candidate.p.data() + candidate.p.size());
+  const auto terrain_override = make_moved_candidate_hgt_terrain_override(output_static);
+  tywrf::dynamics::KrosaPressureRefreshHookOptions hook_options{};
+  hook_options.terrain_override = &terrain_override;
   auto hook_report = tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
       report.remap_plan,
       candidate,
-      metadata.metadata);
+      metadata.metadata,
+      hook_options);
   require_pressure_refresh_hook_success(hook_report);
   require_finite_strict_fields(candidate);
 
@@ -1505,7 +1512,7 @@ int run(Options options) {
     probe_pressure_refresh_provider_readiness(options, candidate, output_static, report);
     probe_pressure_refresh_dry_run_contract(options, candidate, output_static, report);
     require_pressure_refresh_ready_for_compute(report);
-    apply_pressure_refresh(options, candidate, report);
+    apply_pressure_refresh(options, candidate, output_static, report);
   }
 
   tywrf::io::write_wrf_state(
