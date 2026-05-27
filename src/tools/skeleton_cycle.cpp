@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -93,12 +94,12 @@ class NetcdfHandle {
 
 [[nodiscard]] std::string usage() {
   return R"(Usage:
-  tywrf_skeleton_cycle --state <cycle-start wrfout> --template <cycle-end wrfout> --output <candidate wrfout> [options]
+  tywrf_skeleton_cycle --state <cycle-start wrfout> --template <cycle-start/static wrfout> --output <candidate wrfout> [options]
 
 Options:
   --domain d02                    Only d02 is currently supported.
   --state-time-index N            Time index read from --state; default 0.
-  --template-time-index N         Time index copied from --template; default 0.
+  --template-time-index N         Time index copied from --template for static fields and default Times; default 0.
   --output-time-index N           Time index written in --output; default 0.
   --cycle-start TEXT              Optional report/metadata cycle start string.
   --cycle-end TEXT                Optional report/metadata cycle end string.
@@ -106,6 +107,12 @@ Options:
   --variables A,B,C               Combined State/template variables to write.
   --pretty                        Pretty-print JSON report.
   --help                          Show this help.
+
+For d02 moving-nest persistence smoke tests, pass the cycle-start wrfout as
+--template and use --times for the cycle-end timestamp. This keeps
+XLAT/XLONG/HGT consistent with the cycle-start state. Only use cycle-end
+template coordinates after a real integrator state has already been remapped to
+the end nest pose.
 
 This executable is a skeleton candidate writer only. It does not run dynamics
 or physics and marks output metadata as skeleton/not-physical/integrator_output=false.
@@ -285,6 +292,37 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
       "write global numeric attribute");
 }
 
+[[nodiscard]] bool paths_refer_to_same_file(
+    const std::filesystem::path& lhs,
+    const std::filesystem::path& rhs) {
+  if (std::filesystem::absolute(lhs).lexically_normal() ==
+      std::filesystem::absolute(rhs).lexically_normal()) {
+    return true;
+  }
+  std::error_code error;
+  const bool equivalent = std::filesystem::equivalent(lhs, rhs, error);
+  return !error && equivalent;
+}
+
+[[nodiscard]] std::string times_source(const Options& options) {
+  if (!options.times_value.empty()) {
+    return "--times:" + options.times_value;
+  }
+  return "template:" + options.template_path.string();
+}
+
+[[nodiscard]] std::string static_coords_match_state_source(const Options& options) {
+  return paths_refer_to_same_file(options.state_path, options.template_path) ? "same_file"
+                                                                            : "not_verified";
+}
+
+[[nodiscard]] std::string state_static_consistency(const Options& options) {
+  if (paths_refer_to_same_file(options.state_path, options.template_path)) {
+    return "static_coords_same_file_as_state_source";
+  }
+  return "static_coords_from_template_not_verified_against_state_source";
+}
+
 void mark_skeleton_output(
     const Options& options,
     const Resolution resolution,
@@ -302,13 +340,26 @@ void mark_skeleton_output(
   write_text_attr(file, "TYWRF_EXPECTED_TO_MEET_THRESHOLDS", "false");
   write_text_attr(file, "TYWRF_CANDIDATE_DOMAIN", options.domain);
   write_text_attr(file, "TYWRF_CANDIDATE_SOURCE", options.state_path.string());
+  write_text_attr(file, "TYWRF_STATE_SOURCE", options.state_path.string());
   write_text_attr(file, "TYWRF_TEMPLATE_SOURCE", options.template_path.string());
+  write_text_attr(file, "TYWRF_STATIC_SOURCE", options.template_path.string());
+  write_text_attr(
+      file,
+      "TYWRF_TEMPLATE_SOURCE_ROLE",
+      "static_fields_xlat_xlong_hgt_and_default_times_when_no_times_override");
+  write_text_attr(file, "TYWRF_TIMES_SOURCE", times_source(options));
+  write_text_attr(
+      file,
+      "TYWRF_STATIC_COORDS_MATCH_STATE_SOURCE",
+      static_coords_match_state_source(options));
+  write_text_attr(file, "TYWRF_STATE_STATIC_CONSISTENCY", state_static_consistency(options));
   write_text_attr(file, "TYWRF_D02_RESOLUTION_CHECK", "d02_2km");
   write_text_attr(
       file,
       "TYWRF_CANDIDATE_MESSAGE",
       "C++ skeleton candidate generated from cycle-start reference state; not physical and "
-      "not an integrator result.");
+      "not an integrator result. For d02 moving-nest persistence, static coordinates must come "
+      "from the cycle-start nest pose and Times should be overridden to the cycle end.");
   if (!options.cycle_start.empty()) {
     write_text_attr(file, "TYWRF_CYCLE_START", options.cycle_start);
   }
@@ -427,6 +478,21 @@ void print_report(
   write_json_string(std::cout, "domain", options.domain, true, pretty);
   write_json_string(std::cout, "source", options.state_path.string(), true, pretty);
   write_json_string(std::cout, "template", options.template_path.string(), true, pretty);
+  write_json_string(std::cout, "state_source", options.state_path.string(), true, pretty);
+  write_json_string(std::cout, "static_source", options.template_path.string(), true, pretty);
+  write_json_string(std::cout, "times_source", times_source(options), true, pretty);
+  write_json_string(
+      std::cout,
+      "static_coords_match_state_source",
+      static_coords_match_state_source(options),
+      true,
+      pretty);
+  write_json_string(
+      std::cout,
+      "state_static_consistency",
+      state_static_consistency(options),
+      true,
+      pretty);
   write_json_string(std::cout, "candidate", options.output_path.string(), true, pretty);
   write_json_string(std::cout, "d02_resolution_check", "d02_2km", true, pretty);
   write_json_number(std::cout, "dx_m", resolution.dx, true, pretty);

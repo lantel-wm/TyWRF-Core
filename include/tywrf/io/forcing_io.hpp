@@ -54,7 +54,11 @@ class KrosaForcingReader {
   [[nodiscard]] bool has_variable(std::string_view name) const noexcept;
   [[nodiscard]] std::vector<std::string> missing_required_variables() const;
   [[nodiscard]] ForcingVariableMetadata variable_metadata(std::string_view name) const;
+  [[nodiscard]] std::string read_char_time_slice(
+      std::string_view name,
+      std::size_t time_index) const;
   [[nodiscard]] std::string read_time_string(std::size_t time_index) const;
+  [[nodiscard]] std::vector<std::string> read_time_strings() const;
   [[nodiscard]] ForcingTimeSlice read_float_time_slice(
       std::string_view name,
       std::size_t time_index) const;

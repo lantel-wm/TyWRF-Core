@@ -205,3 +205,8 @@ TyWRF canonical buffers are packed into WRF-order arrays
 the WRF driver mutates those arrays, and changed fields are unpacked back to
 TyWRF state. That preserves CUDA-ready core layout while avoiding fragile
 Fortran pointer remapping across halo offsets.
+
+The ABI v2 field inventory, capability groups, and compatibility strategy are
+tracked in `bindings/wrf_physics/ABI_V2_MANIFEST.md`. Header and wrapper work
+should use that manifest as the input contract rather than expanding this
+architecture overview.

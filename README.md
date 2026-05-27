@@ -29,20 +29,31 @@ ctest --test-dir build --output-on-failure
 ## C++ Tools
 
 `tywrf_skeleton_cycle` is the current C++ executable shell for a d02 6 h
-candidate. It reads a cycle-start WRF state, copies `Times/XLAT/XLONG/HGT` from
-the cycle-end template, writes selected core fields, and marks the result as
+candidate. It reads a cycle-start WRF state, copies `XLAT/XLONG/HGT` from the
+static template, writes selected core fields, and marks the result as
 `skeleton=true`, `not_physical=true`, and `integrator_output=false`. It enforces
 d02 `DX/DY=2000m`; it does not run dynamics or physics.
+
+For d02 moving-nest persistence smoke tests, pass the cycle-start wrfout as the
+static `--template` and set output `Times` with `--times`. This keeps the 00 h
+state paired with the 00 h nest coordinates while labeling the candidate at the
+cycle end. Only use cycle-end template coordinates when the state has already
+been remapped to the end nest pose by a real integrator.
 
 ```bash
 ./build/tywrf_skeleton_cycle \
   --state /path/to/wrfout_d02_2025-07-26_00:00:00 \
-  --template /path/to/wrfout_d02_2025-07-26_06:00:00 \
+  --template /path/to/wrfout_d02_2025-07-26_00:00:00 \
   --output /path/to/candidate/wrfout_d02_2025-07-26_06:00:00 \
   --cycle-start 2025-07-26_00:00:00 \
   --cycle-end 2025-07-26_06:00:00 \
+  --times 2025-07-26_06:00:00 \
   --pretty
 ```
+
+The output NetCDF metadata and JSON report identify the state source, static
+coordinate source, `Times` source, and whether static coordinates came from the
+same source file as the state.
 
 ## Python Tools
 

@@ -102,6 +102,10 @@ WRF physics drivers.
 
 ABI v2 needs either a new struct or an extension block for these staging groups:
 
+The detailed field inventory, capability grouping, and backward-compatible ABI
+strategy now live in `ABI_V2_MANIFEST.md`; this README keeps only the audit
+summary.
+
 | Group | Required fields |
 | --- | --- |
 | Derived physics state | `u_phy`, `v_phy`, `th_phy`, `t_phy`, `p_hyd`, `p_hyd_w`, `pi_phy`, `rho`, `dz8w`, `z`, `z_at_w` |

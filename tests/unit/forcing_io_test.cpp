@@ -209,6 +209,16 @@ int run_boundary_reader_test() {
     std::cerr << "synthetic wrfbdy Times value mismatch\n";
     return 1;
   }
+  if (reader.read_char_time_slice("Times", 1) != "2025-07-26_06:00:00") {
+    std::cerr << "synthetic wrfbdy generic char time-slice mismatch\n";
+    return 1;
+  }
+  const auto time_strings = reader.read_time_strings();
+  if (time_strings.size() != 2 || time_strings.front() != "2025-07-26_00:00:00" ||
+      time_strings.back() != "2025-07-26_06:00:00") {
+    std::cerr << "synthetic wrfbdy Times vector mismatch\n";
+    return 1;
+  }
   if (!reader.has_variable("U_BXS") || reader.has_variable("V_BXS")) {
     std::cerr << "synthetic wrfbdy variable existence query mismatch\n";
     return 1;
@@ -277,6 +287,10 @@ int run_nudging_reader_test() {
       }) ||
       !throws_forcing_error([&] {
         const auto ignored = reader.read_float_time_slice("Times", 0);
+        (void)ignored;
+      }) ||
+      !throws_forcing_error([&] {
+        const auto ignored = reader.read_char_time_slice("U_NDG_OLD", 0);
         (void)ignored;
       }) ||
       !throws_forcing_error([&] {

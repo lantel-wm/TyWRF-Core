@@ -98,7 +98,10 @@ void create_synthetic_wrfout(
     const std::filesystem::path& path,
     const double dx,
     const std::string_view time_value,
-    const bool state_fields) {
+    const bool state_fields,
+    const float xlat_offset = 40000.0F,
+    const float xlong_offset = 50000.0F,
+    const float hgt_offset = 60000.0F) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create synthetic wrfout");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
@@ -149,9 +152,9 @@ void create_synthetic_wrfout(
   check_nc(nc_enddef(file_id), "end definitions");
 
   put_times(file_id, times_var, time_value);
-  put_2d(file_id, xlat_var, 3, 4, 40000.0F);
-  put_2d(file_id, xlong_var, 3, 4, 50000.0F);
-  put_2d(file_id, hgt_var, 3, 4, 60000.0F);
+  put_2d(file_id, xlat_var, 3, 4, xlat_offset);
+  put_2d(file_id, xlong_var, 3, 4, xlong_offset);
+  put_2d(file_id, hgt_var, 3, 4, hgt_offset);
   if (state_fields) {
     put_3d(file_id, u_var, 2, 3, 5, 10000.0F);
     put_3d(file_id, t_var, 2, 3, 4, 20000.0F);
@@ -249,6 +252,13 @@ void assert_output(const std::filesystem::path& output) {
   assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
   assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "true");
   assert(read_text_attr(file_id, "TYWRF_D02_RESOLUTION_CHECK") == "d02_2km");
+  assert(read_text_attr(file_id, "TYWRF_STATIC_SOURCE").find("wrfout_d02_2025-07-26_00:00:00") !=
+         std::string::npos);
+  assert(read_text_attr(file_id, "TYWRF_TIMES_SOURCE") == "--times:2025-07-26_06:00:00");
+  assert(read_text_attr(file_id, "TYWRF_STATIC_COORDS_MATCH_STATE_SOURCE") == "same_file");
+  assert(
+      read_text_attr(file_id, "TYWRF_STATE_STATIC_CONSISTENCY") ==
+      "static_coords_same_file_as_state_source");
   assert(read_double_attr(file_id, "DX") == 2000.0);
   assert(read_double_attr(file_id, "DY") == 2000.0);
   assert(read_times(file_id).substr(0, 19) == "2025-07-26_06:00:00");
@@ -256,8 +266,11 @@ void assert_output(const std::filesystem::path& output) {
   assert(read_3d_value(file_id, "T", 1, 2, 3) == value_3d(0, 1, 2, 3, 20000.0F));
   assert(read_2d_value(file_id, "MU", 2, 3) == value_2d(0, 2, 3, 30000.0F));
   assert(read_2d_value(file_id, "XLAT", 2, 3) == value_2d(0, 2, 3, 40000.0F));
+  assert(read_2d_value(file_id, "XLAT", 2, 3) != value_2d(0, 2, 3, 70000.0F));
   assert(read_2d_value(file_id, "XLONG", 1, 2) == value_2d(0, 1, 2, 50000.0F));
+  assert(read_2d_value(file_id, "XLONG", 1, 2) != value_2d(0, 1, 2, 80000.0F));
   assert(read_2d_value(file_id, "HGT", 0, 1) == value_2d(0, 0, 1, 60000.0F));
+  assert(read_2d_value(file_id, "HGT", 0, 1) != value_2d(0, 0, 1, 90000.0F));
   check_nc(nc_close(file_id), "close output");
 }
 
@@ -270,6 +283,7 @@ std::string base_command(
          shell_quote(template_path) + " --output " + shell_quote(output) +
          " --cycle-start " + shell_quote(std::string("2025-07-26_00:00:00")) +
          " --cycle-end " + shell_quote(std::string("2025-07-26_06:00:00")) +
+         " --times " + shell_quote(std::string("2025-07-26_06:00:00")) +
          " --variables Times,XLAT,XLONG,HGT,U,T,MU --pretty";
 }
 
@@ -286,15 +300,22 @@ int main(const int argc, char** argv) {
     std::filesystem::create_directories(root);
 
     const auto state = root / "wrfout_d02_2025-07-26_00:00:00";
-    const auto templ = root / "wrfout_d02_2025-07-26_06:00:00";
+    const auto end_template = root / "wrfout_d02_2025-07-26_06:00:00";
     const auto output = root / "tywrf_cpp_skeleton_wrfout_d02_2025-07-26_06:00:00";
     std::filesystem::remove(state);
-    std::filesystem::remove(templ);
+    std::filesystem::remove(end_template);
     std::filesystem::remove(output);
     create_synthetic_wrfout(state, 2000.0, "2025-07-26_00:00:00", true);
-    create_synthetic_wrfout(templ, 2000.0, "2025-07-26_06:00:00", false);
+    create_synthetic_wrfout(
+        end_template,
+        2000.0,
+        "2025-07-26_06:00:00",
+        false,
+        70000.0F,
+        80000.0F,
+        90000.0F);
 
-    run_command(base_command(executable, state, templ, output));
+    run_command(base_command(executable, state, state, output));
     assert_output(output);
 
     const auto bad_state = root / "wrfout_d02_bad_dx";
@@ -302,7 +323,7 @@ int main(const int argc, char** argv) {
     std::filesystem::remove(bad_state);
     std::filesystem::remove(bad_output);
     create_synthetic_wrfout(bad_state, 1000.0, "2025-07-26_00:00:00", true);
-    run_command_expect_failure(base_command(executable, bad_state, templ, bad_output));
+    run_command_expect_failure(base_command(executable, bad_state, state, bad_output));
 
     std::filesystem::remove_all(root);
   } catch (const std::exception& error) {

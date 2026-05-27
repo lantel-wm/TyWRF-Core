@@ -223,13 +223,16 @@ ForcingVariableMetadata KrosaForcingReader::variable_metadata(const std::string_
   return metadata;
 }
 
-std::string KrosaForcingReader::read_time_string(const std::size_t time_index) const {
+std::string KrosaForcingReader::read_char_time_slice(
+    const std::string_view name,
+    const std::size_t time_index) const {
   require_time_index(path_, time_index, time_count_);
 
-  const auto metadata = variable_metadata("Times");
+  const auto metadata = variable_metadata(name);
   if (metadata.type_name != "char" || metadata.shape.size() != 2) {
     std::ostringstream message;
-    message << "Times must be a Time,DateStrLen char variable in " << path_;
+    message << "KROSA forcing variable " << metadata.name
+            << " must be a Time,<length> char variable in " << path_;
     throw ForcingIoError(message.str());
   }
 
@@ -237,15 +240,32 @@ std::string KrosaForcingReader::read_time_string(const std::size_t time_index) c
   std::vector<char> buffer(length, '\0');
   NetcdfReadHandle file(path_);
   int var_id = -1;
-  check_netcdf(nc_inq_varid(file.id(), "Times", &var_id), path_, "inquire Times");
+  const auto variable_name = std::string(name);
+  check_netcdf(
+      nc_inq_varid(file.id(), variable_name.c_str(), &var_id),
+      path_,
+      "inquire char time-slice variable");
   const std::size_t start[2] = {time_index, 0};
   const std::size_t count[2] = {1, length};
   check_netcdf(
       nc_get_vara_text(file.id(), var_id, start, count, buffer.data()),
       path_,
-      "read Times time slice");
+      "read char time slice");
   file.close();
   return trim_time_string(std::move(buffer));
+}
+
+std::string KrosaForcingReader::read_time_string(const std::size_t time_index) const {
+  return read_char_time_slice("Times", time_index);
+}
+
+std::vector<std::string> KrosaForcingReader::read_time_strings() const {
+  std::vector<std::string> values;
+  values.reserve(time_count_);
+  for (std::size_t time_index = 0; time_index < time_count_; ++time_index) {
+    values.push_back(read_time_string(time_index));
+  }
+  return values;
 }
 
 ForcingTimeSlice KrosaForcingReader::read_float_time_slice(
