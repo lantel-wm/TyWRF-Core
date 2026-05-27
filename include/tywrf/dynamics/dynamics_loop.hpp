@@ -1,7 +1,12 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
+
+namespace tywrf::nest {
+struct MovingNestPoseEvent;
+}  // namespace tywrf::nest
 
 namespace tywrf::dynamics {
 
@@ -17,6 +22,7 @@ enum class LoopEventKind : std::uint8_t {
   spectral_nudging,
   moving_nest_move_check,
   vortex_center_recompute,
+  moving_nest_post_move_parent_fill,
   moving_nest_position_update,
   zero_dynamics_tendency,
   physics,
@@ -49,6 +55,8 @@ struct DynamicsLoopConfig {
   DomainDescriptor parent;
   DomainDescriptor child;
   TimeStepDescriptor timing;
+  const nest::MovingNestPoseEvent* moving_nest_pose_events = nullptr;
+  std::size_t moving_nest_pose_event_count = 0;
 };
 
 struct LoopEvent {
@@ -79,6 +87,7 @@ struct LoopSummary {
   std::int64_t spectral_nudging_calls = 0;
   std::int64_t moving_nest_move_checks = 0;
   std::int64_t vortex_center_recomputes = 0;
+  std::int64_t moving_nest_parent_fills = 0;
   std::int64_t moving_nest_position_updates = 0;
   std::int64_t dynamics_tendency_calls = 0;
   std::int64_t physics_calls = 0;

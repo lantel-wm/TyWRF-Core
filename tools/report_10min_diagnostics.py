@@ -10,6 +10,8 @@ import math
 from pathlib import Path
 from typing import Any, Iterable
 
+import netCDF4
+
 try:
     from tools.analyze_cycle_delta import (
         DEFAULT_THRESHOLDS as DEFAULT_DELTA_THRESHOLDS,
@@ -49,6 +51,16 @@ except ModuleNotFoundError as exc:
 DIAGNOSTIC_ONLY_MESSAGE = (
     "diagnostic-only report; no candidate/model pass is created or evaluated"
 )
+PARENT_FILL_METADATA_ATTRS = (
+    "TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL",
+    "TYWRF_MINIMUM_STATIC_REFRESH_FIELDS",
+    "TYWRF_STAGGERED_STATIC_COORDS_STATUS",
+    "TYWRF_P_DERIVED_REFRESH_STATUS",
+    "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS",
+    "TYWRF_GATE_CANDIDATE",
+)
+BOOL_TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
+BOOL_FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
 
 
 @dataclass(frozen=True)
@@ -72,7 +84,10 @@ class TenMinuteDiagnosticsReport:
     end_time: str
     start_file: str
     end_file: str
+    candidate_file: str | None
     summary: dict[str, Any]
+    candidate_metadata: dict[str, Any]
+    parent_fill_metadata: dict[str, Any]
     movement_audit: dict[str, Any]
     field_delta: dict[str, Any]
 
@@ -134,7 +149,9 @@ def report_10min_diagnostics(
     thresholds: dict[str, float] | None = DEFAULT_DELTA_THRESHOLDS,
     parent_grid_ratio: int = DEFAULT_PARENT_GRID_RATIO,
     log_file: Path | None = None,
+    candidate_file: Path | str | None = None,
 ) -> TenMinuteDiagnosticsReport:
+    candidate_path = Path(candidate_file) if candidate_file is not None else None
     files = resolve_report_files(
         reference_dir,
         domain=domain,
@@ -162,7 +179,14 @@ def report_10min_diagnostics(
 
     movement_payload = moving_nest_report_to_dict(movement)
     delta_payload = delta_report_to_dict(delta)
-    summary = _combined_summary(movement_payload, delta_payload)
+    candidate_metadata = _read_candidate_metadata(candidate_path)
+    parent_fill_metadata = _parent_fill_metadata(candidate_metadata)
+    summary = _combined_summary(
+        movement_payload,
+        delta_payload,
+        candidate_metadata,
+        parent_fill_metadata,
+    )
     return TenMinuteDiagnosticsReport(
         status=_combined_status(movement.status, delta.status),
         diagnostic_only=True,
@@ -179,7 +203,10 @@ def report_10min_diagnostics(
         end_time=files.end_time,
         start_file=str(files.start_file),
         end_file=str(files.end_file),
+        candidate_file=str(candidate_path) if candidate_path is not None else None,
         summary=summary,
+        candidate_metadata=candidate_metadata,
+        parent_fill_metadata=parent_fill_metadata,
         movement_audit=movement_payload,
         field_delta=delta_payload,
     )
@@ -196,6 +223,8 @@ def _combined_status(movement_status: str, delta_status: str) -> str:
 def _combined_summary(
     movement_payload: dict[str, Any],
     delta_payload: dict[str, Any],
+    candidate_metadata: dict[str, Any],
+    parent_fill_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     movement_summary = movement_payload.get("summary", {})
     delta_summary = delta_payload.get("summary", {})
@@ -214,10 +243,162 @@ def _combined_summary(
             resolution.get("status") if isinstance(resolution, dict) else None
         ),
         "d02_resolution": resolution,
+        "candidate_file": candidate_metadata.get("path"),
+        "candidate_metadata_status": candidate_metadata.get("status"),
+        "candidate_gate_candidate": candidate_metadata.get("gate_candidate"),
+        "parent_fill_metadata_status": parent_fill_metadata.get("status"),
+        "diagnostic_remap_parent_fill": parent_fill_metadata.get(
+            "diagnostic_remap_parent_fill"
+        ),
+        "minimum_static_refresh_fields": parent_fill_metadata.get(
+            "minimum_static_refresh_fields"
+        ),
+        "staggered_static_coords_status": parent_fill_metadata.get(
+            "staggered_static_coords_status"
+        ),
+        "p_derived_refresh_status": parent_fill_metadata.get(
+            "p_derived_refresh_status"
+        ),
+        "direct_wrf_end_state_oracle_status": parent_fill_metadata.get(
+            "direct_wrf_end_state_oracle_status"
+        ),
         "diagnostic_only": True,
         "candidate_model_pass": "not_applicable",
         "message": DIAGNOSTIC_ONLY_MESSAGE,
     }
+
+
+def _read_candidate_metadata(candidate_file: Path | None) -> dict[str, Any]:
+    base = {
+        "path": str(candidate_file) if candidate_file is not None else None,
+        "diagnostic_only": True,
+        "candidate_model_pass": "not_applicable",
+    }
+    if candidate_file is None:
+        return {
+            **base,
+            "status": "not_provided",
+            "attrs": {},
+            "present_attrs": [],
+            "missing_attrs": [],
+            "gate_candidate": None,
+            "message": "no candidate file supplied",
+        }
+    if not candidate_file.exists():
+        return {
+            **base,
+            "status": "not_available",
+            "attrs": {},
+            "present_attrs": [],
+            "missing_attrs": list(PARENT_FILL_METADATA_ATTRS),
+            "gate_candidate": None,
+            "message": f"candidate file does not exist: {candidate_file}",
+        }
+
+    try:
+        with netCDF4.Dataset(candidate_file) as dataset:
+            ncattrs = set(dataset.ncattrs())
+            attrs = {
+                name: _netcdf_attr_to_json(dataset.getncattr(name))
+                for name in PARENT_FILL_METADATA_ATTRS
+                if name in ncattrs
+            }
+    except OSError as exc:
+        return {
+            **base,
+            "status": "not_available",
+            "attrs": {},
+            "present_attrs": [],
+            "missing_attrs": list(PARENT_FILL_METADATA_ATTRS),
+            "gate_candidate": None,
+            "message": f"candidate metadata check failed: {exc}",
+        }
+
+    return {
+        **base,
+        "status": "available",
+        "attrs": attrs,
+        "present_attrs": sorted(attrs),
+        "missing_attrs": [
+            name for name in PARENT_FILL_METADATA_ATTRS if name not in attrs
+        ],
+        "gate_candidate": _coerce_bool(attrs.get("TYWRF_GATE_CANDIDATE")),
+        "message": (
+            "candidate metadata surfaced for diagnostic context only; "
+            "no model pass is created"
+        ),
+    }
+
+
+def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
+    attrs = candidate_metadata.get("attrs", {})
+    parent_fill = _coerce_bool(attrs.get("TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL"))
+    if candidate_metadata.get("status") != "available":
+        status = candidate_metadata.get("status")
+    elif parent_fill is True:
+        status = "available"
+    elif parent_fill is False:
+        status = "not_parent_fill"
+    else:
+        status = "missing_parent_fill_flag"
+
+    return {
+        "status": status,
+        "path": candidate_metadata.get("path"),
+        "diagnostic_only": True,
+        "candidate_model_pass": "not_applicable",
+        "diagnostic_remap_parent_fill": parent_fill,
+        "minimum_static_refresh_fields": _split_csv_attr(
+            attrs.get("TYWRF_MINIMUM_STATIC_REFRESH_FIELDS")
+        ),
+        "staggered_static_coords_status": attrs.get(
+            "TYWRF_STAGGERED_STATIC_COORDS_STATUS"
+        ),
+        "p_derived_refresh_status": attrs.get("TYWRF_P_DERIVED_REFRESH_STATUS"),
+        "direct_wrf_end_state_oracle_status": attrs.get(
+            "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS"
+        ),
+        "gate_candidate": candidate_metadata.get("gate_candidate"),
+    }
+
+
+def _netcdf_attr_to_json(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_netcdf_attr_to_json(item) for item in value]
+    if hasattr(value, "tolist"):
+        return _netcdf_attr_to_json(value.tolist())
+    if hasattr(value, "item"):
+        return _netcdf_attr_to_json(value.item())
+    return str(value).strip()
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in BOOL_TRUE_VALUES:
+        return True
+    if text in BOOL_FALSE_VALUES:
+        return False
+    return None
+
+
+def _split_csv_attr(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def _strict_json_value(value: Any) -> Any:
@@ -251,6 +432,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory with WRF reference files",
     )
     parser.add_argument("--domain", choices=(DEFAULT_DOMAIN,), default=DEFAULT_DOMAIN)
+    parser.add_argument(
+        "--candidate-file",
+        type=Path,
+        help="Optional TyWRF diagnostic output file to mine for candidate metadata",
+    )
     parser.add_argument(
         "--start",
         required=True,
@@ -305,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
             thresholds=thresholds,
             parent_grid_ratio=args.parent_grid_ratio,
             log_file=args.log_file,
+            candidate_file=args.candidate_file,
         )
     except ValueError as exc:
         parser.error(str(exc))

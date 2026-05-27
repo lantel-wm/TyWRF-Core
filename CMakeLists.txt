@@ -22,6 +22,7 @@ add_library(tywrf_core STATIC
   src/io/wrf_state_io.cpp
   src/nest/nest_interface.cpp
   src/nest/state_remap.cpp
+  src/nest/time_level_sync.cpp
   src/physics_bridge/staging.cpp
 )
 add_library(TyWRF::Core ALIAS tywrf_core)
@@ -109,6 +110,10 @@ if(BUILD_TESTING)
   add_executable(tywrf_state_remap_test tests/unit/state_remap_test.cpp)
   target_link_libraries(tywrf_state_remap_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_state_remap_test COMMAND tywrf_state_remap_test)
+
+  add_executable(tywrf_time_level_sync_test tests/unit/time_level_sync_test.cpp)
+  target_link_libraries(tywrf_time_level_sync_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_time_level_sync_test COMMAND tywrf_time_level_sync_test)
 
   add_executable(tywrf_wrf_state_io_test tests/unit/wrf_state_io_test.cpp)
   target_link_libraries(tywrf_wrf_state_io_test PRIVATE TyWRF::Core)

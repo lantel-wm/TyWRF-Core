@@ -189,6 +189,56 @@ void expect_10min_parent_step_event_order(
   }
 }
 
+void expect_10min_parent_fill_event_order(
+    const std::vector<LoopEvent>& events,
+    const std::int32_t parent_time_step_seconds) {
+  const auto parent_fills =
+      find_events_by_kind(events, LoopEventKind::moving_nest_post_move_parent_fill);
+  expect(parent_fills.size() == 12,
+         "10 min KROSA timeline emits parent-fill events for 12 actual moves");
+
+  for (std::int64_t parent_step = 0; parent_step < 15; ++parent_step) {
+    const auto parent_end =
+        (parent_step + 1) * static_cast<std::int64_t>(parent_time_step_seconds);
+    const auto move_check_index = find_event_index(
+        events, LoopEventKind::moving_nest_move_check, DomainId::d02,
+        parent_step, -1);
+    const auto parent_fill_index = find_event_index(
+        events, LoopEventKind::moving_nest_post_move_parent_fill,
+        DomainId::d02, parent_step, -1);
+    const auto parent_step_label =
+        std::string("10 min parent step ") + std::to_string(parent_step);
+
+    expect(move_check_index != events.size(), parent_step_label + " move check exists");
+    if (parent_step < 12) {
+      expect(parent_fill_index != events.size(),
+             parent_step_label + " parent-fill event exists after actual move");
+      if (move_check_index != events.size() && parent_fill_index != events.size()) {
+        expect_event(
+            events[parent_fill_index],
+            LoopEventKind::moving_nest_post_move_parent_fill,
+            DomainId::d02, parent_step, -1, parent_end, parent_end,
+            parent_step_label + " parent-fill event", -1, parent_end);
+        expect(parent_fill_index == move_check_index + 1,
+               parent_step_label + " parent-fill event immediately follows move check");
+      }
+    } else {
+      expect(parent_fill_index == events.size(),
+             parent_step_label + " endpoint hold has no parent-fill event");
+    }
+  }
+
+  expect(find_event(events, LoopEventKind::moving_nest_post_move_parent_fill,
+                    520) == nullptr,
+         "10 min first endpoint hold at 520 s has no parent-fill event");
+  expect(find_event(events, LoopEventKind::moving_nest_post_move_parent_fill,
+                    560) == nullptr,
+         "10 min second endpoint hold at 560 s has no parent-fill event");
+  expect(find_event(events, LoopEventKind::moving_nest_post_move_parent_fill,
+                    600) == nullptr,
+         "10 min final endpoint hold at 600 s has no parent-fill event");
+}
+
 }  // namespace
 
 int main() {
@@ -236,6 +286,8 @@ int main() {
          "moving nest move check count");
   expect(summary.vortex_center_recomputes == expected_vortex_recomputes,
          "vortex center recompute count");
+  expect(summary.moving_nest_parent_fills == 0,
+         "6 h dynamics loop has no parent-fill events without explicit pose metadata");
   expect(summary.dynamics_tendency_calls == expected_parent_steps + expected_child_steps,
          "zero dynamics tendency count");
   expect(summary.physics_calls == expected_parent_steps + expected_child_steps, "physics count");
@@ -357,6 +409,10 @@ int main() {
   expect(tywrf::dynamics::loop_event_name(LoopEventKind::vortex_center_recompute) ==
              "vortex_center_recompute",
          "vortex center recompute loop event name");
+  expect(tywrf::dynamics::loop_event_name(
+             LoopEventKind::moving_nest_post_move_parent_fill) ==
+             "moving_nest_post_move_parent_fill",
+         "post-move parent-fill loop event name");
 
   const auto validation_config =
       tywrf::dynamics::make_krosa_10min_validation_loop_config();
@@ -374,6 +430,10 @@ int main() {
          "validation history interval is 10 min");
   expect(validation_config.timing.moving_nest_interval_seconds == 900,
          "validation moving nest interval remains 15 min");
+  expect(validation_config.moving_nest_pose_events != nullptr,
+         "validation config carries moving-nest pose metadata");
+  expect(validation_config.moving_nest_pose_event_count == 16,
+         "validation config carries the first KROSA pose timeline");
 
   std::vector<LoopEvent> validation_events;
   const tywrf::dynamics::DynamicsLoopRunner validation_runner(validation_config);
@@ -401,6 +461,8 @@ int main() {
          "10 min segment moving nest move check count");
   expect(validation_summary.vortex_center_recomputes == 1,
          "10 min segment has only the initial vortex recompute");
+  expect(validation_summary.moving_nest_parent_fills == 12,
+         "10 min segment has parent-fill events for actual d02 moves only");
   expect(validation_summary.dynamics_tendency_calls ==
              expected_validation_parent_steps + expected_validation_child_steps,
          "10 min segment zero dynamics tendency count");
@@ -423,6 +485,9 @@ int main() {
          "10 min segment has d01 and d02 history output at 600 s");
   expect(count_events(validation_events, LoopEventKind::vortex_center_recompute, 600) == 0,
          "10 min segment has no off-interval vortex recompute at 600 s");
+  expect(count_events(validation_events,
+                      LoopEventKind::moving_nest_post_move_parent_fill, 600) == 0,
+         "10 min segment has no parent-fill event at the final hold pose");
 
   const auto* validation_initial_recompute =
       find_event(validation_events, LoopEventKind::vortex_center_recompute, 0);
@@ -438,16 +503,23 @@ int main() {
       validation_config.timing.parent_time_step_ratio,
       validation_config.timing.parent_time_step_seconds,
       validation_config.timing.child_time_step_seconds);
+  expect_10min_parent_fill_event_order(
+      validation_events, validation_config.timing.parent_time_step_seconds);
 
   const auto final_validation_move_check = find_event_index(
       validation_events, LoopEventKind::moving_nest_move_check, DomainId::d02,
       14, -1);
+  const auto final_validation_parent_fill = find_event_index(
+      validation_events, LoopEventKind::moving_nest_post_move_parent_fill,
+      DomainId::d02, 14, -1);
   const auto final_validation_d01_history = find_event_index(
       validation_events, LoopEventKind::history_output, DomainId::d01, 14, -1);
   const auto final_validation_d02_history = find_event_index(
       validation_events, LoopEventKind::history_output, DomainId::d02, 14, -1);
   expect(final_validation_move_check != validation_events.size(),
          "10 min final move check event exists");
+  expect(final_validation_parent_fill == validation_events.size(),
+         "10 min final hold move check has no parent-fill event");
   expect(final_validation_d01_history != validation_events.size(),
          "10 min final d01 history event exists");
   expect(final_validation_d02_history != validation_events.size(),

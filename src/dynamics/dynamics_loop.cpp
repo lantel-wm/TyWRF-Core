@@ -1,6 +1,7 @@
 #include "tywrf/dynamics/dynamics_loop.hpp"
 
 #include "tywrf/dynamics/cycle_schedule.hpp"
+#include "tywrf/nest/nest_interface.hpp"
 
 #include <stdexcept>
 
@@ -54,6 +55,9 @@ void validate_config(const DynamicsLoopConfig& config) {
           "spectral nudging input interval must be positive");
   require(timing.moving_nest_interval_seconds > 0,
           "moving nest interval must be positive");
+  require(config.moving_nest_pose_event_count == 0 ||
+              config.moving_nest_pose_events != nullptr,
+          "moving nest pose metadata requires a non-null event array");
 }
 
 [[nodiscard]] CycleScheduleConfig make_cycle_schedule_config(
@@ -72,6 +76,8 @@ void validate_config(const DynamicsLoopConfig& config) {
       timing.history_interval_seconds,
       SegmentEndpointPolicy::bracket_start_and_end,
       MovingNestTimingPolicy::snap_to_next_parent_step,
+      config.moving_nest_pose_events,
+      config.moving_nest_pose_event_count,
   };
 }
 
@@ -95,6 +101,9 @@ void count_event(const LoopEventKind kind, LoopSummary& summary) noexcept {
       break;
     case LoopEventKind::vortex_center_recompute:
       ++summary.vortex_center_recomputes;
+      break;
+    case LoopEventKind::moving_nest_post_move_parent_fill:
+      ++summary.moving_nest_parent_fills;
       break;
     case LoopEventKind::moving_nest_position_update:
       ++summary.moving_nest_move_checks;
@@ -133,6 +142,8 @@ void count_event(const LoopEventKind kind, LoopSummary& summary) noexcept {
       return LoopEventKind::moving_nest_move_check;
     case CycleScheduleCallKind::vortex_center_recompute:
       return LoopEventKind::vortex_center_recompute;
+    case CycleScheduleCallKind::moving_nest_post_move_parent_fill:
+      return LoopEventKind::moving_nest_post_move_parent_fill;
     case CycleScheduleCallKind::moving_nest_position_update:
       return LoopEventKind::moving_nest_move_check;
     case CycleScheduleCallKind::parent_child_interpolation:
@@ -241,11 +252,15 @@ DynamicsLoopConfig make_krosa_phase4_loop_config() noexcept {
 }
 
 DynamicsLoopConfig make_krosa_10min_validation_loop_config() noexcept {
-  return {
+  auto config = DynamicsLoopConfig{
       DomainDescriptor{DomainId::d01, 10'000, 40, true, true, false},
       DomainDescriptor{DomainId::d02, 2'000, 8, false, false, true},
       TimeStepDescriptor{40, 8, 5, 600, 600, 21'600, 21'600, 900},
   };
+  const auto timeline = nest::make_krosa_first_10min_d02_pose_timeline();
+  config.moving_nest_pose_events = timeline.events;
+  config.moving_nest_pose_event_count = timeline.event_count;
+  return config;
 }
 
 std::string_view domain_name(const DomainId domain) noexcept {
@@ -272,6 +287,8 @@ std::string_view loop_event_name(const LoopEventKind kind) noexcept {
       return "moving_nest_move_check";
     case LoopEventKind::vortex_center_recompute:
       return "vortex_center_recompute";
+    case LoopEventKind::moving_nest_post_move_parent_fill:
+      return "moving_nest_post_move_parent_fill";
     case LoopEventKind::moving_nest_position_update:
       return "moving_nest_position_update";
     case LoopEventKind::zero_dynamics_tendency:

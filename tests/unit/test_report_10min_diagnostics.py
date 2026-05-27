@@ -27,6 +27,7 @@ def _write_wrfout(
     dx: float = 2000.0,
     dy: float = 2000.0,
     hgt_offset: float = 0.0,
+    attrs: dict[str, str] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     y = np.arange(4, dtype=np.float64).reshape(4, 1)
@@ -43,6 +44,8 @@ def _write_wrfout(
         dataset.setncattr("J_PARENT_START", j_parent_start)
         dataset.setncattr("DX", dx)
         dataset.setncattr("DY", dy)
+        for name, value in (attrs or {}).items():
+            dataset.setncattr(name, value)
         fields = {
             "XLAT": lat,
             "XLONG": lon,
@@ -109,6 +112,96 @@ def test_combined_report_summarizes_moved_segment_and_delta_failure(
     assert payload["summary"]["d02_2km_status"] == "ok"
     assert payload["movement_audit"]["summary"]["hgt_delta"]["status"] == "computed"
     assert payload["field_delta"]["summary"]["computed"] == 2
+
+
+def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_file = tmp_path / "candidate" / f"wrfout_d02_{END}_parent_fill"
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{START}",
+        i_parent_start=10,
+        j_parent_start=20,
+        u_value=9.0,
+    )
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{END}",
+        i_parent_start=12,
+        j_parent_start=21,
+        u_value=10.0,
+    )
+    _write_wrfout(
+        candidate_file,
+        i_parent_start=12,
+        j_parent_start=21,
+        attrs={
+            "TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL": "true",
+            "TYWRF_MINIMUM_STATIC_REFRESH_FIELDS": "XLAT,XLONG,HGT",
+            "TYWRF_STAGGERED_STATIC_COORDS_STATUS": "pending_unless_emitted_later",
+            "TYWRF_P_DERIVED_REFRESH_STATUS": (
+                "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill"
+            ),
+            "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS": (
+                "diagnostic_only_nonphysical_non_gate"
+            ),
+            "TYWRF_GATE_CANDIDATE": "false",
+        },
+    )
+
+    payload = json.loads(
+        report_to_json(
+            report_10min_diagnostics(
+                reference_dir,
+                domain="d02",
+                start=START,
+                end=END,
+                variables=("U",),
+                thresholds={"U": 0.05},
+                candidate_file=candidate_file,
+            ),
+            pretty=True,
+        )
+    )
+
+    assert payload["status"] == "computed"
+    assert payload["diagnostic_only"] is True
+    assert payload["candidate_model_pass"] == "not_applicable"
+    assert payload["candidate_file"] == str(candidate_file)
+    assert payload["candidate_metadata"]["status"] == "available"
+    assert payload["candidate_metadata"]["path"] == str(candidate_file)
+    assert payload["candidate_metadata"]["gate_candidate"] is False
+    assert payload["candidate_metadata"]["candidate_model_pass"] == "not_applicable"
+    assert (
+        payload["candidate_metadata"]["attrs"]["TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL"]
+        == "true"
+    )
+    assert payload["parent_fill_metadata"]["status"] == "available"
+    assert payload["parent_fill_metadata"]["diagnostic_remap_parent_fill"] is True
+    assert payload["parent_fill_metadata"]["minimum_static_refresh_fields"] == [
+        "XLAT",
+        "XLONG",
+        "HGT",
+    ]
+    assert (
+        payload["parent_fill_metadata"]["p_derived_refresh_status"]
+        == "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill"
+    )
+    assert (
+        payload["parent_fill_metadata"]["direct_wrf_end_state_oracle_status"]
+        == "diagnostic_only_nonphysical_non_gate"
+    )
+    assert payload["summary"]["candidate_file"] == str(candidate_file)
+    assert payload["summary"]["candidate_metadata_status"] == "available"
+    assert payload["summary"]["candidate_gate_candidate"] is False
+    assert payload["summary"]["parent_fill_metadata_status"] == "available"
+    assert payload["summary"]["diagnostic_remap_parent_fill"] is True
+    assert payload["summary"]["minimum_static_refresh_fields"] == [
+        "XLAT",
+        "XLONG",
+        "HGT",
+    ]
+    assert payload["summary"]["candidate_model_pass"] == "not_applicable"
 
 
 def test_resolve_report_files_uses_reference_dir_naming(tmp_path: Path) -> None:
@@ -232,3 +325,66 @@ def test_cli_writes_json_and_passes_log_file_to_movement_audit(
         payload["movement_audit"]["log_events"]["net_applied_matches_parent_delta"]
         is True
     )
+
+
+def test_cli_accepts_candidate_file_metadata_without_model_pass(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    output = tmp_path / "report.json"
+    candidate_file = tmp_path / "candidate" / f"wrfout_d02_{END}_parent_fill"
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{START}",
+        i_parent_start=1,
+        j_parent_start=2,
+        u_value=3.0,
+    )
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{END}",
+        i_parent_start=3,
+        j_parent_start=3,
+        u_value=3.0,
+    )
+    _write_wrfout(
+        candidate_file,
+        i_parent_start=3,
+        j_parent_start=3,
+        attrs={
+            "TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL": "true",
+            "TYWRF_MINIMUM_STATIC_REFRESH_FIELDS": "XLAT,XLONG,HGT",
+            "TYWRF_STAGGERED_STATIC_COORDS_STATUS": "pending_unless_emitted_later",
+            "TYWRF_P_DERIVED_REFRESH_STATUS": "pending_refresh",
+            "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS": (
+                "diagnostic_only_nonphysical_non_gate"
+            ),
+            "TYWRF_GATE_CANDIDATE": "false",
+        },
+    )
+
+    exit_code = report_main(
+        [
+            "--reference-dir",
+            str(reference_dir),
+            "--domain",
+            "d02",
+            "--candidate-file",
+            str(candidate_file),
+            "--start",
+            START,
+            "--end",
+            END,
+            "--variables",
+            "U",
+            "--output",
+            str(output),
+        ]
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert payload["candidate_file"] == str(candidate_file)
+    assert payload["candidate_metadata"]["status"] == "available"
+    assert payload["parent_fill_metadata"]["diagnostic_remap_parent_fill"] is True
+    assert payload["summary"]["candidate_gate_candidate"] is False
+    assert payload["summary"]["diagnostic_only"] is True
+    assert payload["summary"]["candidate_model_pass"] == "not_applicable"
