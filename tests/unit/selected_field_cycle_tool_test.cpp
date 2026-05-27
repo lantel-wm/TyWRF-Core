@@ -131,12 +131,23 @@ struct DefinedFixtureVars {
   int mu = -1;
   int p = -1;
   int qvapor = -1;
+  int pb = -1;
+  int phb = -1;
+  int mub = -1;
+  int psfc = -1;
+  int u10 = -1;
+  int v10 = -1;
+  int t2 = -1;
+  int q2 = -1;
+  int rainc = -1;
+  int rainnc = -1;
 };
 
 DefinedFixtureVars define_fixture_vars(
     const int file_id,
     const FixtureShape shape,
     const bool state_fields,
+    const bool optional_state_fields,
     const int time_dim,
     const int date_str_len_dim,
     const int bottom_top_dim,
@@ -167,6 +178,18 @@ DefinedFixtureVars define_fixture_vars(
     check_nc(
         nc_def_var(file_id, "QVAPOR", NC_FLOAT, 4, mass_3d_dims, &vars.qvapor),
         "define QVAPOR");
+    if (optional_state_fields) {
+      check_nc(nc_def_var(file_id, "PB", NC_FLOAT, 4, mass_3d_dims, &vars.pb), "define PB");
+      check_nc(nc_def_var(file_id, "PHB", NC_FLOAT, 4, w_dims, &vars.phb), "define PHB");
+      check_nc(nc_def_var(file_id, "MUB", NC_FLOAT, 3, mass_2d_dims, &vars.mub), "define MUB");
+      check_nc(nc_def_var(file_id, "PSFC", NC_FLOAT, 3, mass_2d_dims, &vars.psfc), "define PSFC");
+      check_nc(nc_def_var(file_id, "U10", NC_FLOAT, 3, mass_2d_dims, &vars.u10), "define U10");
+      check_nc(nc_def_var(file_id, "V10", NC_FLOAT, 3, mass_2d_dims, &vars.v10), "define V10");
+      check_nc(nc_def_var(file_id, "T2", NC_FLOAT, 3, mass_2d_dims, &vars.t2), "define T2");
+      check_nc(nc_def_var(file_id, "Q2", NC_FLOAT, 3, mass_2d_dims, &vars.q2), "define Q2");
+      check_nc(nc_def_var(file_id, "RAINC", NC_FLOAT, 3, mass_2d_dims, &vars.rainc), "define RAINC");
+      check_nc(nc_def_var(file_id, "RAINNC", NC_FLOAT, 3, mass_2d_dims, &vars.rainnc), "define RAINNC");
+    }
   }
   (void)shape;
   return vars;
@@ -177,7 +200,8 @@ void create_wrf_fixture(
     const double dx,
     const FixtureShape shape,
     const bool state_fields,
-    const bool parent_values) {
+    const bool parent_values,
+    const bool optional_state_fields = false) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create fixture");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
@@ -212,6 +236,7 @@ void create_wrf_fixture(
       file_id,
       shape,
       state_fields,
+      optional_state_fields,
       time_dim,
       date_str_len_dim,
       bottom_top_dim,
@@ -243,6 +268,18 @@ void create_wrf_fixture(
       put_2d_linear(file_id, vars.mu, shape.mass_ny, shape.mass_nx, 50'000.0F, 1.0F, 10.0F);
       put_3d_linear(file_id, vars.p, shape.mass_nz, shape.mass_ny, shape.mass_nx, 60'000.0F, 1.0F, 10.0F, 100.0F);
       put_3d_linear(file_id, vars.qvapor, shape.mass_nz, shape.mass_ny, shape.mass_nx, 70'000.0F, 1.0F, 10.0F, 100.0F);
+    }
+    if (optional_state_fields) {
+      put_3d_linear(file_id, vars.pb, shape.mass_nz, shape.mass_ny, shape.mass_nx, 80'000.0F, 1.0F, 10.0F, 100.0F);
+      put_3d_linear(file_id, vars.phb, shape.full_nz, shape.mass_ny, shape.mass_nx, 90'000.0F, 1.0F, 10.0F, 100.0F);
+      put_2d_linear(file_id, vars.mub, shape.mass_ny, shape.mass_nx, 100'000.0F, 1.0F, 10.0F);
+      put_2d_linear(file_id, vars.psfc, shape.mass_ny, shape.mass_nx, 110'000.0F, 1.0F, 10.0F);
+      put_2d_linear(file_id, vars.u10, shape.mass_ny, shape.mass_nx, 120'000.0F, 1.0F, 10.0F);
+      put_2d_linear(file_id, vars.v10, shape.mass_ny, shape.mass_nx, 130'000.0F, 1.0F, 10.0F);
+      put_2d_linear(file_id, vars.t2, shape.mass_ny, shape.mass_nx, 140'000.0F, 1.0F, 10.0F);
+      put_2d_linear(file_id, vars.q2, shape.mass_ny, shape.mass_nx, 150'000.0F, 1.0F, 10.0F);
+      put_2d_linear(file_id, vars.rainc, shape.mass_ny, shape.mass_nx, 160'000.0F, 1.0F, 10.0F);
+      put_2d_linear(file_id, vars.rainnc, shape.mass_ny, shape.mass_nx, 170'000.0F, 1.0F, 10.0F);
     }
   }
   check_nc(nc_close(file_id), "close fixture");
@@ -350,6 +387,22 @@ void expect_close(const float actual, const float expected, const std::string_vi
   }
 }
 
+[[nodiscard]] bool contains_csv_value(const std::string& values, const std::string_view expected) {
+  std::size_t begin = 0;
+  while (begin <= values.size()) {
+    const auto end = values.find(',', begin);
+    const auto token = values.substr(begin, end == std::string::npos ? values.size() - begin : end - begin);
+    if (token == expected) {
+      return true;
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    begin = end + 1;
+  }
+  return false;
+}
+
 void assert_successful_candidate(const std::filesystem::path& output) {
   int file_id = -1;
   check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open output");
@@ -364,6 +417,15 @@ void assert_successful_candidate(const std::filesystem::path& output) {
   assert(read_double_attr(file_id, "TYWRF_PARENT_GRID_RATIO") == 5.0);
   assert(read_double_attr(file_id, "TYWRF_SELECTED_FIELD_CHANGED_POINTS") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_INTERPOLATED_POINTS") > 0.0);
+  const auto state_variables = read_text_attr(file_id, "TYWRF_STATE_VARIABLES");
+  assert(contains_csv_value(state_variables, "PB"));
+  assert(contains_csv_value(state_variables, "PHB"));
+  assert(contains_csv_value(state_variables, "MUB"));
+  assert(contains_csv_value(state_variables, "U10"));
+  assert(contains_csv_value(state_variables, "V10"));
+  assert(contains_csv_value(state_variables, "RAINC"));
+  assert(contains_csv_value(state_variables, "RAINNC"));
+  assert(!contains_csv_value(state_variables, "SLP"));
   assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
 
   expect_close(read_3d_value(file_id, "U", 1, 2, 0), linear_3d(1, 2, 5, 10'000.0F, 1.0F, 10.0F, 100.0F), "U overlap");
@@ -379,6 +441,16 @@ void assert_successful_candidate(const std::filesystem::path& output) {
   expect_close(read_3d_value(file_id, "T", 1, 9, 9), linear_3d(1, 9, 9, 30'000.0F, 1.0F, 10.0F, 100.0F), "T preserved exposed");
   expect_close(read_3d_value(file_id, "PH", 2, 9, 9), linear_3d(2, 9, 9, 40'000.0F, 1.0F, 10.0F, 100.0F), "PH preserved exposed");
   expect_close(read_3d_value(file_id, "P", 1, 9, 9), linear_3d(1, 9, 9, 60'000.0F, 1.0F, 10.0F, 100.0F), "P preserved exposed");
+  expect_close(read_3d_value(file_id, "PB", 1, 9, 9), linear_3d(1, 9, 9, 80'000.0F, 1.0F, 10.0F, 100.0F), "PB preserved");
+  expect_close(read_3d_value(file_id, "PHB", 2, 9, 9), linear_3d(2, 9, 9, 90'000.0F, 1.0F, 10.0F, 100.0F), "PHB preserved");
+  expect_close(read_2d_value(file_id, "MUB", 9, 9), linear_2d(9, 9, 100'000.0F, 1.0F, 10.0F), "MUB preserved");
+  expect_close(read_2d_value(file_id, "PSFC", 9, 9), linear_2d(9, 9, 110'000.0F, 1.0F, 10.0F), "PSFC preserved");
+  expect_close(read_2d_value(file_id, "U10", 9, 9), linear_2d(9, 9, 120'000.0F, 1.0F, 10.0F), "U10 preserved");
+  expect_close(read_2d_value(file_id, "V10", 9, 9), linear_2d(9, 9, 130'000.0F, 1.0F, 10.0F), "V10 preserved");
+  expect_close(read_2d_value(file_id, "T2", 9, 9), linear_2d(9, 9, 140'000.0F, 1.0F, 10.0F), "T2 preserved");
+  expect_close(read_2d_value(file_id, "Q2", 9, 9), linear_2d(9, 9, 150'000.0F, 1.0F, 10.0F), "Q2 preserved");
+  expect_close(read_2d_value(file_id, "RAINC", 9, 9), linear_2d(9, 9, 160'000.0F, 1.0F, 10.0F), "RAINC preserved");
+  expect_close(read_2d_value(file_id, "RAINNC", 9, 9), linear_2d(9, 9, 170'000.0F, 1.0F, 10.0F), "RAINNC preserved");
   check_nc(nc_close(file_id), "close output");
 }
 
@@ -395,6 +467,24 @@ void run_rejection_tests(
   assert(oracle_status != 0);
   assert(!std::filesystem::exists(oracle_output));
 
+  const std::vector<std::string> oracle_options = {
+      "--end-state=" + d02_start.string(),
+      "--reference-end " + shell_quote(d02_start),
+      "--reference-end=" + d02_start.string(),
+      "--d01-end-state " + shell_quote(d01_start),
+      "--d01-end-state=" + d01_start.string(),
+      "--d02-end-state " + shell_quote(d02_start),
+      "--d02-end-state=" + d02_start.string(),
+  };
+  for (std::size_t index = 0; index < oracle_options.size(); ++index) {
+    const auto output = root / ("oracle_rejected_" + std::to_string(index));
+    const auto status = run_command_status(
+        base_command(executable, d01_start, d02_start, template_path, output) + " " +
+        oracle_options[index] + " >/dev/null 2>&1");
+    assert(status != 0);
+    assert(!std::filesystem::exists(output));
+  }
+
   const auto bad_template = root / "bad_template";
   create_wrf_fixture(bad_template, 4000.0, FixtureShape{10, 10}, false, false);
   const auto bad_output = root / "bad_resolution_output";
@@ -410,6 +500,13 @@ void run_rejection_tests(
       " --variables U,V,T,PH,MU,P,QVAPOR >/dev/null 2>&1");
   assert(missing_static_status != 0);
   assert(!std::filesystem::exists(missing_static_output));
+
+  const auto no_change_output = root / "no_change_output";
+  const auto no_change_status = run_command_status(
+      base_command(executable, d01_start, d02_start, template_path, no_change_output) +
+      " --to-parent-start 2,2 >/dev/null 2>&1");
+  assert(no_change_status != 0);
+  assert(!std::filesystem::exists(no_change_output));
 }
 
 }  // namespace
@@ -430,7 +527,7 @@ int main(const int argc, char** argv) {
     const auto template_path = root / "wrfout_d02_template";
     const auto output = root / "tywrf_selected_field_d02_2025-07-26_00:10:00";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
-    create_wrf_fixture(d02_start, 2000.0, FixtureShape{10, 10}, true, false);
+    create_wrf_fixture(d02_start, 2000.0, FixtureShape{10, 10}, true, false, true);
     create_wrf_fixture(template_path, 2000.0, FixtureShape{10, 10}, false, false);
 
     run_command(base_command(executable, d01_start, d02_start, template_path, output));

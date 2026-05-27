@@ -233,6 +233,24 @@ diagnostic remap, diagnostic pressure-refresh, closure-modified, oracle, and
 reference-copy artifacts remain explicitly non-gate and cannot be described as
 selected-field gate candidates.
 
+Round D35 real KROSA selected-field smoke is the counterexample that keeps the
+closure boundary clear. `selected_field_cycle` generated a positive-metadata
+candidate from `2025-07-26_00:00:00` start states only, and the strict metadata
+gate passed, but the result still failed numerically. The first failure was
+`U` normalized RMSE `0.117875`; `V`, `MU`, and `P` also failed, with `P`
+normalized RMSE `0.907405` as the largest current blocker. `T`, `PH`, and
+`QVAPOR` passed thresholds, and all strict RMSE fields had full finite
+coverage.
+
+This result must not trigger a diagnostic closure to patch the failed fields.
+The remaining gaps are normal output/diagnostic work: accepted `SLP` is
+unavailable, `U10` is currently absent in the v0 smoke, and `P` needs a real
+producer rather than a closure or oracle correction. Round D36 may evaluate
+pressure-refresh integration only when it uses cycle-start/provider metadata
+and writes candidate state through the normal selected-field path. It must not
+derive a hidden closure, use reference-end truth, or become a diagnostic
+shortcut for SLP, `P`, or Vmax metrics.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

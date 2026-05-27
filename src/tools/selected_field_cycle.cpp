@@ -37,6 +37,12 @@ const std::vector<std::string>& strict_state_variable_names() {
   return names;
 }
 
+const std::vector<std::string>& optional_preserved_state_variable_names() {
+  static const std::vector<std::string> names = {
+      "PB", "PHB", "MUB", "PSFC", "U10", "V10", "T2", "Q2", "RAINC", "RAINNC"};
+  return names;
+}
+
 const std::vector<std::string>& parent_interpolation_variable_names() {
   static const std::vector<std::string> names = {"U", "V", "MU", "QVAPOR"};
   return names;
@@ -125,16 +131,17 @@ Options:
   --d02-time-index N             Time index read from --d02-start-state; default 0.
   --template-time-index N        Time index copied from --template for static fields; default 0.
   --output-time-index N          Time index written in --output; default 0.
-  --variables A,B,C              Output variables; default strict fields plus Times/XLAT/XLONG/HGT.
+  --variables A,B,C              Output variables; default strict fields, Times/XLAT/XLONG/HGT,
+                                  plus available d02 PB/PHB/MUB/PSFC/U10/V10/T2/Q2/RAINC/RAINNC.
   --pretty                       Pretty-print JSON report.
   --help                         Show this help.
 
 Oracle inputs are not accepted: --end-state, --reference-end, --d01-end-state,
 and --d02-end-state are rejected. This tool remaps the d02 start state from the
 old moving-nest pose to the new pose, fills newly exposed U/V/MU/QVAPOR cells
-from d01 start-state parent interpolation, and preserves the strict T/PH/P
-fields from start-state data. It is a selected-field integrator candidate, not
-a WRF-exact physics result.
+from d01 start-state parent interpolation, and preserves strict plus available
+d02 start-state diagnostic fields without using reference-end truth. It is a
+selected-field integrator candidate, not a WRF-exact physics result.
 )";
 }
 
@@ -285,11 +292,6 @@ a WRF-exact physics result.
   if (!options.has_to_parent_start) {
     throw std::invalid_argument("--to-parent-start is required");
   }
-  if (options.variables.empty()) {
-    options.variables = template_variable_names();
-    const auto& strict = strict_state_variable_names();
-    options.variables.insert(options.variables.end(), strict.begin(), strict.end());
-  }
   return options;
 }
 
@@ -311,6 +313,49 @@ void require_output_variables(const std::vector<std::string>& variables) {
       throw std::invalid_argument("selected-field candidate output must include strict field " + name);
     }
   }
+}
+
+[[nodiscard]] bool has_variable(const NetcdfHandle& file, const std::string_view name) {
+  int variable_id = -1;
+  const int status = nc_inq_varid(file.id(), std::string(name).c_str(), &variable_id);
+  if (status == NC_NOERR) {
+    return true;
+  }
+  if (status == NC_ENOTVAR) {
+    return false;
+  }
+  file.check(status, "inquire variable");
+  return false;
+}
+
+[[nodiscard]] std::vector<std::string> available_optional_preserved_variables(
+    const std::filesystem::path& path) {
+  const NetcdfHandle file(path, NetcdfHandle::Mode::read);
+  std::vector<std::string> variables;
+  for (const auto& name : optional_preserved_state_variable_names()) {
+    if (has_variable(file, name)) {
+      variables.push_back(name);
+    }
+  }
+  return variables;
+}
+
+[[nodiscard]] std::vector<std::string> default_output_variables(
+    const std::filesystem::path& d02_start_state_path) {
+  auto variables = template_variable_names();
+  const auto& strict = strict_state_variable_names();
+  variables.insert(variables.end(), strict.begin(), strict.end());
+  const auto optional = available_optional_preserved_variables(d02_start_state_path);
+  variables.insert(variables.end(), optional.begin(), optional.end());
+  return variables;
+}
+
+[[nodiscard]] std::vector<std::string> selected_d02_read_variables(
+    const std::filesystem::path& d02_start_state_path) {
+  auto variables = strict_state_variable_names();
+  const auto optional = available_optional_preserved_variables(d02_start_state_path);
+  variables.insert(variables.end(), optional.begin(), optional.end());
+  return variables;
 }
 
 [[nodiscard]] std::optional<double> read_double_attr(
@@ -697,10 +742,13 @@ void print_report(
   std::cout << "}" << (pretty ? "\n" : "\n");
 }
 
-int run(const Options& options) {
+int run(Options options) {
   require_path_exists(options.d01_start_state_path, "d01 start-state input");
   require_path_exists(options.d02_start_state_path, "d02 start-state input");
   require_path_exists(options.template_path, "template input");
+  if (options.variables.empty()) {
+    options.variables = default_output_variables(options.d02_start_state_path);
+  }
   require_output_variables(options.variables);
   if (options.output_path.has_parent_path()) {
     std::filesystem::create_directories(options.output_path.parent_path());
@@ -727,7 +775,8 @@ int run(const Options& options) {
   tywrf::io::load_wrf_state(
       options.d02_start_state_path,
       d02_start,
-      {.time_index = options.d02_time_index, .variables = strict_state_variable_names()});
+      {.time_index = options.d02_time_index,
+       .variables = selected_d02_read_variables(options.d02_start_state_path)});
   require_finite_strict_fields(d02_start);
 
   tywrf::State<float> candidate(d02_grid);

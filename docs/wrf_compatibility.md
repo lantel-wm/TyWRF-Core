@@ -465,6 +465,36 @@ condition. `tendency_cycle`, persistence/skeleton, diagnostic remap,
 diagnostic pressure-refresh, and diagnostic closure paths remain explicitly
 non-gate compatibility artifacts.
 
+Round D35 real KROSA selected-field smoke produced the first positive-metadata
+`selected_field_cycle` candidate from `2025-07-26_00:00:00` start states only.
+The candidate used the non-oracle selected-field path, preserved d02
+`DX/DY = 2000 m`, and passed the strict gate metadata checks:
+
+```text
+TYWRF_GATE_CANDIDATE = true
+TYWRF_INTEGRATOR_OUTPUT = true
+TYWRF_VALIDATION_GATE_ONLY = false
+TYWRF_CANDIDATE_KIND = selected_field_integrator_v0
+```
+
+This smoke is not a gate pass. The strict RMSE fields had full finite coverage,
+so the first failure is numeric: `U` normalized RMSE `0.117875`. `V`, `MU`, and
+`P` also fail, with `P` normalized RMSE `0.907405` as the largest current
+blocker. `T`, `PH`, and `QVAPOR` pass their strict field thresholds. Remaining
+output/diagnostic gaps are that accepted sea-level pressure is unavailable,
+`U10` is absent in the v0 smoke output, and Vmax/MSLP diagnostics therefore
+cannot yet close the full strict d02 gate.
+
+Round D36 should keep the same compatibility boundary while improving the
+candidate. Preserve near-surface and core cycle-start fields where they are
+non-oracle and physically preferable to dropping variables from the output.
+Investigate the exact input and metadata requirements of
+`run_cycle_gate_with_slp.py`, especially how derived `SLP` is staged without
+falling back to a `PSFC` proxy. Evaluate pressure-refresh integration only if
+it consumes start-state/provider metadata and remains a real producer for the
+candidate field; it must not become a diagnostic shortcut or use
+reference-end truth to lower `P` RMSE.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

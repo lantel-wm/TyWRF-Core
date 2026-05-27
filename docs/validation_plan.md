@@ -339,6 +339,39 @@ diagnostic remap, diagnostic pressure-refresh, oracle, reference-copy, and
 diagnostic-closure paths remain non-gate even if they produce comparable
 fields or diagnostic reports.
 
+Round D35 real KROSA selected-field smoke reached the intended next validation
+state: a positive-metadata, non-oracle candidate that fails on real numbers
+rather than gate plumbing. `selected_field_cycle` generated the candidate from
+`2025-07-26_00:00:00` d01/d02 start states only. Strict metadata passed with
+`TYWRF_GATE_CANDIDATE = true`, `TYWRF_INTEGRATOR_OUTPUT = true`,
+`TYWRF_VALIDATION_GATE_ONLY = false`, and
+`TYWRF_CANDIDATE_KIND = selected_field_integrator_v0`.
+
+The strict field arrays had full finite coverage. The first failing field is
+`U`, with normalized RMSE `0.117875` against the `00:10` KROSA d02 reference.
+`V`, `MU`, and `P` also fail strict thresholds; `P` normalized RMSE
+`0.907405` is the largest blocker. `T`, `PH`, and `QVAPOR` pass their strict
+thresholds. This remains a failed gate and must be reported as such.
+
+The remaining diagnostic/output gaps are separate from the field RMSE result:
+an accepted `SLP`/MSLP variable is unavailable, `U10` is currently absent in
+the v0 smoke output, and therefore the full MSLP/storm-center/Vmax portions of
+the strict d02 gate are still incomplete. The lack of SLP must not be hidden by
+a `PSFC` proxy, and missing `U10` must remain a hard output gap for Vmax10m
+diagnostics.
+
+Round D36 validation priorities are:
+
+- preserve near-surface and core start fields where they are non-oracle and
+  needed for gate diagnostics or `derive_mslp.py`;
+- inspect `run_cycle_gate_with_slp.py` requirements for candidate variables,
+  metadata, derived-output locations, and failure modes before changing the
+  candidate writer;
+- evaluate pressure-refresh integration only as a start-state/provider-backed
+  candidate producer. It may use KROSA provider metadata and staged start-state
+  fields, but it must not use reference-end fields, diagnostic closure output,
+  or any shortcut whose purpose is only to make SLP/P diagnostics pass.
+
 Example:
 
 ```bash
