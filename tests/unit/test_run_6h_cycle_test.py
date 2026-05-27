@@ -1,12 +1,16 @@
 from pathlib import Path
 
 from tools.run_6h_cycle_test import (
+    build_baseline_candidate_report,
     build_cycle_plan,
     format_wrf_time,
     main as cycle_main,
     parse_wrf_time,
     wrfout_filename,
 )
+
+import netCDF4
+import numpy as np
 
 
 def test_wrf_time_parsing_and_filename_formatting() -> None:
@@ -73,3 +77,97 @@ def test_cycle_main_dry_run_writes_json_plan(tmp_path: Path) -> None:
     assert '"status": "dry_run"' in text
     assert '"domain": "d01"' in text
     assert '"domain": "d02"' in text
+
+
+def _make_d02_wrfout(path: Path, valid_time: str, value: float) -> None:
+    with netCDF4.Dataset(path, "w") as dataset:
+        dataset.setncattr("DX", 2000.0)
+        dataset.setncattr("DY", 2000.0)
+        dataset.createDimension("Time", None)
+        dataset.createDimension("DateStrLen", 19)
+        dataset.createDimension("south_north", 2)
+        dataset.createDimension("west_east", 2)
+
+        times = dataset.createVariable("Times", "S1", ("Time", "DateStrLen"))
+        times[0, :] = np.array(list(valid_time), dtype="S1")
+
+        psfc = dataset.createVariable("PSFC", "f4", ("Time", "south_north", "west_east"))
+        psfc[0, :, :] = np.full((2, 2), value, dtype=np.float32)
+
+
+def test_build_baseline_candidate_report_generates_d02_multi_cycle_files(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    reference_dir.mkdir()
+    for hour, value in ((0, 100000.0), (6, 99000.0), (12, 98000.0)):
+        valid_time = f"2025-07-26_{hour:02d}:00:00"
+        _make_d02_wrfout(reference_dir / f"wrfout_d02_{valid_time}", valid_time, value)
+
+    report = build_baseline_candidate_report(
+        reference_dir,
+        candidate_dir,
+        start="2025-07-26_00:00:00",
+        end="2025-07-26_12:00:00",
+        hours=6,
+        interval_hours=6,
+        domains=("d02",),
+        mode="persistence",
+        variables=("Times", "PSFC"),
+    )
+
+    assert report["status"] == "baseline_candidate_generated"
+    assert report["mode"] == "persistence"
+    assert report["cycle_count"] == 2
+    assert [Path(item["candidate"]).name for item in report["candidates"]] == [
+        "wrfout_d02_2025-07-26_06:00:00",
+        "wrfout_d02_2025-07-26_12:00:00",
+    ]
+
+    with netCDF4.Dataset(candidate_dir / "wrfout_d02_2025-07-26_12:00:00") as dataset:
+        assert dataset.getncattr("TYWRF_REFERENCE_COPY") == "false"
+        np.testing.assert_array_equal(dataset.variables["PSFC"][:], np.full((1, 2, 2), 99000.0))
+
+
+def test_cycle_main_reference_copy_writes_metadata_json(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    output = tmp_path / "report.json"
+    reference_dir.mkdir()
+    _make_d02_wrfout(
+        reference_dir / "wrfout_d02_2025-07-26_00:00:00",
+        "2025-07-26_00:00:00",
+        100000.0,
+    )
+    _make_d02_wrfout(
+        reference_dir / "wrfout_d02_2025-07-26_06:00:00",
+        "2025-07-26_06:00:00",
+        99000.0,
+    )
+
+    exit_code = cycle_main(
+        [
+            "--reference-dir",
+            str(reference_dir),
+            "--candidate-dir",
+            str(candidate_dir),
+            "--start",
+            "2025-07-26_00:00:00",
+            "--domain",
+            "d02",
+            "--mode",
+            "reference-copy",
+            "--variables",
+            "Times",
+            "PSFC",
+            "--output",
+            str(output),
+            "--pretty",
+        ]
+    )
+
+    assert exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    assert '"mode": "reference_copy"' in text
+    assert '"reference_copy": true' in text
+    with netCDF4.Dataset(candidate_dir / "wrfout_d02_2025-07-26_06:00:00") as dataset:
+        assert dataset.getncattr("TYWRF_REFERENCE_COPY") == "true"

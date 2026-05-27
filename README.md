@@ -39,10 +39,34 @@ Useful entry points:
 
 ```bash
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/extract_reference.py --help
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/audit_reference_cycles.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/compare_wrfout.py --help
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/cycle_gate.py --help
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/baseline_candidate.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/write_core_wrfout.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_6h_cycle_test.py --help
 ```
+
+`tools/baseline_candidate.py` and `tools/run_6h_cycle_test.py --mode` generate
+explicit baseline candidate files only. `persistence` copies a cycle-start
+`wrfout` to the cycle-end filename and rewrites `Times`; it is expected to fail
+strict thresholds and is used to quantify the current gap. `reference-copy`
+copies the cycle-end reference file and marks JSON/file metadata as
+`reference_copy`; it is only for checking the validation gate itself and is not
+a TyWRF-Core integrator result. Its metadata marks `minimum_slp_gate_ready`
+only when a real SLP/MSLP diagnostic was copied.
+
+The current acceptance gate is `tools/cycle_gate.py`. It defaults to d02 and
+checks each 6 h cycle-end `wrfout` for `U,V,T,PH,MU,P,QVAPOR` normalized RMSE <=
+`0.05`, storm-center error <= `20 km`, minimum SLP error <= `5 hPa`, and
+Vmax10m error <= `5 m s-1`. Missing candidate files or missing real SLP
+diagnostics fail the gate.
+
+TC diagnostics report `minimum_slp_hpa` only from a real sea-level pressure
+field such as `SLP`, `MSLP`, `AFWA_MSLP`, `PMSL`, or `PRMSL`. When no accepted
+SLP field is present, `minimum_slp_status` is `not_available`; the minimum
+`PSFC` value is kept only as labeled proxy metadata and is not treated as
+meeting the minimum SLP validation objective.
 
 ## Reference Case
 

@@ -12,9 +12,26 @@ import numpy as np
 
 
 TC_CENTER_THRESHOLD_KM = 20.0
-MSLP_PROXY_THRESHOLD_HPA = 5.0
+MINIMUM_SLP_THRESHOLD_HPA = 5.0
+MSLP_PROXY_THRESHOLD_HPA = MINIMUM_SLP_THRESHOLD_HPA
 VMAX_THRESHOLD_MS = 5.0
 MSLP_PROXY_LABEL = "PSFC-min proxy; not WRF sea-level pressure"
+MINIMUM_SLP_STATUS_OK = "ok"
+MINIMUM_SLP_STATUS_NOT_AVAILABLE = "not_available"
+MINIMUM_SLP_VARIABLE_CANDIDATES = (
+    "SLP",
+    "slp",
+    "MSLP",
+    "mslp",
+    "AFWA_MSLP",
+    "afwa_mslp",
+    "PMSL",
+    "pmsl",
+    "PRMSL",
+    "prmsl",
+    "SEA_LEVEL_PRESSURE",
+    "sea_level_pressure",
+)
 
 
 class TCDiagnosticsError(ValueError):
@@ -45,7 +62,15 @@ class TCDiagnostics:
     status: str
     time_index: int
     center: GridPointDiagnostic
+    center_source: str
+    minimum_slp_hpa: float | None
+    minimum_slp_status: str
+    minimum_slp_source: str | None
+    minimum_slp_source_units: str | None
+    minimum_slp_reason: str | None
+    minimum_slp_location: GridPointDiagnostic | None
     psfc_min_pa: float
+    psfc_min_location: GridPointDiagnostic
     mslp_proxy_hpa: float
     mslp_proxy_label: str
     vmax_10m_ms: float
@@ -60,6 +85,10 @@ class TCDiagnosticsComparison:
     candidate: TCDiagnostics | None
     thresholds: dict[str, float]
     center_error_km: float | None = None
+    minimum_slp_status: str | None = None
+    minimum_slp_error_hpa: float | None = None
+    minimum_slp_abs_error_hpa: float | None = None
+    minimum_slp_message: str | None = None
     mslp_proxy_error_hpa: float | None = None
     mslp_proxy_abs_error_hpa: float | None = None
     vmax_error_ms: float | None = None
@@ -68,6 +97,16 @@ class TCDiagnosticsComparison:
     rainfall_max_error_mm: float | None = None
     rainfall_total_grid_error_mm: float | None = None
     message: str | None = None
+
+
+@dataclass(frozen=True)
+class _MinimumSLPDiagnostic:
+    status: str
+    hpa: float | None
+    source: str | None
+    source_units: str | None
+    reason: str | None
+    location: GridPointDiagnostic | None
 
 
 def _read_2d(dataset: netCDF4.Dataset, variable: str, time_index: int) -> np.ndarray:
@@ -157,6 +196,95 @@ def _rainfall_summary(rainc: np.ndarray, rainnc: np.ndarray) -> RainfallSummary:
     )
 
 
+def _find_minimum_slp_variable(dataset: netCDF4.Dataset) -> str | None:
+    for candidate in MINIMUM_SLP_VARIABLE_CANDIDATES:
+        if candidate in dataset.variables:
+            return candidate
+
+    variables_by_lower = {name.lower(): name for name in dataset.variables}
+    for candidate in MINIMUM_SLP_VARIABLE_CANDIDATES:
+        match = variables_by_lower.get(candidate.lower())
+        if match is not None:
+            return match
+    return None
+
+
+def _variable_units(dataset: netCDF4.Dataset, variable: str) -> str | None:
+    units = getattr(dataset.variables[variable], "units", None)
+    if units is None:
+        return None
+    return str(units)
+
+
+def _pressure_to_hpa(values: np.ndarray, units: str | None) -> np.ndarray:
+    normalized_units = (units or "").strip().lower().replace(" ", "")
+    if normalized_units in {"pa", "pascal", "pascals"}:
+        return values / 100.0
+    if normalized_units in {
+        "hpa",
+        "hectopascal",
+        "hectopascals",
+        "mb",
+        "mbar",
+        "millibar",
+        "millibars",
+    }:
+        return values
+
+    finite_values = values[np.isfinite(values)]
+    if finite_values.size == 0:
+        return values
+    if float(np.nanmedian(np.abs(finite_values))) > 2000.0:
+        return values / 100.0
+    return values
+
+
+def _minimum_slp_not_available(reason: str) -> _MinimumSLPDiagnostic:
+    return _MinimumSLPDiagnostic(
+        status=MINIMUM_SLP_STATUS_NOT_AVAILABLE,
+        hpa=None,
+        source=None,
+        source_units=None,
+        reason=reason,
+        location=None,
+    )
+
+
+def _minimum_slp_diagnostic(
+    dataset: netCDF4.Dataset,
+    *,
+    time_index: int,
+    latitude: np.ndarray,
+    longitude: np.ndarray,
+) -> _MinimumSLPDiagnostic:
+    variable = _find_minimum_slp_variable(dataset)
+    if variable is None:
+        checked = ", ".join(MINIMUM_SLP_VARIABLE_CANDIDATES)
+        return _minimum_slp_not_available(
+            f"no sea-level pressure variable found; checked {checked}"
+        )
+
+    units = _variable_units(dataset, variable)
+    try:
+        values = _pressure_to_hpa(_read_2d(dataset, variable, time_index), units)
+        _require_same_shape({variable: values, "XLAT": latitude, "XLONG": longitude})
+        valid_mask = _finite_pair_mask(values, latitude, longitude)
+        minimum_j, minimum_i = _argmin_with_mask(values, valid_mask, variable)
+    except TCDiagnosticsError as exc:
+        return _minimum_slp_not_available(
+            f"sea-level pressure variable {variable} is present but unusable: {exc}"
+        )
+
+    return _MinimumSLPDiagnostic(
+        status=MINIMUM_SLP_STATUS_OK,
+        hpa=float(values[minimum_j, minimum_i]),
+        source=variable,
+        source_units=units,
+        reason=None,
+        location=_grid_point(minimum_j, minimum_i, latitude, longitude),
+    )
+
+
 def compute_tc_diagnostics(
     dataset: netCDF4.Dataset,
     *,
@@ -178,6 +306,15 @@ def compute_tc_diagnostics(
 
     center_mask = _finite_pair_mask(psfc, latitude, longitude)
     center_j, center_i = _argmin_with_mask(psfc, center_mask, "PSFC")
+    psfc_min_location = _grid_point(center_j, center_i, latitude, longitude)
+    minimum_slp = _minimum_slp_diagnostic(
+        dataset,
+        time_index=time_index,
+        latitude=latitude,
+        longitude=longitude,
+    )
+    center = minimum_slp.location if minimum_slp.location is not None else psfc_min_location
+    center_source = minimum_slp.source if minimum_slp.source is not None else "PSFC"
 
     speed = np.sqrt(u10 * u10 + v10 * v10)
     wind_mask = _finite_pair_mask(speed, latitude, longitude)
@@ -188,8 +325,16 @@ def compute_tc_diagnostics(
         path=path,
         status="ok",
         time_index=int(time_index),
-        center=_grid_point(center_j, center_i, latitude, longitude),
+        center=center,
+        center_source=center_source,
+        minimum_slp_hpa=minimum_slp.hpa,
+        minimum_slp_status=minimum_slp.status,
+        minimum_slp_source=minimum_slp.source,
+        minimum_slp_source_units=minimum_slp.source_units,
+        minimum_slp_reason=minimum_slp.reason,
+        minimum_slp_location=minimum_slp.location,
         psfc_min_pa=psfc_min_pa,
+        psfc_min_location=psfc_min_location,
         mslp_proxy_hpa=psfc_min_pa / 100.0,
         mslp_proxy_label=MSLP_PROXY_LABEL,
         vmax_10m_ms=float(speed[vmax_j, vmax_i]),
@@ -228,7 +373,7 @@ def compare_tc_diagnostics(
 ) -> TCDiagnosticsComparison:
     thresholds = {
         "center_error_km": TC_CENTER_THRESHOLD_KM,
-        "mslp_proxy_abs_error_hpa": MSLP_PROXY_THRESHOLD_HPA,
+        "minimum_slp_abs_error_hpa": MINIMUM_SLP_THRESHOLD_HPA,
         "vmax_abs_error_ms": VMAX_THRESHOLD_MS,
     }
 
@@ -260,6 +405,27 @@ def compare_tc_diagnostics(
         candidate.center.latitude,
         candidate.center.longitude,
     )
+    minimum_slp_status = MINIMUM_SLP_STATUS_NOT_AVAILABLE
+    minimum_slp_error_hpa = None
+    minimum_slp_abs_error_hpa = None
+    minimum_slp_message = None
+    if (
+        reference.minimum_slp_status == MINIMUM_SLP_STATUS_OK
+        and candidate.minimum_slp_status == MINIMUM_SLP_STATUS_OK
+        and reference.minimum_slp_hpa is not None
+        and candidate.minimum_slp_hpa is not None
+    ):
+        minimum_slp_status = MINIMUM_SLP_STATUS_OK
+        minimum_slp_error_hpa = candidate.minimum_slp_hpa - reference.minimum_slp_hpa
+        minimum_slp_abs_error_hpa = abs(minimum_slp_error_hpa)
+    else:
+        reasons = []
+        if reference.minimum_slp_status != MINIMUM_SLP_STATUS_OK:
+            reasons.append(f"reference: {reference.minimum_slp_reason}")
+        if candidate.minimum_slp_status != MINIMUM_SLP_STATUS_OK:
+            reasons.append(f"candidate: {candidate.minimum_slp_reason}")
+        minimum_slp_message = "minimum SLP comparison not_available; " + "; ".join(reasons)
+
     mslp_proxy_error_hpa = candidate.mslp_proxy_hpa - reference.mslp_proxy_hpa
     vmax_error_ms = candidate.vmax_10m_ms - reference.vmax_10m_ms
     rainfall_mean_error_mm = candidate.rainfall.mean_mm - reference.rainfall.mean_mm
@@ -271,15 +437,27 @@ def compare_tc_diagnostics(
     exceeded = []
     if center_error_km > thresholds["center_error_km"]:
         exceeded.append("center_error_km")
-    if abs(mslp_proxy_error_hpa) > thresholds["mslp_proxy_abs_error_hpa"]:
-        exceeded.append("mslp_proxy_abs_error_hpa")
+    minimum_slp_unavailable = minimum_slp_status != MINIMUM_SLP_STATUS_OK
+    if (
+        minimum_slp_abs_error_hpa is not None
+        and minimum_slp_abs_error_hpa > thresholds["minimum_slp_abs_error_hpa"]
+    ):
+        exceeded.append("minimum_slp_abs_error_hpa")
     if abs(vmax_error_ms) > thresholds["vmax_abs_error_ms"]:
         exceeded.append("vmax_abs_error_ms")
 
-    status = "ok" if not exceeded else "threshold_exceeded"
-    message = None
     if exceeded:
-        message = "TC diagnostic thresholds exceeded: " + ", ".join(exceeded)
+        status = "threshold_exceeded"
+    elif minimum_slp_unavailable:
+        status = "failed"
+    else:
+        status = "ok"
+    messages = []
+    if exceeded:
+        messages.append("TC diagnostic thresholds exceeded: " + ", ".join(exceeded))
+    if minimum_slp_message is not None:
+        messages.append(minimum_slp_message)
+    message = " ".join(messages) if messages else None
 
     return TCDiagnosticsComparison(
         status=status,
@@ -287,6 +465,10 @@ def compare_tc_diagnostics(
         candidate=candidate,
         thresholds=thresholds,
         center_error_km=center_error_km,
+        minimum_slp_status=minimum_slp_status,
+        minimum_slp_error_hpa=minimum_slp_error_hpa,
+        minimum_slp_abs_error_hpa=minimum_slp_abs_error_hpa,
+        minimum_slp_message=minimum_slp_message,
         mslp_proxy_error_hpa=mslp_proxy_error_hpa,
         mslp_proxy_abs_error_hpa=abs(mslp_proxy_error_hpa),
         vmax_error_ms=vmax_error_ms,

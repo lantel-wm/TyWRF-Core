@@ -17,6 +17,9 @@ def _write_tc_dataset(
     rainnc: np.ndarray,
     latitude: np.ndarray | None = None,
     longitude: np.ndarray | None = None,
+    slp: np.ndarray | None = None,
+    slp_name: str = "SLP",
+    slp_units: str = "hPa",
 ) -> None:
     y_size, x_size = psfc.shape
     if latitude is None:
@@ -43,7 +46,7 @@ def _write_tc_dataset(
         dataset.createDimension("south_north", y_size)
         dataset.createDimension("west_east", x_size)
 
-        for name, values in {
+        variables = {
             "XLAT": latitude,
             "XLONG": longitude,
             "PSFC": psfc,
@@ -51,12 +54,20 @@ def _write_tc_dataset(
             "V10": v10,
             "RAINC": rainc,
             "RAINNC": rainnc,
-        }.items():
+        }
+        if slp is not None:
+            variables[slp_name] = slp
+
+        for name, values in variables.items():
             variable = dataset.createVariable(name, "f8", ("Time", "south_north", "west_east"))
+            if name == slp_name and slp is not None:
+                variable.units = slp_units
             variable[0, :, :] = np.asarray(values, dtype=np.float64)
 
 
-def test_diagnose_file_reports_center_psfc_proxy_vmax_and_rainfall(tmp_path: Path) -> None:
+def test_diagnose_file_reports_slp_center_minimum_slp_proxy_vmax_and_rainfall(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "wrfout_d02_2025-07-26_06:00:00"
     psfc = np.array(
         [
@@ -79,16 +90,41 @@ def test_diagnose_file_reports_center_psfc_proxy_vmax_and_rainfall(tmp_path: Pat
         dtype=np.float64,
     )
     rainnc = np.full_like(rainc, 0.5)
-    _write_tc_dataset(path, psfc=psfc, u10=u10, v10=v10, rainc=rainc, rainnc=rainnc)
+    slp = np.array(
+        [
+            [1002.0, 1001.0, 1000.0, 999.0],
+            [998.0, 997.0, 996.0, 995.0],
+            [994.0, 993.0, 988.0, 992.0],
+        ],
+        dtype=np.float64,
+    )
+    _write_tc_dataset(
+        path,
+        psfc=psfc,
+        slp=slp,
+        u10=u10,
+        v10=v10,
+        rainc=rainc,
+        rainnc=rainnc,
+    )
 
     diagnostics = diagnose_file(path)
 
     assert diagnostics.status == "ok"
-    assert diagnostics.center.j == 1
+    assert diagnostics.center.j == 2
     assert diagnostics.center.i == 2
-    assert diagnostics.center.latitude == 11.0
+    assert diagnostics.center.latitude == 12.0
     assert diagnostics.center.longitude == 122.0
+    assert diagnostics.center_source == "SLP"
+    assert diagnostics.minimum_slp_hpa == 988.0
+    assert diagnostics.minimum_slp_status == "ok"
+    assert diagnostics.minimum_slp_source == "SLP"
+    assert diagnostics.minimum_slp_source_units == "hPa"
+    assert diagnostics.minimum_slp_reason is None
+    assert diagnostics.minimum_slp_location == diagnostics.center
     assert diagnostics.psfc_min_pa == 95000.0
+    assert diagnostics.psfc_min_location.j == 1
+    assert diagnostics.psfc_min_location.i == 2
     assert diagnostics.mslp_proxy_hpa == 950.0
     assert "PSFC-min proxy" in diagnostics.mslp_proxy_label
     assert diagnostics.vmax_10m_ms == 50.0
@@ -100,6 +136,37 @@ def test_diagnose_file_reports_center_psfc_proxy_vmax_and_rainfall(tmp_path: Pat
     assert diagnostics.rainfall.total_grid_mm == 72.0
     assert diagnostics.rainfall.valid_count == 12
     assert diagnostics.rainfall.total_count == 12
+
+
+def test_diagnose_file_marks_minimum_slp_not_available_without_slp_candidate(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "wrfout_d02_without_slp"
+    shape = (3, 4)
+    psfc = np.full(shape, 100000.0)
+    psfc[1, 2] = 95000.0
+    _write_tc_dataset(
+        path,
+        psfc=psfc,
+        u10=np.zeros(shape),
+        v10=np.zeros(shape),
+        rainc=np.zeros(shape),
+        rainnc=np.zeros(shape),
+    )
+
+    diagnostics = diagnose_file(path)
+
+    assert diagnostics.status == "ok"
+    assert diagnostics.center_source == "PSFC"
+    assert diagnostics.center.j == 1
+    assert diagnostics.center.i == 2
+    assert diagnostics.minimum_slp_hpa is None
+    assert diagnostics.minimum_slp_status == "not_available"
+    assert diagnostics.minimum_slp_source is None
+    assert diagnostics.minimum_slp_location is None
+    assert diagnostics.minimum_slp_reason is not None
+    assert "no sea-level pressure variable found" in diagnostics.minimum_slp_reason
+    assert diagnostics.mslp_proxy_hpa == 950.0
 
 
 def test_compare_tc_diagnostics_reports_domain_errors(tmp_path: Path) -> None:
@@ -141,11 +208,48 @@ def test_compare_tc_diagnostics_reports_domain_errors(tmp_path: Path) -> None:
 
     comparison = compare_tc_diagnostics(reference, candidate)
 
-    assert comparison.status == "ok"
+    assert comparison.status == "failed"
     assert comparison.center_error_km == 0.0
+    assert comparison.minimum_slp_status == "not_available"
+    assert comparison.minimum_slp_abs_error_hpa is None
+    assert comparison.minimum_slp_message is not None
+    assert "minimum SLP comparison not_available" in comparison.minimum_slp_message
     assert comparison.mslp_proxy_error_hpa == 2.0
     assert comparison.mslp_proxy_abs_error_hpa == 2.0
     assert math.isclose(comparison.vmax_error_ms, math.sqrt(365.0) - math.sqrt(200.0))
     assert comparison.rainfall_mean_error_mm == 1.0
     assert comparison.rainfall_max_error_mm == 1.0
     assert comparison.rainfall_total_grid_error_mm == 12.0
+
+
+def test_compare_tc_diagnostics_uses_minimum_slp_threshold_when_available(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+    shape = (3, 4)
+    psfc = np.full(shape, 100000.0)
+    psfc[1, 1] = 95000.0
+    slp_reference = np.full(shape, 100000.0)
+    slp_reference[1, 1] = 96000.0
+    slp_candidate = slp_reference.copy()
+    slp_candidate[1, 1] = 96600.0
+
+    common = {
+        "psfc": psfc,
+        "u10": np.zeros(shape),
+        "v10": np.zeros(shape),
+        "rainc": np.ones(shape),
+        "rainnc": np.ones(shape),
+    }
+    _write_tc_dataset(reference, slp=slp_reference, slp_units="Pa", **common)
+    _write_tc_dataset(candidate, slp=slp_candidate, slp_units="Pa", **common)
+
+    comparison = compare_tc_diagnostics(reference, candidate)
+
+    assert comparison.status == "threshold_exceeded"
+    assert comparison.minimum_slp_status == "ok"
+    assert comparison.minimum_slp_error_hpa == 6.0
+    assert comparison.minimum_slp_abs_error_hpa == 6.0
+    assert comparison.mslp_proxy_abs_error_hpa == 0.0
+    assert "minimum_slp_abs_error_hpa" in comparison.message

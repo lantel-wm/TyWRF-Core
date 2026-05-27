@@ -42,6 +42,8 @@ def _write_dataset_with_tc_fields(path: Path) -> None:
     )
     psfc = np.full(shape, 100000.0)
     psfc[1, 2] = 95000.0
+    slp = np.full(shape, 1000.0)
+    slp[1, 2] = 950.0
     u10 = np.zeros(shape)
     v10 = np.zeros(shape)
     u10[0, 1] = 30.0
@@ -57,6 +59,7 @@ def _write_dataset_with_tc_fields(path: Path) -> None:
             "U": np.ones(shape),
             "XLAT": latitude,
             "XLONG": longitude,
+            "SLP": slp,
             "PSFC": psfc,
             "U10": u10,
             "V10": v10,
@@ -64,6 +67,8 @@ def _write_dataset_with_tc_fields(path: Path) -> None:
             "RAINNC": rainnc,
         }.items():
             variable = dataset.createVariable(name, "f8", ("Time", "south_north", "west_east"))
+            if name == "SLP":
+                variable.units = "hPa"
             variable[0, :, :] = values
 
 
@@ -130,11 +135,31 @@ def test_compare_files_includes_tc_diagnostics_when_requested(tmp_path: Path) ->
     assert tc.status == "ok"
     assert tc.reference.center.j == 1
     assert tc.reference.center.i == 2
+    assert tc.reference.minimum_slp_status == "ok"
+    assert tc.reference.minimum_slp_hpa == 950.0
     assert tc.reference.mslp_proxy_hpa == 950.0
     assert "PSFC-min proxy" in tc.reference.mslp_proxy_label
     assert tc.candidate.vmax_10m_ms == 50.0
     assert tc.center_error_km == 0.0
     assert tc.mslp_proxy_abs_error_hpa == 0.0
+
+
+def test_compare_files_fails_status_when_tc_diagnostics_fail(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+    _write_dataset_with_tc_fields(reference)
+    _write_dataset_with_tc_fields(candidate)
+
+    with netCDF4.Dataset(candidate, "a") as dataset:
+        dataset.variables["SLP"][0, :, :] = 1000.0
+        dataset.variables["SLP"][0, 2, 3] = 960.0
+
+    report = compare_files(reference, candidate, variables=("U",), include_tc_diagnostics=True)
+
+    assert report.status == "failed"
+    assert report.summary["failed"] == 0
+    assert report.summary["diagnostics_failed"] == 1
+    assert report.diagnostics["tc"].status == "threshold_exceeded"
 
 
 def test_compare_files_reports_threshold_exceeded(tmp_path: Path) -> None:

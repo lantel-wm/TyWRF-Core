@@ -11,7 +11,41 @@ forecast to remain field-close.
 4. Compare against the WRF reference output for the same valid time.
 5. Repeat over multiple 6 h windows.
 
-## Default Field Thresholds
+## d02 6 h Cycle Gate
+
+The current acceptance gate is intentionally narrower than the full validation
+plan. For each d02 cycle-end `wrfout`, it requires:
+
+- `U`, `V`, `T`, `PH`, `MU`, `P`, `QVAPOR`: normalized RMSE <= `5%`
+- d02 storm center error <= `20 km`
+- minimum SLP error <= `5 hPa`
+- Vmax10m error <= `5 m s-1`
+
+Missing candidate files and missing TC pressure diagnostics are hard failures
+reported as `not_available`; they are never treated as passing.
+The gate requires a real `SLP`, `MSLP`, `AFWA_MSLP`, `PMSL`, `PRMSL`, or
+`SEA_LEVEL_PRESSURE` variable for the storm-center and minimum-SLP diagnostics.
+It does not pass the minimum-SLP gate from a `PSFC` proxy.
+
+Run the gate over one or more 6 h cycles:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/cycle_gate.py \
+  --reference-dir /path/to/reference/WRF \
+  --candidate-dir /path/to/tywrf/output \
+  --start 2025-07-26_00:00:00 \
+  --end 2025-07-26_06:00:00 \
+  --pretty
+```
+
+`--hours 6` can be used instead of `--end`. The default domain is `d02`; use
+`--interval` to gate multiple cycle endpoints between `--start` and `--end`.
+The JSON report contains each cycle, each field gate, each diagnostic gate, and
+the top-level `passed` or `failed` status.
+
+## Broader Field Thresholds
+
+These thresholds remain the broader validation target for later reports:
 
 - `U`, `V`, `T`, `PH`, `MU`, `P`, `QVAPOR`: normalized RMSE <= `5%`
 - `W` and hydrometeors: normalized RMSE <= `10%`
@@ -20,13 +54,49 @@ forecast to remain field-close.
 ## Typhoon Diagnostics
 
 - d02 storm center error <= `20 km`
-- PSFC-min proxy MSLP error <= `5 hPa`
+- minimum SLP error <= `5 hPa` when a sea-level pressure field is available
 - Vmax error <= `5 m s-1`
 
-The first TC diagnostics baseline intentionally uses the minimum `PSFC` value
-as a proxy for MSLP. It is not the exact WRF sea-level pressure diagnostic.
+The TC diagnostics prefer a real sea-level pressure field when present. The
+current accepted candidate names are `SLP`, `slp`, `MSLP`, `mslp`,
+`AFWA_MSLP`, `afwa_mslp`, `PMSL`, `pmsl`, `PRMSL`, `prmsl`,
+`SEA_LEVEL_PRESSURE`, and `sea_level_pressure`. If one is found, diagnostics
+compute `minimum_slp_hpa` from that field and use the minimum SLP grid point for
+the reported TC center.
+
+If no accepted sea-level pressure field is present, `minimum_slp_status` is
+`not_available`, `minimum_slp_hpa` is null, and the report includes a reason.
+The minimum `PSFC` value remains available only as `mslp_proxy_hpa` metadata
+with a proxy label; it is not counted as satisfying the minimum SLP objective.
+
+The checked KROSA d02 reference files under
+`/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF`
+do not contain the accepted SLP candidates. Across 29 `wrfout_d02_*` files, the
+pressure-related matches were `P`, `PB`, `PSFC`, and non-equivalent `SEAICE`.
 
 ## Python Validation Tools
+
+`tools/audit_reference_cycles.py` checks KROSA d02 reference coverage before
+cycle comparisons. It audits every 6 h `wrfout_d02` file from
+`2025-07-26_00:00:00` through `2025-08-02_00:00:00`, verifies
+`U,V,T,PH,MU,P,QVAPOR,XLAT,XLONG,U10,V10`, reports real SLP candidates from
+the accepted SLP/MSLP list, and records `PSFC` separately as a pressure proxy.
+The report includes `missing_files`, `missing_variables`,
+`available_slp_candidates`, `available_pressure_proxy_candidates`, and
+`cycle_count`; use `--format table` for a compact terminal summary.
+
+`tools/baseline_candidate.py` generates explicitly marked baseline candidate
+`wrfout` files without running a TyWRF-Core integrator. `persistence` copies
+the cycle-start reference file to the cycle-end candidate path and rewrites
+`Times` to the cycle-end valid time; this is expected to fail strict thresholds
+and quantifies the no-integration baseline gap. `reference-copy` copies the
+cycle-end reference file and marks both JSON metadata and NetCDF attributes with
+`reference_copy=true`, `integrator_output=false`, and
+`validation_gate_only=true`; it must be used only to verify the gate plumbing.
+Its `expected_to_meet_thresholds` flag is true only when a real SLP/MSLP
+diagnostic was copied, because a reference copy without SLP still fails the
+full d02 cycle gate.
+For d02, the tool rejects sources whose `DX`/`DY` attributes are not 2 km.
 
 `tools/extract_reference.py` inspects WRF NetCDF files and reports dimensions,
 present core variables, missing core variables, and metadata for each present
@@ -47,11 +117,11 @@ Default normalized RMSE thresholds follow the field thresholds above. Use
 `--threshold VARIABLE=VALUE` to override individual thresholds.
 
 Use `--tc-diagnostics` to add an opt-in TC diagnostics block while preserving
-the default RMSE-only comparison behavior. The TC block reports the minimum
-`PSFC` center with `XLAT`/`XLONG`, `mslp_proxy_hpa` labeled as a PSFC-min proxy,
+the default RMSE-only comparison behavior. The TC block reports minimum SLP when
+available, a separately labeled `PSFC` proxy when minimum SLP is not available,
 10 m wind maximum from `sqrt(U10^2 + V10^2)`, accumulated rainfall summaries
 from `RAINC + RAINNC`, and reference-candidate errors for center distance,
-pressure proxy, Vmax, and rainfall summary metrics. Use
+minimum SLP, proxy pressure metadata, Vmax, and rainfall summary metrics. Use
 `--diagnostic-time-index` when a file has multiple time records; the default is
 the last record.
 
@@ -71,6 +141,22 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_
   --dry-run \
   --pretty
 ```
+
+To generate a d02 persistence baseline candidate for one cycle:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_6h_cycle_test.py \
+  --reference-dir /path/to/reference/WRF \
+  --candidate-dir /path/to/baseline-candidates \
+  --start 2025-07-26_00:00:00 \
+  --domain d02 \
+  --mode persistence \
+  --pretty
+```
+
+Use `--mode reference-copy` only to validate the gate itself. With `--end`, the
+same command generates consecutive d02 cycle-end candidates at `--interval`
+hour spacing while preserving the d02 2 km resolution check.
 
 TC diagnostics remain explicitly pending in JSON reports unless
 `--tc-diagnostics` is requested.

@@ -251,11 +251,6 @@ def compare_files(
             for variable in variables
         ]
 
-    counts = Counter(comparison.status for comparison in comparisons)
-    summary = dict(sorted(counts.items()))
-    summary["total"] = len(comparisons)
-    summary["failed"] = sum(1 for comparison in comparisons if comparison.status != "ok")
-    status = "ok" if summary["failed"] == 0 else "failed"
     tc_diagnostics = (
         compare_tc_diagnostics(
             reference_path,
@@ -265,9 +260,20 @@ def compare_files(
         if include_tc_diagnostics
         else {
             "status": "pending",
-            "message": "Run with --tc-diagnostics to report TC center, PSFC-min proxy MSLP, Vmax, and rainfall diagnostics.",
+            "message": "Run with --tc-diagnostics to report TC center, minimum SLP availability, Vmax, and rainfall diagnostics.",
         }
     )
+    counts = Counter(comparison.status for comparison in comparisons)
+    summary = dict(sorted(counts.items()))
+    summary["total"] = len(comparisons)
+    summary["failed"] = sum(1 for comparison in comparisons if comparison.status != "ok")
+    diagnostics_failed = (
+        include_tc_diagnostics
+        and getattr(tc_diagnostics, "status", None) != "ok"
+    )
+    if diagnostics_failed:
+        summary["diagnostics_failed"] = 1
+    status = "ok" if summary["failed"] == 0 and not diagnostics_failed else "failed"
     return ComparisonReport(
         reference=str(reference_path),
         candidate=str(candidate_path),
@@ -336,7 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tc-diagnostics",
         action="store_true",
-        help="Include TC center, PSFC-min proxy MSLP, Vmax, and rainfall diagnostics",
+        help="Include TC center, real minimum SLP availability, Vmax, and rainfall diagnostics",
     )
     parser.add_argument(
         "--diagnostic-time-index",
