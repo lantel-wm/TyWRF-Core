@@ -454,6 +454,26 @@ Round D45/D46 keeps hook dry-run reporting outside closure scope:
   artifact gate evidence. The current `00:10` gate remains failed on `U`, `V`,
   `MU`, `P`, and storm-center distance.
 
+Round D47 keeps scratch pressure compute dry-run reporting outside closure
+scope:
+
+- The hook layer may run pressure compute against scratch `P` buffers only to
+  report would-refresh `P` point counts, invalid `P` point counts, and a safety
+  status. These values are telemetry, not closure-modified fields.
+- The scratch dry-run must not write candidate `P`, `PB`, `PHB`, or `MUB`, must
+  not generate selected-field output, and must not set
+  `pressure_refresh_applied=true`.
+- The selected-field tool layer is not connected in D47. The D46
+  `selected_field_cycle --pressure-refresh` opt-in guard remains fail-closed
+  while `thermodynamic_base_state_consistency_ready=false`.
+- Scratch compute evidence is not a gate pass and must not be promoted into
+  closure evidence. The real `2025-07-26_00:10:00` gate remains failed on `U`,
+  `V`, `MU`, `P`, and storm-center distance.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  provider substitutes, direct parent interpolation of `P`, diagnostic artifact
+  gate evidence, and any diagnostic artifact presented as selected-field
+  integrator output.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

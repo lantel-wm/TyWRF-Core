@@ -16,6 +16,7 @@ struct KrosaPressureRefreshHookOptions {
   KrosaPressureRefreshOptions pressure_refresh{};
   const KrosaBaseStateProviderTerrainOverride* terrain_override = nullptr;
   bool base_state_sync_dry_run = false;
+  bool pressure_compute_dry_run = false;
 };
 
 struct KrosaPressureRefreshHookReport {
@@ -28,8 +29,13 @@ struct KrosaPressureRefreshHookReport {
   bool pressure_refresh_applied = false;
   bool calls_pressure_refresh_compute = false;
   bool base_state_sync_dry_run = false;
+  bool pressure_compute_dry_run = false;
+  bool pressure_compute_dry_run_called = false;
+  bool pressure_compute_dry_run_ok = false;
   bool base_state_sync_contract_ok = false;
   bool base_state_sync_applied = false;
+  std::uint64_t would_refresh_p_point_count = 0;
+  std::uint64_t dry_run_invalid_p_point_count = 0;
   std::uint64_t would_sync_pb_point_count = 0;
   std::uint64_t would_sync_mub_point_count = 0;
   std::uint64_t would_sync_phb_point_count = 0;
@@ -43,6 +49,7 @@ struct KrosaPressureRefreshHookReport {
   KrosaBaseStateProviderReport provider_report{};
   PressureRefreshStagingReport staging_report{};
   PressureRefreshReport compute_report{};
+  PressureRefreshReport pressure_compute_dry_run_report{};
 
   [[nodiscard]] constexpr bool ok() const noexcept {
     return result.ok();

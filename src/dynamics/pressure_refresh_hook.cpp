@@ -1,5 +1,6 @@
 #include "tywrf/dynamics/pressure_refresh_hook.hpp"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace tywrf::dynamics {
@@ -244,6 +245,11 @@ std::uint64_t sync_exposed_3d(
   return synced;
 }
 
+template <typename Storage>
+void copy_storage(const Storage& source, Storage& target) {
+  std::copy(source.data(), source.data() + source.size(), target.data());
+}
+
 }  // namespace
 
 KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
@@ -257,6 +263,14 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
   report.gate_candidate = false;
   report.integrator_output = false;
   report.base_state_sync_dry_run = options.base_state_sync_dry_run;
+  report.pressure_compute_dry_run = options.pressure_compute_dry_run;
+
+  if (options.pressure_compute_dry_run && !options.base_state_sync_dry_run) {
+    report.result = result(
+        nest::NestStatus::invalid_contract,
+        "pressure compute dry-run requires base-state sync dry-run");
+    return report;
+  }
 
   KrosaBaseStateProvider provider;
   if (options.terrain_override == nullptr) {
@@ -292,6 +306,58 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
       exposed_point_count_3d(plan.w_full, state_view.phb);
 
   if (options.base_state_sync_dry_run) {
+    if (!options.pressure_compute_dry_run) {
+      return report;
+    }
+
+    FieldStorage3D<float> scratch_p(new_child.p.layout());
+    FieldStorage3D<float> scratch_pb(new_child.pb.layout());
+    FieldStorage3D<float> scratch_phb(new_child.phb.layout());
+    FieldStorage2D<float> scratch_mub(new_child.mub.layout());
+    copy_storage(new_child.p, scratch_p);
+    copy_storage(new_child.pb, scratch_pb);
+    copy_storage(new_child.phb, scratch_phb);
+    copy_storage(new_child.mub, scratch_mub);
+
+    auto scratch_view = state_view;
+    scratch_view.p = scratch_p.view();
+    scratch_view.pb = scratch_pb.view();
+    scratch_view.phb = scratch_phb.view();
+    scratch_view.mub = scratch_mub.view();
+
+    (void)sync_exposed_3d(plan.mass, provider_views.pb, scratch_view.pb);
+    (void)sync_exposed_2d(plan.surface, provider_views.mub, scratch_view.mub);
+    (void)sync_exposed_3d(plan.w_full, provider_views.phb, scratch_view.phb);
+
+    const auto staging = make_krosa_pressure_refresh_inputs(
+        scratch_view,
+        provider_views.alb,
+        metadata,
+        PressureRefreshAlbSource::base_state_reconstruction_provider);
+    report.staging_report = staging.report;
+    report.staging_ok = staging.ok();
+    if (!report.staging_ok) {
+      report.result = report.staging_report.result;
+      return report;
+    }
+
+    report.pressure_compute_dry_run_called = true;
+    report.pressure_compute_dry_run_report =
+        refresh_krosa_moving_nest_pressure(
+            plan,
+            staging.inputs,
+            options.pressure_refresh);
+    report.result = report.pressure_compute_dry_run_report.result;
+    report.pressure_compute_dry_run_ok =
+        report.pressure_compute_dry_run_report.ok();
+    report.would_refresh_p_point_count =
+        report.pressure_compute_dry_run_report.refreshed_point_count;
+    report.dry_run_invalid_p_point_count =
+        report.pressure_compute_dry_run_report.invalid_point_count;
+    report.touched_overlap_cells =
+        report.pressure_compute_dry_run_report.touched_overlap_cells;
+    report.touched_halo_cells =
+        report.pressure_compute_dry_run_report.touched_halo_cells;
     return report;
   }
 

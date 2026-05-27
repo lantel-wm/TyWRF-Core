@@ -747,6 +747,33 @@ Shortcuts remain forbidden: `00:10` reference-end truth, restart `PHB`/`ALB` as
 a provider substitute, direct parent interpolation of `P`, and diagnostic
 artifacts as gate evidence.
 
+## Round D47 Pressure Compute Scratch Dry-Run Boundary
+
+D47 extends only the pressure-refresh hook evidence boundary. The target is a
+scratch-buffer pressure compute dry-run inside the hook layer: it may run the
+pressure compute path against provider-backed scratch `P` storage and report
+would-refresh `P` point counts, invalid `P` point counts, and an explicit safety
+status. This is compute-readiness evidence, not candidate production.
+
+The scratch dry-run must not write candidate `P`, `PB`, `PHB`, or `MUB`, must
+not generate selected-field output, and must not report
+`pressure_refresh_applied=true`. Any report should keep the distinction between
+base-state sync dry-run, scratch pressure compute dry-run, and real pressure
+refresh application.
+
+The selected-field tool layer is not connected in this round. The D46
+`selected_field_cycle --pressure-refresh` opt-in guard therefore remains
+fail-closed while `thermodynamic_base_state_consistency_ready=false`, and the
+default selected-field candidate still preserves start-state-owned pressure and
+base-state fields. Scratch compute evidence is not a compatibility gate pass:
+the current real `2025-07-26_00:10:00` gate remains failed on `U`, `V`, `MU`,
+`P`, and storm-center distance.
+
+Shortcuts remain forbidden: `00:10` reference-end truth, restart `PHB`/`ALB` as
+a provider substitute, direct parent interpolation of `P`, diagnostic artifact
+gate evidence, and treating scratch dry-run telemetry as selected-field output
+or integrator validation evidence.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

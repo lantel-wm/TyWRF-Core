@@ -595,6 +595,23 @@ The strict `2025-07-26_00:10:00` d02 gate remains failed on `U`, `V`, `MU`,
 reference-end truth, restart `PHB`/`ALB` provider substitutes, direct parent
 interpolation of `P`, and diagnostic artifact gate evidence.
 
+Round D47 may add hook-layer scratch-buffer pressure compute dry-run reporting.
+Validation may inspect would-refresh `P` point counts, invalid `P` point
+counts, and the scratch compute safety status, but only as readiness telemetry.
+The scratch path must not write candidate `P`, `PB`, `PHB`, or `MUB`, must not
+produce a selected-field output file, and must not set
+`pressure_refresh_applied=true`.
+
+Selected-field validation is unchanged in D47: the tool-layer opt-in guard is
+not connected to scratch compute and must still fail closed under the D46
+`thermodynamic_base_state_consistency_ready=false` rule. A successful hook
+scratch dry-run is not a strict d02 gate pass, not selected-field output, and
+not evidence that the real `2025-07-26_00:10:00` failures on `U`, `V`, `MU`,
+`P`, and storm-center distance are resolved. Validation must continue rejecting
+reference-end truth, restart `PHB`/`ALB` provider substitutes, direct parent
+interpolation of `P`, and diagnostic artifacts or scratch telemetry as gate
+evidence.
+
 Example:
 
 ```bash

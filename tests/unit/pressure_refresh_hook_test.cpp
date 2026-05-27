@@ -338,6 +338,16 @@ void assert_provider_reports_are_non_gate(
   assert(!report.staging_report.pressure_refresh_applied);
 }
 
+void assert_no_pressure_compute_dry_run_call(
+    const tywrf::dynamics::KrosaPressureRefreshHookReport& report) {
+  assert(!report.pressure_compute_dry_run_called);
+  assert(!report.pressure_compute_dry_run_ok);
+  assert(report.would_refresh_p_point_count == 0);
+  assert(report.dry_run_invalid_p_point_count == 0);
+  assert(report.pressure_compute_dry_run_report.refreshed_point_count == 0);
+  assert(report.pressure_compute_dry_run_report.invalid_point_count == 0);
+}
+
 void test_success_syncs_provider_base_state_and_refreshes_exposed_pressure() {
   const auto grid = make_grid();
   auto metadata = make_metadata();
@@ -362,6 +372,8 @@ void test_success_syncs_provider_base_state_and_refreshes_exposed_pressure() {
   assert(report.pressure_refresh_applied);
   assert(report.calls_pressure_refresh_compute);
   assert(!report.base_state_sync_dry_run);
+  assert(!report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
   assert(report.base_state_sync_contract_ok);
   assert(report.base_state_sync_applied);
   assert(!report.provider_report.terrain_override_used);
@@ -488,6 +500,8 @@ void test_dry_run_reports_contract_without_modifying_state_or_compute() {
   assert(!dry_run_report.pressure_refresh_applied);
   assert(!dry_run_report.calls_pressure_refresh_compute);
   assert(dry_run_report.base_state_sync_dry_run);
+  assert(!dry_run_report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(dry_run_report);
   assert(dry_run_report.base_state_sync_contract_ok);
   assert(!dry_run_report.base_state_sync_applied);
   assert(
@@ -508,6 +522,106 @@ void test_dry_run_reports_contract_without_modifying_state_or_compute() {
   assert(!dry_run_report.touched_halo_cells);
   assert_provider_reports_are_non_gate(dry_run_report);
   assert_state_unchanged(dry_run_state, before);
+}
+
+void test_pressure_compute_scratch_dry_run_reports_would_refresh_without_modifying_state() {
+  const auto metadata = make_metadata();
+  const auto plan = make_plan();
+
+  tywrf::State<float> applied_state(make_grid());
+  fill_state(applied_state);
+  const auto applied_report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          applied_state,
+          metadata);
+  assert(applied_report.ok());
+  assert(applied_report.staging_ok);
+  assert(applied_report.pressure_refresh_applied);
+  assert(applied_report.calls_pressure_refresh_compute);
+  assert(applied_report.compute_report.refreshed_point_count > 0);
+
+  tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+  options.base_state_sync_dry_run = true;
+  options.pressure_compute_dry_run = true;
+
+  tywrf::State<float> dry_run_state(make_grid());
+  fill_state(dry_run_state);
+  const auto before = snapshot_state(dry_run_state);
+  const auto dry_run_report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          dry_run_state,
+          metadata,
+          options);
+
+  assert(dry_run_report.ok());
+  assert(dry_run_report.provider_ok);
+  assert(dry_run_report.staging_ok);
+  assert(!dry_run_report.pressure_refresh_applied);
+  assert(!dry_run_report.calls_pressure_refresh_compute);
+  assert(dry_run_report.base_state_sync_dry_run);
+  assert(dry_run_report.pressure_compute_dry_run);
+  assert(dry_run_report.pressure_compute_dry_run_called);
+  assert(dry_run_report.pressure_compute_dry_run_ok);
+  assert(dry_run_report.base_state_sync_contract_ok);
+  assert(!dry_run_report.base_state_sync_applied);
+  assert(dry_run_report.synced_pb_point_count == 0);
+  assert(dry_run_report.synced_mub_point_count == 0);
+  assert(dry_run_report.synced_phb_point_count == 0);
+  assert(
+      dry_run_report.would_refresh_p_point_count ==
+      applied_report.compute_report.refreshed_point_count);
+  assert(
+      dry_run_report.dry_run_invalid_p_point_count ==
+      applied_report.compute_report.invalid_point_count);
+  assert(
+      dry_run_report.pressure_compute_dry_run_report.target_column_count ==
+      applied_report.compute_report.target_column_count);
+  assert(
+      dry_run_report.pressure_compute_dry_run_report.refreshed_point_count ==
+      applied_report.compute_report.refreshed_point_count);
+  assert(
+      dry_run_report.pressure_compute_dry_run_report.invalid_point_count ==
+      applied_report.compute_report.invalid_point_count);
+  assert(dry_run_report.compute_report.refreshed_point_count == 0);
+  assert(!dry_run_report.pressure_compute_dry_run_report.touched_overlap_cells);
+  assert(!dry_run_report.pressure_compute_dry_run_report.touched_halo_cells);
+  assert(!dry_run_report.touched_overlap_cells);
+  assert(!dry_run_report.touched_halo_cells);
+  assert_provider_reports_are_non_gate(dry_run_report);
+  assert(
+      dry_run_report.staging_report.alb_source ==
+      tywrf::dynamics::PressureRefreshAlbSource::
+          base_state_reconstruction_provider);
+  assert_state_unchanged(dry_run_state, before);
+}
+
+void test_pressure_compute_dry_run_requires_base_state_dry_run_without_modifying_state() {
+  tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+  options.pressure_compute_dry_run = true;
+
+  tywrf::State<float> state(make_grid());
+  fill_state(state);
+  const auto before = snapshot_state(state);
+  const auto report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          make_plan(),
+          state,
+          make_metadata(),
+          options);
+
+  assert(!report.ok());
+  assert(!report.provider_ok);
+  assert(!report.staging_ok);
+  assert(!report.pressure_refresh_applied);
+  assert(!report.calls_pressure_refresh_compute);
+  assert(!report.base_state_sync_dry_run);
+  assert(report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
+  assert(!report.base_state_sync_contract_ok);
+  assert(!report.base_state_sync_applied);
+  assert_state_unchanged(state, before);
 }
 
 void test_dry_run_with_terrain_override_reports_source_without_modifying_state() {
@@ -533,6 +647,8 @@ void test_dry_run_with_terrain_override_reports_source_without_modifying_state()
   assert(!report.pressure_refresh_applied);
   assert(!report.calls_pressure_refresh_compute);
   assert(report.base_state_sync_dry_run);
+  assert(!report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
   assert(report.base_state_sync_contract_ok);
   assert(!report.base_state_sync_applied);
   assert(report.would_sync_pb_point_count == 20);
@@ -541,6 +657,54 @@ void test_dry_run_with_terrain_override_reports_source_without_modifying_state()
   assert(report.synced_pb_point_count == 0);
   assert(report.synced_mub_point_count == 0);
   assert(report.synced_phb_point_count == 0);
+  assert(report.provider_report.terrain_override_used);
+  assert(report.provider_report.terrain_source_name == "moved_candidate_HGT");
+  assert(
+      report.provider_report.terrain_provenance ==
+      "override:moved_candidate_HGT");
+  assert_provider_reports_are_non_gate(report);
+  assert_state_unchanged(state, before);
+}
+
+void test_pressure_compute_scratch_dry_run_with_terrain_override_reports_source() {
+  auto moved_terrain = make_override_terrain(250.0F);
+  const auto override = moved_terrain_override(moved_terrain);
+  tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+  options.terrain_override = &override;
+  options.base_state_sync_dry_run = true;
+  options.pressure_compute_dry_run = true;
+
+  tywrf::State<float> state(make_grid());
+  fill_state(state);
+  const auto before = snapshot_state(state);
+  const auto report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          make_plan(),
+          state,
+          make_metadata(),
+          options);
+
+  assert(report.ok());
+  assert(report.provider_ok);
+  assert(report.staging_ok);
+  assert(!report.pressure_refresh_applied);
+  assert(!report.calls_pressure_refresh_compute);
+  assert(report.base_state_sync_dry_run);
+  assert(report.pressure_compute_dry_run);
+  assert(report.pressure_compute_dry_run_called);
+  assert(report.pressure_compute_dry_run_ok);
+  assert(report.base_state_sync_contract_ok);
+  assert(!report.base_state_sync_applied);
+  assert(report.would_sync_pb_point_count == 20);
+  assert(report.would_sync_mub_point_count == 10);
+  assert(report.would_sync_phb_point_count == 30);
+  assert(report.synced_pb_point_count == 0);
+  assert(report.synced_mub_point_count == 0);
+  assert(report.synced_phb_point_count == 0);
+  assert(report.would_refresh_p_point_count == 20);
+  assert(report.dry_run_invalid_p_point_count == 0);
+  assert(report.pressure_compute_dry_run_report.refreshed_point_count == 20);
+  assert(report.pressure_compute_dry_run_report.invalid_point_count == 0);
   assert(report.provider_report.terrain_override_used);
   assert(report.provider_report.terrain_source_name == "moved_candidate_HGT");
   assert(
@@ -587,6 +751,8 @@ void test_override_terrain_reconstructs_provider_and_changes_pressure_fields() {
   assert(override_report.pressure_refresh_applied);
   assert(override_report.calls_pressure_refresh_compute);
   assert(!override_report.base_state_sync_dry_run);
+  assert(!override_report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(override_report);
   assert(override_report.base_state_sync_contract_ok);
   assert(override_report.base_state_sync_applied);
   assert(
@@ -629,40 +795,48 @@ void test_missing_metadata_fails_without_compute_or_partial_sync() {
   missing_p_top.p_top_source = tywrf::io::PressureRefreshPTopSource::missing;
 
   for (const bool dry_run : {false, true}) {
-    tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
-    options.base_state_sync_dry_run = dry_run;
-    for (const auto& metadata :
-         {missing_terrain, missing_coefficients, missing_p_top}) {
-      tywrf::State<float> state(grid);
-      fill_state(state);
-      const auto before = snapshot_state(state);
+    for (const bool pressure_compute_dry_run : {false, true}) {
+      if (!dry_run && pressure_compute_dry_run) {
+        continue;
+      }
+      tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+      options.base_state_sync_dry_run = dry_run;
+      options.pressure_compute_dry_run = pressure_compute_dry_run;
+      for (const auto& metadata :
+           {missing_terrain, missing_coefficients, missing_p_top}) {
+        tywrf::State<float> state(grid);
+        fill_state(state);
+        const auto before = snapshot_state(state);
 
-      const auto report =
-          tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
-              plan,
-              state,
-              metadata,
-              options);
+        const auto report =
+            tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+                plan,
+                state,
+                metadata,
+                options);
 
-      assert(!report.ok());
-      assert(!report.provider_ok);
-      assert(!report.staging_ok);
-      assert(!report.pressure_refresh_applied);
-      assert(!report.calls_pressure_refresh_compute);
-      assert(report.base_state_sync_dry_run == dry_run);
-      assert(!report.base_state_sync_contract_ok);
-      assert(!report.base_state_sync_applied);
-      assert(report.would_sync_pb_point_count == 0);
-      assert(report.would_sync_mub_point_count == 0);
-      assert(report.would_sync_phb_point_count == 0);
-      assert(report.synced_pb_point_count == 0);
-      assert(report.synced_mub_point_count == 0);
-      assert(report.synced_phb_point_count == 0);
-      assert(
-          !report.compute_report.ok() ||
-          report.compute_report.refreshed_point_count == 0);
-      assert_provider_reports_are_non_gate(report);
-      assert_state_unchanged(state, before);
+        assert(!report.ok());
+        assert(!report.provider_ok);
+        assert(!report.staging_ok);
+        assert(!report.pressure_refresh_applied);
+        assert(!report.calls_pressure_refresh_compute);
+        assert(report.base_state_sync_dry_run == dry_run);
+        assert(report.pressure_compute_dry_run == pressure_compute_dry_run);
+        assert_no_pressure_compute_dry_run_call(report);
+        assert(!report.base_state_sync_contract_ok);
+        assert(!report.base_state_sync_applied);
+        assert(report.would_sync_pb_point_count == 0);
+        assert(report.would_sync_mub_point_count == 0);
+        assert(report.would_sync_phb_point_count == 0);
+        assert(report.synced_pb_point_count == 0);
+        assert(report.synced_mub_point_count == 0);
+        assert(report.synced_phb_point_count == 0);
+        assert(
+            !report.compute_report.ok() ||
+            report.compute_report.refreshed_point_count == 0);
+        assert_provider_reports_are_non_gate(report);
+        assert_state_unchanged(state, before);
+      }
     }
   }
 }
@@ -675,6 +849,7 @@ void test_bad_override_fails_before_staging_compute_or_partial_sync() {
   tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
   options.terrain_override = &override;
   options.base_state_sync_dry_run = true;
+  options.pressure_compute_dry_run = true;
 
   tywrf::State<float> state(grid);
   fill_state(state);
@@ -693,6 +868,8 @@ void test_bad_override_fails_before_staging_compute_or_partial_sync() {
   assert(!report.pressure_refresh_applied);
   assert(!report.calls_pressure_refresh_compute);
   assert(report.base_state_sync_dry_run);
+  assert(report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
   assert(!report.base_state_sync_contract_ok);
   assert(!report.base_state_sync_applied);
   assert(report.would_sync_pb_point_count == 0);
@@ -716,6 +893,7 @@ void test_dry_run_bad_remap_fails_before_sync_or_compute() {
 
   tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
   options.base_state_sync_dry_run = true;
+  options.pressure_compute_dry_run = true;
 
   tywrf::State<float> state(make_grid());
   fill_state(state);
@@ -734,6 +912,8 @@ void test_dry_run_bad_remap_fails_before_sync_or_compute() {
   assert(!report.pressure_refresh_applied);
   assert(!report.calls_pressure_refresh_compute);
   assert(report.base_state_sync_dry_run);
+  assert(report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
   assert(!report.base_state_sync_contract_ok);
   assert(!report.base_state_sync_applied);
   assert(report.would_sync_pb_point_count == 0);
@@ -761,6 +941,8 @@ void test_zero_halo_grid_path_is_supported() {
 
   assert(report.ok());
   assert(report.pressure_refresh_applied);
+  assert(!report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
   assert(report.base_state_sync_contract_ok);
   assert(report.base_state_sync_applied);
   assert(report.would_sync_pb_point_count == 20);
@@ -779,7 +961,10 @@ void test_zero_halo_grid_path_is_supported() {
 int main() {
   test_success_syncs_provider_base_state_and_refreshes_exposed_pressure();
   test_dry_run_reports_contract_without_modifying_state_or_compute();
+  test_pressure_compute_scratch_dry_run_reports_would_refresh_without_modifying_state();
+  test_pressure_compute_dry_run_requires_base_state_dry_run_without_modifying_state();
   test_dry_run_with_terrain_override_reports_source_without_modifying_state();
+  test_pressure_compute_scratch_dry_run_with_terrain_override_reports_source();
   test_override_terrain_reconstructs_provider_and_changes_pressure_fields();
   test_missing_metadata_fails_without_compute_or_partial_sync();
   test_bad_override_fails_before_staging_compute_or_partial_sync();
