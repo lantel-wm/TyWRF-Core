@@ -2,6 +2,7 @@
 
 #include <netcdf.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <exception>
@@ -15,8 +16,18 @@ namespace {
 
 class NetcdfFile {
  public:
-  explicit NetcdfFile(const std::filesystem::path& path) : path_(path) {
-    check(nc_open(path.string().c_str(), NC_NOWRITE, &id_), "open");
+  enum class Mode {
+    read,
+    replace,
+  };
+
+  explicit NetcdfFile(const std::filesystem::path& path, const Mode mode = Mode::read)
+      : path_(path) {
+    if (mode == Mode::read) {
+      check(nc_open(path.string().c_str(), NC_NOWRITE, &id_), "open");
+    } else {
+      check(nc_create(path.string().c_str(), NC_CLOBBER, &id_), "create");
+    }
   }
 
   NetcdfFile(const NetcdfFile&) = delete;
@@ -64,6 +75,11 @@ struct NetcdfVariable {
       "MUB",    "P",      "PB",     "QVAPOR", "QCLOUD", "QRAIN",
       "QICE",   "QSNOW",  "QGRAUP", "QNICE",  "QNRAIN", "PSFC",
       "U10",    "V10",    "T2",     "Q2",     "RAINC",  "RAINNC"};
+  return names;
+}
+
+[[nodiscard]] const std::vector<std::string>& writer_missing_field_names_ref() {
+  static const std::vector<std::string> names = {"Times", "XLAT", "XLONG", "HGT"};
   return names;
 }
 
@@ -249,7 +265,7 @@ void require_variable_layout(
 
 [[nodiscard]] std::size_t checked_count_2d(const FieldLayout2D& layout) {
   if (!layout.valid() || layout.active_nx() <= 0 || layout.active_ny() <= 0) {
-    throw WrfStateIoError("cannot load WRF 2D state variable into invalid field layout");
+    throw WrfStateIoError("cannot access WRF 2D state variable with invalid field layout");
   }
   return static_cast<std::size_t>(layout.active_nx()) *
          static_cast<std::size_t>(layout.active_ny());
@@ -258,7 +274,7 @@ void require_variable_layout(
 [[nodiscard]] std::size_t checked_count_3d(const FieldLayout3D& layout) {
   if (!layout.valid() || layout.active_nx() <= 0 || layout.active_ny() <= 0 ||
       layout.active_nz() <= 0) {
-    throw WrfStateIoError("cannot load WRF 3D state variable into invalid field layout");
+    throw WrfStateIoError("cannot access WRF 3D state variable with invalid field layout");
   }
   return static_cast<std::size_t>(layout.active_nx()) *
          static_cast<std::size_t>(layout.active_ny()) *
@@ -396,10 +412,505 @@ void load_named_variable(
   }
 }
 
+enum class WrfStateVariableLayout {
+  mass_2d,
+  mass_3d,
+  u_3d,
+  v_3d,
+  w_3d,
+};
+
+struct OutputDimensions {
+  int time = -1;
+  int bottom_top = -1;
+  int bottom_top_stag = -1;
+  int south_north = -1;
+  int south_north_stag = -1;
+  int west_east = -1;
+  int west_east_stag = -1;
+};
+
+struct DefinedVariable {
+  std::string name;
+  int id = -1;
+};
+
+[[nodiscard]] bool is_writable_state_variable(const std::string_view name) {
+  const auto& names = core_field_names_ref();
+  return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+[[nodiscard]] std::vector<std::string> selected_write_variables(
+    const WrfStateWriteOptions& options) {
+  const auto selected = options.variables.empty() ? core_field_names_ref() : options.variables;
+  std::vector<std::string> variables(selected.begin(), selected.end());
+  for (std::size_t index = 0; index < variables.size(); ++index) {
+    const auto& name = variables[index];
+    if (!is_writable_state_variable(name)) {
+      std::ostringstream message;
+      message << "unsupported WRF state writer variable selection: " << name
+              << "; writable State-backed variables are "
+              << join_strings(core_field_names_ref()) << "; not yet written by this "
+              << "State writer: " << join_strings(writer_missing_field_names_ref());
+      throw WrfStateIoError(message.str());
+    }
+    const auto current = variables.begin() + static_cast<std::ptrdiff_t>(index);
+    if (std::find(variables.begin(), current, name) != current) {
+      throw WrfStateIoError("duplicate WRF state writer variable selection: " + name);
+    }
+  }
+  return variables;
+}
+
+[[nodiscard]] WrfStateVariableLayout variable_layout_for_name(const std::string_view name) {
+  if (name == "U") {
+    return WrfStateVariableLayout::u_3d;
+  }
+  if (name == "V") {
+    return WrfStateVariableLayout::v_3d;
+  }
+  if (name == "W" || name == "PH" || name == "PHB") {
+    return WrfStateVariableLayout::w_3d;
+  }
+  if (name == "MU" || name == "MUB" || name == "PSFC" || name == "U10" || name == "V10" ||
+      name == "T2" || name == "Q2" || name == "RAINC" || name == "RAINNC") {
+    return WrfStateVariableLayout::mass_2d;
+  }
+  return WrfStateVariableLayout::mass_3d;
+}
+
+void require_output_grid(const GridConfig& config) {
+  if (config.mass_nx <= 0 || config.mass_ny <= 0 || config.mass_nz <= 0 ||
+      config.full_nz <= 0) {
+    throw WrfStateIoError("cannot write WRF state from invalid grid dimensions");
+  }
+  if (config.full_nz != config.mass_nz + 1) {
+    std::ostringstream message;
+    message << "cannot write WRF state: full_nz is " << config.full_nz
+            << ", expected mass_nz + 1 = " << (config.mass_nz + 1);
+    throw WrfStateIoError(message.str());
+  }
+}
+
+int define_dimension(
+    const NetcdfFile& file,
+    const std::string_view name,
+    const std::size_t size) {
+  int id = -1;
+  file.check(nc_def_dim(file.id(), std::string(name).c_str(), size, &id), "define dimension");
+  return id;
+}
+
+[[nodiscard]] OutputDimensions define_output_dimensions(
+    const NetcdfFile& file,
+    const GridConfig& config) {
+  require_output_grid(config);
+
+  OutputDimensions dimensions;
+  dimensions.time = define_dimension(file, "Time", NC_UNLIMITED);
+  dimensions.bottom_top =
+      define_dimension(file, "bottom_top", static_cast<std::size_t>(config.mass_nz));
+  dimensions.bottom_top_stag =
+      define_dimension(file, "bottom_top_stag", static_cast<std::size_t>(config.full_nz));
+  dimensions.south_north =
+      define_dimension(file, "south_north", static_cast<std::size_t>(config.mass_ny));
+  dimensions.south_north_stag =
+      define_dimension(file, "south_north_stag", static_cast<std::size_t>(config.mass_ny + 1));
+  dimensions.west_east =
+      define_dimension(file, "west_east", static_cast<std::size_t>(config.mass_nx));
+  dimensions.west_east_stag =
+      define_dimension(file, "west_east_stag", static_cast<std::size_t>(config.mass_nx + 1));
+  return dimensions;
+}
+
+[[nodiscard]] std::vector<int> dimension_ids_for_layout(
+    const OutputDimensions& dimensions,
+    const WrfStateVariableLayout layout) {
+  switch (layout) {
+    case WrfStateVariableLayout::mass_2d:
+      return {dimensions.time, dimensions.south_north, dimensions.west_east};
+    case WrfStateVariableLayout::mass_3d:
+      return {
+          dimensions.time,
+          dimensions.bottom_top,
+          dimensions.south_north,
+          dimensions.west_east};
+    case WrfStateVariableLayout::u_3d:
+      return {
+          dimensions.time,
+          dimensions.bottom_top,
+          dimensions.south_north,
+          dimensions.west_east_stag};
+    case WrfStateVariableLayout::v_3d:
+      return {
+          dimensions.time,
+          dimensions.bottom_top,
+          dimensions.south_north_stag,
+          dimensions.west_east};
+    case WrfStateVariableLayout::w_3d:
+      return {
+          dimensions.time,
+          dimensions.bottom_top_stag,
+          dimensions.south_north,
+          dimensions.west_east};
+  }
+  throw WrfStateIoError("internal error: unsupported WRF output variable layout");
+}
+
+void write_text_attribute(
+    const NetcdfFile& file,
+    const int variable_id,
+    const std::string_view name,
+    const std::string_view value) {
+  file.check(
+      nc_put_att_text(
+          file.id(),
+          variable_id,
+          std::string(name).c_str(),
+          value.size(),
+          value.data()),
+      "write variable attribute");
+}
+
+[[nodiscard]] std::string stagger_for_layout(const WrfStateVariableLayout layout) {
+  switch (layout) {
+    case WrfStateVariableLayout::u_3d:
+      return "X";
+    case WrfStateVariableLayout::v_3d:
+      return "Y";
+    case WrfStateVariableLayout::w_3d:
+      return "Z";
+    case WrfStateVariableLayout::mass_2d:
+    case WrfStateVariableLayout::mass_3d:
+      return "";
+  }
+  return "";
+}
+
+[[nodiscard]] std::string memory_order_for_layout(const WrfStateVariableLayout layout) {
+  return layout == WrfStateVariableLayout::mass_2d ? "XY" : "XYZ";
+}
+
+[[nodiscard]] int define_output_variable(
+    const NetcdfFile& file,
+    const std::string& name,
+    const OutputDimensions& dimensions) {
+  const auto layout = variable_layout_for_name(name);
+  auto dimids = dimension_ids_for_layout(dimensions, layout);
+  int variable_id = -1;
+  file.check(
+      nc_def_var(
+          file.id(),
+          name.c_str(),
+          NC_FLOAT,
+          static_cast<int>(dimids.size()),
+          dimids.data(),
+          &variable_id),
+      "define WRF state variable");
+  write_text_attribute(file, variable_id, "MemoryOrder", memory_order_for_layout(layout));
+  write_text_attribute(file, variable_id, "stagger", stagger_for_layout(layout));
+  return variable_id;
+}
+
+void require_2d_write_shape(
+    const std::string_view name,
+    const FieldLayout2D& layout,
+    const std::int32_t expected_nx,
+    const std::int32_t expected_ny) {
+  (void)checked_count_2d(layout);
+  if (layout.active_nx() != expected_nx || layout.active_ny() != expected_ny) {
+    std::ostringstream message;
+    message << "cannot write WRF state variable " << name << ": active shape is "
+            << layout.active_nx() << "x" << layout.active_ny() << ", expected "
+            << expected_nx << "x" << expected_ny;
+    throw WrfStateIoError(message.str());
+  }
+}
+
+void require_3d_write_shape(
+    const std::string_view name,
+    const FieldLayout3D& layout,
+    const std::int32_t expected_nx,
+    const std::int32_t expected_ny,
+    const std::int32_t expected_nz) {
+  (void)checked_count_3d(layout);
+  if (layout.active_nx() != expected_nx || layout.active_ny() != expected_ny ||
+      layout.active_nz() != expected_nz) {
+    std::ostringstream message;
+    message << "cannot write WRF state variable " << name << ": active shape is "
+            << layout.active_nx() << "x" << layout.active_ny() << "x"
+            << layout.active_nz() << ", expected " << expected_nx << "x"
+            << expected_ny << "x" << expected_nz;
+    throw WrfStateIoError(message.str());
+  }
+}
+
+void write_2d_variable(
+    const NetcdfFile& file,
+    const std::string_view name,
+    const int variable_id,
+    const FieldStorage2D<float>& field,
+    const std::size_t time_index) {
+  const auto layout = field.layout();
+  const auto nx = static_cast<std::size_t>(layout.active_nx());
+  const auto ny = static_cast<std::size_t>(layout.active_ny());
+  std::vector<float> buffer(checked_count_2d(layout));
+
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
+    const auto target_row = static_cast<std::size_t>(j) * nx;
+    for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
+      buffer[target_row + static_cast<std::size_t>(i)] =
+          view(i + layout.i_begin(), j + layout.j_begin());
+    }
+  }
+
+  const std::array<std::size_t, 3> start = {time_index, 0, 0};
+  const std::array<std::size_t, 3> count = {1, ny, nx};
+  file.check(
+      nc_put_vara_float(file.id(), variable_id, start.data(), count.data(), buffer.data()),
+      "write WRF 2D state variable " + std::string(name));
+}
+
+void write_3d_variable(
+    const NetcdfFile& file,
+    const std::string_view name,
+    const int variable_id,
+    const FieldStorage3D<float>& field,
+    const std::size_t time_index) {
+  const auto layout = field.layout();
+  const auto nx = static_cast<std::size_t>(layout.active_nx());
+  const auto ny = static_cast<std::size_t>(layout.active_ny());
+  const auto nz = static_cast<std::size_t>(layout.active_nz());
+  std::vector<float> buffer(checked_count_3d(layout));
+
+  const auto view = field.view();
+  for (std::int32_t k = 0; k < layout.active_nz(); ++k) {
+    for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
+      const auto target_plane =
+          (static_cast<std::size_t>(k) * ny + static_cast<std::size_t>(j)) * nx;
+      for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
+        buffer[target_plane + static_cast<std::size_t>(i)] =
+            view(i + layout.i_begin(), j + layout.j_begin(), k + layout.k_begin());
+      }
+    }
+  }
+
+  const std::array<std::size_t, 4> start = {time_index, 0, 0, 0};
+  const std::array<std::size_t, 4> count = {1, nz, ny, nx};
+  file.check(
+      nc_put_vara_float(file.id(), variable_id, start.data(), count.data(), buffer.data()),
+      "write WRF 3D state variable " + std::string(name));
+}
+
+void write_checked_2d_variable(
+    const NetcdfFile& file,
+    const std::string_view name,
+    const int variable_id,
+    const FieldStorage2D<float>& field,
+    const std::int32_t expected_nx,
+    const std::int32_t expected_ny,
+    const std::size_t time_index) {
+  require_2d_write_shape(name, field.layout(), expected_nx, expected_ny);
+  write_2d_variable(file, name, variable_id, field, time_index);
+}
+
+void write_checked_3d_variable(
+    const NetcdfFile& file,
+    const std::string_view name,
+    const int variable_id,
+    const FieldStorage3D<float>& field,
+    const std::int32_t expected_nx,
+    const std::int32_t expected_ny,
+    const std::int32_t expected_nz,
+    const std::size_t time_index) {
+  require_3d_write_shape(name, field.layout(), expected_nx, expected_ny, expected_nz);
+  write_3d_variable(file, name, variable_id, field, time_index);
+}
+
+void write_named_variable(
+    const NetcdfFile& file,
+    const std::string_view name,
+    const int variable_id,
+    const State<float>& state,
+    const std::size_t time_index) {
+  const auto& config = state.grid.config();
+  if (name == "U") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.u,
+        config.mass_nx + 1,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "V") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.v,
+        config.mass_nx,
+        config.mass_ny + 1,
+        config.mass_nz,
+        time_index);
+  } else if (name == "W") {
+    write_checked_3d_variable(
+        file, name, variable_id, state.w, config.mass_nx, config.mass_ny, config.full_nz, time_index);
+  } else if (name == "PH") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.ph,
+        config.mass_nx,
+        config.mass_ny,
+        config.full_nz,
+        time_index);
+  } else if (name == "PHB") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.phb,
+        config.mass_nx,
+        config.mass_ny,
+        config.full_nz,
+        time_index);
+  } else if (name == "T") {
+    write_checked_3d_variable(
+        file, name, variable_id, state.t, config.mass_nx, config.mass_ny, config.mass_nz, time_index);
+  } else if (name == "P") {
+    write_checked_3d_variable(
+        file, name, variable_id, state.p, config.mass_nx, config.mass_ny, config.mass_nz, time_index);
+  } else if (name == "PB") {
+    write_checked_3d_variable(
+        file, name, variable_id, state.pb, config.mass_nx, config.mass_ny, config.mass_nz, time_index);
+  } else if (name == "QVAPOR") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qvapor,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "QCLOUD") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qcloud,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "QRAIN") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qrain,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "QICE") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qice,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "QSNOW") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qsnow,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "QGRAUP") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qgraup,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "QNICE") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qnice,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "QNRAIN") {
+    write_checked_3d_variable(
+        file,
+        name,
+        variable_id,
+        state.qnrain,
+        config.mass_nx,
+        config.mass_ny,
+        config.mass_nz,
+        time_index);
+  } else if (name == "MU") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.mu, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "MUB") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.mub, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "PSFC") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.psfc, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "U10") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.u10, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "V10") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.v10, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "T2") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.t2, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "Q2") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.q2, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "RAINC") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.rainc, config.mass_nx, config.mass_ny, time_index);
+  } else if (name == "RAINNC") {
+    write_checked_2d_variable(
+        file, name, variable_id, state.rainnc, config.mass_nx, config.mass_ny, time_index);
+  } else {
+    throw WrfStateIoError("unsupported WRF state writer variable selection: " + std::string(name));
+  }
+}
+
 }  // namespace
 
 std::vector<std::string> wrf_state_core_field_names() {
   return core_field_names_ref();
+}
+
+std::vector<std::string> wrf_state_writable_field_names() {
+  return core_field_names_ref();
+}
+
+std::vector<std::string> wrf_state_writer_missing_field_names() {
+  return writer_missing_field_names_ref();
 }
 
 Grid derive_grid_from_wrf_schema(const DatasetSchema& schema, const Halo3D halo) {
@@ -447,12 +958,21 @@ void write_wrf_state(
     const std::filesystem::path& path,
     const State<float>& state,
     const WrfStateWriteOptions& options) {
-  (void)path;
-  (void)state;
-  (void)options;
-  throw WrfStateIoError(
-      "WRF state NetCDF writer is not implemented yet; Phase 2 currently defines "
-      "the read-side shape contract only");
+  const auto variables = selected_write_variables(options);
+  const NetcdfFile file(path, NetcdfFile::Mode::replace);
+  const auto dimensions = define_output_dimensions(file, state.grid.config());
+
+  std::vector<DefinedVariable> defined;
+  defined.reserve(variables.size());
+  for (const auto& name : variables) {
+    defined.push_back({name, define_output_variable(file, name, dimensions)});
+  }
+
+  file.check(nc_enddef(file.id()), "end definitions");
+
+  for (const auto& variable : defined) {
+    write_named_variable(file, variable.name, variable.id, state, options.time_index);
+  }
 }
 
 }  // namespace tywrf::io

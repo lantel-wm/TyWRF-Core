@@ -29,6 +29,8 @@ struct WrfStateWriteOptions {
 };
 
 [[nodiscard]] std::vector<std::string> wrf_state_core_field_names();
+[[nodiscard]] std::vector<std::string> wrf_state_writable_field_names();
+[[nodiscard]] std::vector<std::string> wrf_state_writer_missing_field_names();
 
 [[nodiscard]] Grid derive_grid_from_wrf_schema(
     const DatasetSchema& schema,

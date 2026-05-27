@@ -84,6 +84,25 @@ is callback-based and carries no NetCDF, logging, or state-layout dependency, so
 Agent B's field/state interfaces and later physics/nesting work can attach at
 these call points without changing the tested time sequencing.
 
+`tywrf::dynamics::CycleSchedule` freezes the v1 KROSA 6 h
+boundary/nudging/nesting contract separately from the executable loop. It is a
+plan object only: no dynamics, physics, interpolation, feedback, NetCDF, or
+logging runs from this contract. The default schedule asserts:
+
+- `540` d01 parent steps at `40 s`;
+- `2700` d02 child substeps at `8 s` with `parent_time_step_ratio = 5`;
+- d01 boundary and spectral nudging source refreshes at both `0 s` and
+  `21600 s`, bracketing the 6 h segment;
+- one d01 boundary-update call point and one d01 spectral-nudging call point on
+  every parent step;
+- one parent-child interpolation call point per d02 substep;
+- one two-way feedback call point after each d01 step's d02 subcycles;
+- moving-nest position update call points every nominal `15 min`, including
+  both endpoints. Nominal times that do not land on the `40 s` parent-step grid
+  are conservatively snapped to the next parent-step boundary, so the first
+  nominal `900 s` check is scheduled at `920 s`;
+- one d01 and one d02 history-output call point at `21600 s`.
+
 ## Phase 5 Physics Bridge ABI Baseline
 
 The initial physics bridge is an ABI and staging contract only. It does not

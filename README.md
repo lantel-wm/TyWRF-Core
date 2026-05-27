@@ -43,6 +43,7 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/audi
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/compare_wrfout.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/cycle_gate.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/baseline_candidate.py --help
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/skeleton_cycle_driver.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/write_core_wrfout.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_6h_cycle_test.py --help
 ```
@@ -55,6 +56,14 @@ copies the cycle-end reference file and marks JSON/file metadata as
 `reference_copy`; it is only for checking the validation gate itself and is not
 a TyWRF-Core integrator result. Its metadata marks `minimum_slp_gate_ready`
 only when a real SLP/MSLP diagnostic was copied.
+
+`tools/skeleton_cycle_driver.py` is the current d02 6 h skeleton candidate
+entry point. It copies the cycle-start reference state to the cycle-end
+candidate file in `persistence` or `identity` mode, then marks both JSON and
+NetCDF metadata with `skeleton=true`, `not_physical=true`, and
+`integrator_output=false`; it also marks `validation_gate_only=true`. The report
+includes the suggested `cycle_gate.py` command to run next; this output is
+wiring infrastructure, not a physical TyWRF-Core result.
 
 The current acceptance gate is `tools/cycle_gate.py`. It defaults to d02 and
 checks each 6 h cycle-end `wrfout` for `U,V,T,PH,MU,P,QVAPOR` normalized RMSE <=

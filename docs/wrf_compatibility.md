@@ -103,9 +103,16 @@ Sampled on 2026-05-27 from:
   `U`, `T`, and `MU`; the API has dispatch entries for the remaining v1 core
   state fields and reports missing/type/shape errors through
   `tywrf::io::WrfStateIoError`.
-- `tywrf::io::write_wrf_state` is intentionally a contract stub for now. It
-  fails with a clear not-implemented error instead of producing partial or
-  silent output.
+- `tywrf::io::write_wrf_state` creates a minimal WRF-shaped NetCDF file for
+  State-backed fields. It defines the WRF mass/staggered dimensions and writes
+  selected variables from canonical TyWRF layout back to WRF `Time,k,j,i`
+  ordering. With no explicit selection it writes all currently State-backed
+  core fields returned by `tywrf::io::wrf_state_writable_field_names`.
+- The C++ State writer still does not write non-State metadata/static fields:
+  `Times`, `XLAT`, `XLONG`, and `HGT`. Those are reported by
+  `tywrf::io::wrf_state_writer_missing_field_names`, and requesting them through
+  `WrfStateWriteOptions::variables` fails with `WrfStateIoError` instead of
+  silently producing incomplete compatibility output.
 - Current KROSA input validation is exposed through:
   - `validate_wrfinput_d01_schema`
   - `validate_wrfbdy_d01_schema`

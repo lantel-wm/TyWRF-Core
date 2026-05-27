@@ -2,6 +2,7 @@
 
 #include <netcdf.h>
 
+#include <algorithm>
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>
@@ -88,6 +89,36 @@ void put_2d(
   const std::size_t start[3] = {static_cast<std::size_t>(time_index), 0, 0};
   const std::size_t count[3] = {1, static_cast<std::size_t>(ny), static_cast<std::size_t>(nx)};
   check_nc(nc_put_vara_float(file_id, var_id, start, count, values.data()), "write 2D var");
+}
+
+void fill_3d(
+    tywrf::FieldStorage3D<float>& field,
+    const int time_index,
+    const float offset) {
+  const auto layout = field.layout();
+  auto view = field.view();
+  for (int j = 0; j < layout.active_ny(); ++j) {
+    for (int k = 0; k < layout.active_nz(); ++k) {
+      for (int i = 0; i < layout.active_nx(); ++i) {
+        view(i + layout.i_begin(), j + layout.j_begin(), k + layout.k_begin()) =
+            value_3d(time_index, k, j, i, offset);
+      }
+    }
+  }
+}
+
+void fill_2d(
+    tywrf::FieldStorage2D<float>& field,
+    const int time_index,
+    const float offset) {
+  const auto layout = field.layout();
+  auto view = field.view();
+  for (int j = 0; j < layout.active_ny(); ++j) {
+    for (int i = 0; i < layout.active_nx(); ++i) {
+      view(i + layout.i_begin(), j + layout.j_begin()) =
+          value_2d(time_index, j, i, offset);
+    }
+  }
 }
 
 void create_synthetic_wrfout(const std::filesystem::path& path) {
@@ -206,6 +237,63 @@ int run_synthetic_loader_test() {
   return 0;
 }
 
+int run_synthetic_writer_test() {
+  const auto path = std::filesystem::temp_directory_path() / "tywrf_wrf_state_io_writer_test.nc";
+  const auto all_path =
+      std::filesystem::temp_directory_path() / "tywrf_wrf_state_io_writer_all_test.nc";
+  std::filesystem::remove(path);
+  std::filesystem::remove(all_path);
+
+  const int write_time_index = 1;
+  const tywrf::Grid grid({4, 3, 2, 3, tywrf::uniform_halo_3d(1)});
+  tywrf::State<float> state(grid);
+  fill_3d(state.u, write_time_index, 11000.0F);
+  fill_3d(state.t, write_time_index, 22000.0F);
+  fill_2d(state.mu, write_time_index, 33000.0F);
+
+  tywrf::io::write_wrf_state(
+      path,
+      state,
+      {.time_index = static_cast<std::size_t>(write_time_index), .variables = {"U", "T", "MU"}});
+
+  const auto writable = tywrf::io::wrf_state_writable_field_names();
+  assert(std::find(writable.begin(), writable.end(), "U") != writable.end());
+  assert(std::find(writable.begin(), writable.end(), "XLAT") == writable.end());
+  const auto missing = tywrf::io::wrf_state_writer_missing_field_names();
+  assert(std::find(missing.begin(), missing.end(), "XLAT") != missing.end());
+
+  const auto written_grid = tywrf::io::derive_grid_from_wrf_file(path);
+  assert(written_grid.config().mass_nx == 4);
+  assert(written_grid.config().mass_ny == 3);
+  assert(written_grid.config().mass_nz == 2);
+  assert(written_grid.config().full_nz == 3);
+
+  tywrf::State<float> roundtrip(written_grid);
+  tywrf::io::load_wrf_state(
+      path,
+      roundtrip,
+      {.time_index = static_cast<std::size_t>(write_time_index), .variables = {"U", "T", "MU"}});
+
+  const auto u = roundtrip.u.view();
+  const auto t = roundtrip.t.view();
+  const auto mu = roundtrip.mu.view();
+  assert(u(4, 2, 1) == value_3d(write_time_index, 1, 2, 4, 11000.0F));
+  assert(t(3, 2, 1) == value_3d(write_time_index, 1, 2, 3, 22000.0F));
+  assert(mu(3, 2) == value_2d(write_time_index, 2, 3, 33000.0F));
+
+  tywrf::io::write_wrf_state(all_path, state);
+  const auto all_grid = tywrf::io::derive_grid_from_wrf_file(all_path);
+  tywrf::State<float> all_roundtrip(all_grid);
+  tywrf::io::load_wrf_state(
+      all_path,
+      all_roundtrip,
+      {.time_index = 0, .variables = tywrf::io::wrf_state_writable_field_names()});
+
+  std::filesystem::remove(path);
+  std::filesystem::remove(all_path);
+  return 0;
+}
+
 int run_error_contract_test() {
   const auto path = std::filesystem::temp_directory_path() / "tywrf_wrf_state_io_broken_test.nc";
   std::filesystem::remove(path);
@@ -227,12 +315,14 @@ int run_error_contract_test() {
   }
 
   try {
-    tywrf::io::write_wrf_state(path, state);
-    std::cerr << "writer stub did not throw\n";
+    tywrf::io::write_wrf_state(path, state, {.time_index = 0, .variables = {"XLAT"}});
+    std::cerr << "unsupported writer variable did not throw\n";
     return 1;
   } catch (const tywrf::io::WrfStateIoError& error) {
-    if (!message_contains(error, "not implemented")) {
-      std::cerr << "writer stub error was not explicit: " << error.what() << '\n';
+    if (!message_contains(error, "unsupported WRF state writer variable selection") ||
+        !message_contains(error, "not yet written")) {
+      std::cerr << "unsupported writer variable error was not explicit: " << error.what()
+                << '\n';
       return 1;
     }
   }
@@ -281,6 +371,9 @@ int run_reference_smoke_test() {
 int main() {
   try {
     if (const int status = run_synthetic_loader_test(); status != 0) {
+      return status;
+    }
+    if (const int status = run_synthetic_writer_test(); status != 0) {
       return status;
     }
     if (const int status = run_error_contract_test(); status != 0) {

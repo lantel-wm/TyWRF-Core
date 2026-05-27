@@ -11,6 +11,7 @@ pkg_check_modules(NETCDF REQUIRED IMPORTED_TARGET netcdf)
 
 add_library(tywrf_core STATIC
   src/core/version.cpp
+  src/dynamics/cycle_schedule.cpp
   src/dynamics/dynamics_loop.cpp
   src/io/netcdf_schema.cpp
   src/io/wrf_state_io.cpp
@@ -62,6 +63,10 @@ if(BUILD_TESTING)
   add_executable(tywrf_dynamics_loop_test tests/unit/dynamics_loop_test.cpp)
   target_link_libraries(tywrf_dynamics_loop_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_dynamics_loop_test COMMAND tywrf_dynamics_loop_test)
+
+  add_executable(tywrf_cycle_schedule_test tests/unit/cycle_schedule_test.cpp)
+  target_link_libraries(tywrf_cycle_schedule_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_cycle_schedule_test COMMAND tywrf_cycle_schedule_test)
 
   add_executable(tywrf_field_layout_test tests/unit/field_layout_test.cpp)
   target_link_libraries(tywrf_field_layout_test PRIVATE TyWRF::Core)

@@ -69,6 +69,24 @@ If no accepted sea-level pressure field is present, `minimum_slp_status` is
 The minimum `PSFC` value remains available only as `mslp_proxy_hpa` metadata
 with a proxy label; it is not counted as satisfying the minimum SLP objective.
 
+`tools/derive_mslp.py` can add a real diagnostic `SLP` field to a
+WRF-compatible core file before running the gate. It copies the source NetCDF
+file to a new destination and writes `SLP` in hPa using a hypsometric reduction:
+the lowest mass level supplies `P + PB`, `T + 300 K`, and `QVAPOR` for virtual
+temperature, the bottom staggered geopotential level from `PH + PHB` supplies
+surface height, and `PSFC` supplies surface pressure. This is an approximation
+for validation plumbing, but it is not a `PSFC` proxy and it fails clearly if
+any required input field is missing or shape-incompatible.
+
+Example:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/derive_mslp.py \
+  /path/to/wrfout_d02_2025-07-26_06:00:00 \
+  /path/to/with-slp/wrfout_d02_2025-07-26_06:00:00 \
+  --pretty
+```
+
 The checked KROSA d02 reference files under
 `/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF`
 do not contain the accepted SLP candidates. Across 29 `wrfout_d02_*` files, the
