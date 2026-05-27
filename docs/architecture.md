@@ -72,9 +72,9 @@ feedback, and history call-point sequencing:
 
 The runner traverses every schedule call, then inserts current no-op numerical
 placeholders at the compatible call points. Segment-start and segment-end
-boundary/nudging input refreshes, inclusive moving-nest position updates, and
-history output are visible in the callback event stream. Each d01 step emits
-these effective call points:
+boundary/nudging input refreshes, per-step moving-nest move checks, nominal
+vortex-center recomputes, and history output are visible in the callback event
+stream. Each d01 step emits these effective call points:
 
 1. d01 lateral boundary update;
 2. d01 spectral nudging;
@@ -83,7 +83,10 @@ these effective call points:
 5. five d02 subcycles, each with parent-child interpolation, zero dynamics
    tendency, and physics call point;
 6. d02-to-d01 feedback;
-7. d01 and d02 history output when the step lands on the 6 h history interval.
+7. d02 moving-nest move check;
+8. d02 vortex-center recompute when a nominal 15 min checkpoint maps to this
+   parent-step boundary;
+9. d01 and d02 history output when the step lands on the 6 h history interval.
 
 All dynamics tendencies are currently zero/identity placeholders. The event sink
 is callback-based and carries no NetCDF, logging, or state-layout dependency.
@@ -104,10 +107,18 @@ logging runs from this contract. The default schedule asserts:
   every parent step;
 - one parent-child interpolation call point per d02 substep;
 - one two-way feedback call point after each d01 step's d02 subcycles;
-- moving-nest position update call points every nominal `15 min`, including
-  both endpoints. Nominal times that do not land on the `40 s` parent-step grid
-  are conservatively snapped to the next parent-step boundary, so the first
-  nominal `900 s` check is scheduled at `920 s`;
+- one `moving_nest_move_check` after feedback on every parent step. For a 6 h
+  segment this is `540` checks, starting at the first parent-step end (`40 s`)
+  and ending at `21600 s`;
+- `vortex_center_recompute` at the nominal `15 min` moving-nest interval,
+  including both endpoints. Nominal times that do not land on the `40 s`
+  parent-step grid are conservatively snapped to the next parent-step boundary,
+  so the first nominal `900 s` recompute is scheduled at `920 s`; this yields
+  `25` recomputes for the default 6 h KROSA schedule;
+- `moving_nest_position_update`, where it still appears in code, is a
+  legacy/compatibility alias only. It is not the schedule's pose-change or remap
+  hook, and the default KROSA schedule does not require it to trigger d02 state
+  remapping;
 - one d01 and one d02 history-output call point at `21600 s`.
 
 ## Phase 5 Physics Bridge ABI Baseline

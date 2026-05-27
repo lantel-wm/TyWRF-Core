@@ -149,6 +149,67 @@ Sampled on 2026-05-27 from:
   dimensions, global attributes, selected variable attributes, and the minimum
   v1 core variables by default.
 
+## KROSA d02 Diagnostic Remap Smoke
+
+Agent R12 ran a real KROSA d02 smoke on 2026-05-27 for the C++
+`tywrf_skeleton_cycle --diagnostic-remap-overlap` path. This was a
+diagnostic-only moving-nest overlap exercise, not a normal validation pass.
+
+The existing built executable was used:
+
+```bash
+build/tywrf_skeleton_cycle \
+  --domain d02 \
+  --state /home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF/wrfout_d02_2025-07-26_00:00:00 \
+  --template /home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF/wrfout_d02_2025-07-26_00:00:00 \
+  --output /tmp/tywrf_r12_krosa_d02_remap_overlap_wrfout_d02_2025-07-26_06:00:00 \
+  --times 2025-07-26_06:00:00 \
+  --diagnostic-remap-overlap \
+  --from-parent-start 114,96 \
+  --to-parent-start 125,105 \
+  --pretty
+```
+
+Observed report metadata:
+
+- `status = diagnostic_remap_overlap_generated`
+- `candidate_kind = cpp_skeleton_remap_overlap_diagnostic`
+- `domain = d02`, with `dx_m = 2000` and `dy_m = 2000`
+- `times_source = --times:2025-07-26_06:00:00`
+- `diagnostic_remap_overlap = true`
+- `diagnostic_only = true`
+- `gate_candidate = false`
+- `integrator_output = false`
+- `not_physical = true`
+- move: `from_parent_start = 114,96` to `to_parent_start = 125,105`
+- `remap_copied_field_count = 25`
+- `remap_copied_point_count = 24468580`
+- `needs_parent_fill = true`
+- `exposed_cells_filled_by_parent = false`
+- `unfilled_exposed_cells = nan_sentinel_pending_parent_fill`
+
+Direct NetCDF metadata inspection of the generated candidate confirmed:
+
+- `TYWRF_CANDIDATE_KIND = cpp_skeleton_remap_overlap_diagnostic`
+- `TYWRF_DIAGNOSTIC_REMAP_OVERLAP = true`
+- `TYWRF_DIAGNOSTIC_ONLY = true`
+- `TYWRF_GATE_CANDIDATE = false`
+- `TYWRF_NEEDS_PARENT_FILL = true`
+- `TYWRF_REMAP_EXPOSED_CELLS_FILLED_BY_PARENT = false`
+- `TYWRF_UNFILLED_EXPOSED_CELLS = nan_sentinel_pending_parent_fill`
+- `TYWRF_REMAP_FROM_PARENT_START = 114,96`
+- `TYWRF_REMAP_TO_PARENT_START = 125,105`
+- `TYWRF_REMAP_COPIED_FIELD_COUNT = 25`
+- `TYWRF_REMAP_COPIED_POINT_COUNT = 24468580`
+- output `Times = 2025-07-26_06:00:00`
+
+This smoke confirms that the C++ skeleton can read the real KROSA d02 00 h
+state, write the reduced WRF-compatible d02 candidate at the 06 h timestamp,
+and apply the diagnostic overlap copy for a meaningful moving-nest shift.
+Newly exposed d02 cells remain intentionally marked with NaN until parent-fill
+interpolation is implemented, so this output must not be used as a physical
+6 h candidate or as a validation-gate pass.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

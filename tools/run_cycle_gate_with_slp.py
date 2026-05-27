@@ -121,6 +121,7 @@ def run_cycle_gate_with_slp(
     interval_hours: int = DEFAULT_INTERVAL_HOURS,
     domain: str = DEFAULT_DOMAIN,
     derived_dir: Path = DEFAULT_DERIVED_DIR,
+    allow_validation_gate_only: bool = False,
 ) -> CycleGateWithSLPReport:
     """Derive endpoint SLP files and run the cycle gate on the derived copies."""
 
@@ -161,6 +162,7 @@ def run_cycle_gate_with_slp(
         end=end_time,
         interval_hours=interval_hours,
         domain=domain,
+        allow_validation_gate_only=allow_validation_gate_only,
     )
     derivations_failed = any(item.status != "passed" for item in derivations)
     status = "failed" if derivations_failed or gate_report.status != "passed" else "passed"
@@ -219,6 +221,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_DERIVED_DIR,
         help=f"Root directory for SLP-derived reference/candidate copies; default: {DEFAULT_DERIVED_DIR}",
     )
+    parser.add_argument(
+        "--allow-validation-gate-only",
+        action="store_true",
+        help=(
+            "Allow candidate files marked TYWRF_VALIDATION_GATE_ONLY=true to exercise "
+            "the gate implementation; default strict mode fails them as non-integrator candidates."
+        ),
+    )
     parser.add_argument("--output", type=Path, help="Write the combined JSON report to this path")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
     return parser
@@ -237,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
             interval_hours=args.interval,
             domain=args.domain,
             derived_dir=args.derived_dir,
+            allow_validation_gate_only=args.allow_validation_gate_only,
         )
     except ValueError as exc:
         parser.error(str(exc))

@@ -2,11 +2,15 @@
 
 #include "tywrf/grid.hpp"
 #include "tywrf/io/forcing_frames.hpp"
+#include "tywrf/io/forcing_io.hpp"
+#include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/state.hpp"
 
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string_view>
 #include <vector>
@@ -27,6 +31,13 @@ void expect_close(
     const float expected,
     const std::string_view message) {
   expect(std::abs(actual - expected) < 1.0e-6F, message);
+}
+
+std::filesystem::path reference_dir() {
+  if (const char* env = std::getenv("TYWRF_REFERENCE_DIR")) {
+    return env;
+  }
+  return "/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF";
 }
 
 template <typename Fn>
@@ -216,6 +227,58 @@ void test_synthetic_nudging_delta_rejects_out_of_range_window() {
       "out-of-range synthetic window raises invalid_range");
 }
 
+int run_krosa_reference_boundary_pack_smoke() {
+  const auto root = reference_dir();
+  const auto wrfbdy = root / "wrfbdy_d01";
+  const auto wrfinput_d01 = root / "wrfinput_d01";
+  const auto wrfout_d01 = root / "wrfout_d01_2025-07-26_00:00:00";
+  if (!std::filesystem::exists(wrfbdy) ||
+      (!std::filesystem::exists(wrfinput_d01) &&
+       !std::filesystem::exists(wrfout_d01))) {
+    std::cout << "Skipping forcing apply KROSA reference smoke; wrfbdy_d01 and d01 "
+                 "state/grid source are not present under "
+              << root << '\n';
+    return 0;
+  }
+
+  const tywrf::io::KrosaForcingReader boundary(
+      wrfbdy,
+      tywrf::io::KrosaForcingKind::boundary);
+  const auto u_bxs_slice = boundary.read_float_time_slice("U_BXS", 0);
+  const auto packed =
+      tywrf::io::pack_boundary_x_side_raw_to_canonical(
+          u_bxs_slice.values,
+          u_bxs_slice.metadata.slice_shape);
+
+  const auto grid_source =
+      std::filesystem::exists(wrfinput_d01) ? wrfinput_d01 : wrfout_d01;
+  tywrf::State<float> state(tywrf::io::derive_grid_from_wrf_file(grid_source));
+  const auto report = tywrf::io::validate_boundary_pack_for_state(
+      state,
+      "U",
+      tywrf::io::BoundarySide::i_lower,
+      packed);
+
+  expect(report.status == tywrf::io::ForcingApplyStatus::ok,
+         "KROSA U_BXS validates against d01 U state shape");
+  expect(report.field_count == 1, "KROSA U_BXS reports one validated field");
+  expect(report.point_count == u_bxs_slice.values.size(),
+         "KROSA U_BXS report preserves packed point count");
+  expect(!report.would_modify_state, "KROSA U_BXS validation is read-only");
+  expect(!report.synthetic, "KROSA U_BXS validation is real forcing, not synthetic");
+
+  const auto config = state.grid.config();
+  expect(config.mass_nx == 265, "KROSA d01 grid mass_nx");
+  expect(config.mass_ny == 429, "KROSA d01 grid mass_ny");
+  expect(config.mass_nz == 59, "KROSA d01 grid mass_nz");
+  expect(packed.layout.nx == 5, "KROSA U_BXS boundary width");
+  expect(packed.layout.ny == static_cast<std::size_t>(config.mass_ny),
+         "KROSA U_BXS y extent matches d01 U state");
+  expect(packed.layout.nz == static_cast<std::size_t>(config.mass_nz),
+         "KROSA U_BXS z extent matches d01 U state");
+  return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -223,6 +286,9 @@ int main() {
   test_boundary_validation_rejects_wrong_shape();
   test_synthetic_nudging_delta_writes_only_requested_window();
   test_synthetic_nudging_delta_rejects_out_of_range_window();
+  if (const int status = run_krosa_reference_boundary_pack_smoke(); status != 0) {
+    return status;
+  }
 
   if (failures != 0) {
     return 1;

@@ -180,8 +180,19 @@ int main() {
 
   const auto move_checks =
       find_calls_by_kind(calls, CycleScheduleCallKind::moving_nest_move_check);
+  const auto legacy_position_updates =
+      find_calls_by_kind(calls, CycleScheduleCallKind::moving_nest_position_update);
+  const auto vortex_recomputes =
+      find_calls_by_kind(calls, CycleScheduleCallKind::vortex_center_recompute);
   expect(static_cast<std::int64_t>(move_checks.size()) == expected_move_checks,
          "moving nest move check count matches parent steps");
+  expect(static_cast<std::int64_t>(legacy_position_updates.size()) == 0,
+         "legacy position-update alias is absent from the default remap schedule");
+  expect(static_cast<std::int64_t>(vortex_recomputes.size()) ==
+             expected_vortex_recomputes,
+         "15 minute events are vortex recomputes, not legacy position updates");
+  expect(summary.parent_child_interpolations == expected_child_substeps,
+         "d02 remap/interpolation sequencing does not require legacy position updates");
   if (!move_checks.empty()) {
     expect_call(
         *move_checks.front(), CycleScheduleCallKind::moving_nest_move_check,

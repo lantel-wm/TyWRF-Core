@@ -35,7 +35,14 @@ def _tc_fields(*, center_shift: bool = False, slp_offset_hpa: float = 0.0, vmax_
     }
 
 
-def _write_wrfout(path: Path, *, field_offset: float = 0.0, omit_slp: bool = False, **tc_kwargs) -> None:
+def _write_wrfout(
+    path: Path,
+    *,
+    field_offset: float = 0.0,
+    omit_slp: bool = False,
+    attrs: dict[str, object] | None = None,
+    **tc_kwargs,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     shape = (5, 5)
     fields = {name: np.full(shape, 10.0 + field_offset) for name in CORE_VARIABLES}
@@ -47,6 +54,8 @@ def _write_wrfout(path: Path, *, field_offset: float = 0.0, omit_slp: bool = Fal
         dataset.createDimension("Time", 1)
         dataset.createDimension("south_north", shape[0])
         dataset.createDimension("west_east", shape[1])
+        for name, value in (attrs or {}).items():
+            dataset.setncattr(name, value)
         for name, values in fields.items():
             variable = dataset.createVariable(name, "f8", ("Time", "south_north", "west_east"))
             variable[0, :, :] = values
@@ -84,6 +93,98 @@ def test_cycle_gate_fails_field_normalized_rmse_threshold(tmp_path: Path) -> Non
     assert fields["U"].status == "failed"
     assert fields["U"].source_status == "threshold_exceeded"
     assert fields["U"].normalized_rmse > 0.05
+
+
+def test_cycle_gate_rejects_diagnostic_only_candidate_metadata(tmp_path: Path) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_DIAGNOSTIC_ONLY": "true",
+            "TYWRF_CANDIDATE_KIND": "cpp_skeleton_remap_overlap_diagnostic",
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    diagnostics = {metric.name: metric for metric in report.cycles[0].diagnostics}
+
+    assert report.status == "failed"
+    assert report.cycles[0].status == "failed"
+    assert diagnostics["candidate_metadata"].status == "failed"
+    assert "TYWRF_DIAGNOSTIC_ONLY=true" in diagnostics["candidate_metadata"].message
+    assert "TYWRF_CANDIDATE_KIND=cpp_skeleton_remap_overlap_diagnostic" in (
+        diagnostics["candidate_metadata"].message or ""
+    )
+    assert {field.status for field in report.cycles[0].fields} == {"passed"}
+
+
+def test_cycle_gate_rejects_gate_candidate_false_metadata(tmp_path: Path) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_GATE_CANDIDATE": "false",
+            "TYWRF_VALIDATION_GATE_ONLY": "false",
+            "TYWRF_CANDIDATE_KIND": "closure_artifact",
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert "TYWRF_GATE_CANDIDATE=false" in (metadata.message or "")
+    assert "TYWRF_CANDIDATE_KIND=closure_artifact" in (metadata.message or "")
+
+
+def test_cycle_gate_rejects_explicit_non_integrator_candidate_by_default(tmp_path: Path) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_CANDIDATE_KIND": "baseline_candidate",
+            "TYWRF_INTEGRATOR_OUTPUT": "false",
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert "TYWRF_INTEGRATOR_OUTPUT=false" in (metadata.message or "")
+
+
+def test_cycle_gate_allows_reference_copy_only_when_explicitly_requested(tmp_path: Path) -> None:
+    attrs = {
+        "TYWRF_CANDIDATE_KIND": "baseline_candidate",
+        "TYWRF_REFERENCE_COPY": "true",
+        "TYWRF_INTEGRATOR_OUTPUT": "false",
+        "TYWRF_VALIDATION_GATE_ONLY": "true",
+    }
+    reference_dir, candidate_dir = _write_pair(tmp_path, attrs=attrs)
+
+    default_report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    allowed_report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END,
+        allow_validation_gate_only=True,
+    )
+
+    default_metadata = {metric.name: metric for metric in default_report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+    allowed_metadata = {metric.name: metric for metric in allowed_report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+    assert default_report.status == "failed"
+    assert "TYWRF_VALIDATION_GATE_ONLY=true" in (default_metadata.message or "")
+    assert allowed_report.status == "passed"
+    assert allowed_metadata.status == "passed"
 
 
 def test_cycle_gate_marks_missing_candidate_file_not_available(tmp_path: Path) -> None:

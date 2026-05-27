@@ -41,6 +41,7 @@ def _write_wrfout(
     *,
     omit: set[str] | None = None,
     field_offset: float = 0.0,
+    attrs: dict[str, object] | None = None,
 ) -> None:
     omit = omit or set()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +71,8 @@ def _write_wrfout(
         dataset.createDimension("bottom_top_stag", 3)
         dataset.createDimension("south_north", horizontal_shape[0])
         dataset.createDimension("west_east", horizontal_shape[1])
+        for name, value in (attrs or {}).items():
+            dataset.setncattr(name, value)
         for name, (dimensions, values) in fields.items():
             if name in omit:
                 continue
@@ -132,6 +135,34 @@ def test_run_cycle_gate_with_slp_supports_multiple_cycle_endpoints(tmp_path: Pat
     assert report.status == "passed"
     assert len(payload["derivations"]) == 4
     assert payload["gate_report"]["summary"] == {"total": 2, "passed": 2, "failed": 0}
+
+
+def test_run_cycle_gate_with_slp_preserves_metadata_rejection_after_derivation(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(tmp_path)
+    with netCDF4.Dataset(candidate_dir / END_FILE, "a") as dataset:
+        dataset.setncattr("TYWRF_DIAGNOSTIC_ONLY", "true")
+        dataset.setncattr("TYWRF_GATE_CANDIDATE", "false")
+        dataset.setncattr("TYWRF_CANDIDATE_KIND", "remap_closure_diagnostic")
+
+    report = run_cycle_gate_with_slp(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END,
+        derived_dir=tmp_path / "derived",
+    )
+    payload = report_to_dict(report)
+    metadata = {
+        item["name"]: item for item in payload["gate_report"]["cycles"][0]["diagnostics"]
+    }["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert payload["gate_status"] == "failed"
+    assert metadata["status"] == "failed"
+    assert "TYWRF_DIAGNOSTIC_ONLY=true" in metadata["message"]
+    assert "TYWRF_GATE_CANDIDATE=false" in metadata["message"]
 
 
 def test_run_cycle_gate_with_slp_fails_derivation_without_psfc_fallback(tmp_path: Path) -> None:

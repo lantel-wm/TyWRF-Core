@@ -30,6 +30,9 @@ DEFAULT_DOMAIN = "d02"
 DEFAULT_INTERVAL_HOURS = 6
 GATE_FIELD_THRESHOLD = 0.05
 GATE_FIELD_THRESHOLDS = {name: GATE_FIELD_THRESHOLD for name in STRICT_CORE_VARIABLES}
+METADATA_GATE_THRESHOLD = 0.0
+BOOL_TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
+BOOL_FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
 
 
 @dataclass(frozen=True)
@@ -199,6 +202,80 @@ def _metric_status(value: float | None, threshold: float) -> str:
     if value is None or not math.isfinite(value):
         return "not_available"
     return "passed" if value <= threshold else "failed"
+
+
+def _read_bool_attr(dataset: netCDF4.Dataset, name: str) -> bool | None:
+    if name not in dataset.ncattrs():
+        return None
+    raw_value = dataset.getncattr(name)
+    if isinstance(raw_value, (bool, np.bool_)):
+        return bool(raw_value)
+    text = str(raw_value).strip().lower()
+    if text in BOOL_TRUE_VALUES:
+        return True
+    if text in BOOL_FALSE_VALUES:
+        return False
+    return None
+
+
+def _read_text_attr(dataset: netCDF4.Dataset, name: str) -> str | None:
+    if name not in dataset.ncattrs():
+        return None
+    return str(dataset.getncattr(name)).strip()
+
+
+def _candidate_metadata_gate(
+    candidate_path: Path,
+    *,
+    allow_validation_gate_only: bool = False,
+) -> GateMetric:
+    try:
+        with netCDF4.Dataset(candidate_path) as dataset:
+            diagnostic_only = _read_bool_attr(dataset, "TYWRF_DIAGNOSTIC_ONLY")
+            gate_candidate = _read_bool_attr(dataset, "TYWRF_GATE_CANDIDATE")
+            integrator_output = _read_bool_attr(dataset, "TYWRF_INTEGRATOR_OUTPUT")
+            validation_gate_only = _read_bool_attr(dataset, "TYWRF_VALIDATION_GATE_ONLY")
+            candidate_kind = _read_text_attr(dataset, "TYWRF_CANDIDATE_KIND")
+    except OSError as exc:
+        return GateMetric(
+            name="candidate_metadata",
+            status="not_available",
+            threshold=METADATA_GATE_THRESHOLD,
+            message=f"candidate metadata check failed: {exc}",
+        )
+
+    disqualifiers: list[str] = []
+    if diagnostic_only is True:
+        disqualifiers.append("TYWRF_DIAGNOSTIC_ONLY=true")
+    if gate_candidate is False:
+        disqualifiers.append("TYWRF_GATE_CANDIDATE=false")
+    if validation_gate_only is True and not allow_validation_gate_only:
+        disqualifiers.append("TYWRF_VALIDATION_GATE_ONLY=true")
+    if integrator_output is False and not (
+        validation_gate_only is True and allow_validation_gate_only
+    ):
+        disqualifiers.append("TYWRF_INTEGRATOR_OUTPUT=false")
+
+    kind = candidate_kind.lower() if candidate_kind else ""
+    if kind and any(token in kind for token in ("diagnostic", "closure", "remap")):
+        disqualifiers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
+
+    if disqualifiers:
+        return GateMetric(
+            name="candidate_metadata",
+            status="failed",
+            threshold=METADATA_GATE_THRESHOLD,
+            value=1.0,
+            message="candidate is not eligible for the default 6 h gate: "
+            + ", ".join(disqualifiers),
+        )
+
+    return GateMetric(
+        name="candidate_metadata",
+        status="passed",
+        threshold=METADATA_GATE_THRESHOLD,
+        value=0.0,
+    )
 
 
 def _read_2d(dataset: netCDF4.Dataset, variable: str, time_index: int = -1) -> np.ndarray:
@@ -379,6 +456,7 @@ def evaluate_cycle(
     cycle_end: datetime,
     *,
     domain: str = DEFAULT_DOMAIN,
+    allow_validation_gate_only: bool = False,
 ) -> CycleGate:
     reference_path = reference_dir / wrfout_filename(domain, cycle_end)
     candidate_path = candidate_dir / wrfout_filename(domain, cycle_end)
@@ -410,6 +488,10 @@ def evaluate_cycle(
             message=message,
         )
 
+    metadata_metric = _candidate_metadata_gate(
+        candidate_path,
+        allow_validation_gate_only=allow_validation_gate_only,
+    )
     comparison = compare_files(
         reference_path,
         candidate_path,
@@ -418,7 +500,7 @@ def evaluate_cycle(
         include_tc_diagnostics=False,
     )
     fields = [_gate_field(variable_comparison) for variable_comparison in comparison.variables]
-    diagnostics = _gate_diagnostics(reference_path, candidate_path)
+    diagnostics = [metadata_metric, *_gate_diagnostics(reference_path, candidate_path)]
     failed = any(field.status != "passed" for field in fields) or any(
         metric.status != "passed" for metric in diagnostics
     )
@@ -444,6 +526,7 @@ def evaluate_cycles(
     hours: int | None = None,
     interval_hours: int = DEFAULT_INTERVAL_HOURS,
     domain: str = DEFAULT_DOMAIN,
+    allow_validation_gate_only: bool = False,
 ) -> CycleGateReport:
     if domain not in {"d01", "d02"}:
         raise ValueError(f"unsupported domain: {domain}")
@@ -461,6 +544,7 @@ def evaluate_cycles(
                 cycle_start,
                 cycle_end,
                 domain=domain,
+                allow_validation_gate_only=allow_validation_gate_only,
             )
         )
         cycle_start = cycle_end
@@ -509,6 +593,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hours", type=int, help="Duration from --start to the final cycle end")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_HOURS, help="Cycle interval in hours")
     parser.add_argument("--domain", choices=("d01", "d02"), default=DEFAULT_DOMAIN, help="Domain to gate")
+    parser.add_argument(
+        "--allow-validation-gate-only",
+        action="store_true",
+        help=(
+            "Allow files marked TYWRF_VALIDATION_GATE_ONLY=true to exercise the gate "
+            "implementation; default strict mode fails them as non-integrator candidates."
+        ),
+    )
     parser.add_argument("--output", type=Path, help="Write the JSON gate report to this path")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
     return parser
@@ -526,6 +618,7 @@ def main(argv: list[str] | None = None) -> int:
             hours=args.hours,
             interval_hours=args.interval,
             domain=args.domain,
+            allow_validation_gate_only=args.allow_validation_gate_only,
         )
     except ValueError as exc:
         parser.error(str(exc))
