@@ -693,6 +693,7 @@ struct PressureRefreshReadiness {
   std::uint64_t pressure_compute_dry_run_report_target_column_count = 0;
   std::uint64_t pressure_compute_dry_run_report_refreshed_point_count = 0;
   std::uint64_t pressure_compute_dry_run_report_invalid_point_count = 0;
+  std::uint64_t pressure_compute_dry_run_report_skipped_point_count = 0;
   bool pressure_compute_dry_run_report_touched_overlap_cells = false;
   bool pressure_compute_dry_run_report_touched_halo_cells = false;
   bool pressure_refresh_applied = false;
@@ -715,6 +716,7 @@ struct PressureRefreshReadiness {
            pressure_compute_dry_run_report_refreshed_point_count ==
                would_refresh_p_point_count &&
            pressure_compute_dry_run_report_invalid_point_count == 0 &&
+           pressure_compute_dry_run_report_skipped_point_count == 0 &&
            !pressure_compute_dry_run_report_touched_overlap_cells &&
            !pressure_compute_dry_run_report_touched_halo_cells &&
            !pressure_refresh_applied;
@@ -727,13 +729,16 @@ struct PressureRefreshReadiness {
   readiness.static_refresh_applied =
       report.static_refresh.ok() && report.changed_static_template_points > 0;
   readiness.static_refresh_uses_reference_end = false;
-  readiness.thermodynamic_base_state_consistency_ready = false;
   if (report.pressure_refresh_provider_probe.has_value()) {
     const auto& provider = *report.pressure_refresh_provider_probe;
-    readiness.provider_base_state_reconstruct_ok = provider.ok();
+    readiness.provider_base_state_reconstruct_ok =
+        provider.ok() && provider.allocated_buffers && provider.wrote_pb &&
+        provider.wrote_t_init && provider.wrote_mub && provider.wrote_alb &&
+        provider.wrote_phb;
     readiness.provider_terrain_uses_moved_candidate_hgt =
         provider.ok() && provider.terrain_override_used &&
-        provider.terrain_source_name == "moved_candidate_HGT";
+        provider.terrain_source_name == "moved_candidate_HGT" &&
+        provider.terrain_provenance == "override:moved_candidate_HGT";
     readiness.provider_terrain_source_name = provider.terrain_source_name;
     readiness.provider_terrain_provenance = provider.terrain_provenance;
   }
@@ -762,12 +767,38 @@ struct PressureRefreshReadiness {
         dry_run.pressure_compute_dry_run_report.refreshed_point_count;
     readiness.pressure_compute_dry_run_report_invalid_point_count =
         dry_run.pressure_compute_dry_run_report.invalid_point_count;
+    readiness.pressure_compute_dry_run_report_skipped_point_count =
+        dry_run.pressure_compute_dry_run_report.skipped_point_count;
     readiness.pressure_compute_dry_run_report_touched_overlap_cells =
         dry_run.pressure_compute_dry_run_report.touched_overlap_cells;
     readiness.pressure_compute_dry_run_report_touched_halo_cells =
         dry_run.pressure_compute_dry_run_report.touched_halo_cells;
     readiness.pressure_refresh_applied = dry_run.pressure_refresh_applied;
   }
+  readiness.thermodynamic_base_state_consistency_ready =
+      readiness.provider_terrain_uses_moved_candidate_hgt &&
+      readiness.provider_base_state_reconstruct_ok &&
+      readiness.base_state_sync_contract_ok &&
+      readiness.base_state_sync_dry_run && !readiness.base_state_sync_applied &&
+      readiness.would_sync_pb_point_count > 0 &&
+      readiness.would_sync_mub_point_count > 0 &&
+      readiness.would_sync_phb_point_count > 0 &&
+      readiness.sync_overlap_write_count == 0 &&
+      readiness.sync_halo_write_count == 0 &&
+      !readiness.pressure_refresh_compute_called &&
+      readiness.pressure_compute_dry_run &&
+      readiness.pressure_compute_dry_run_called &&
+      readiness.pressure_compute_dry_run_ok &&
+      readiness.would_refresh_p_point_count > 0 &&
+      readiness.dry_run_invalid_p_point_count == 0 &&
+      readiness.pressure_compute_dry_run_report_target_column_count > 0 &&
+      readiness.pressure_compute_dry_run_report_refreshed_point_count ==
+          readiness.would_refresh_p_point_count &&
+      readiness.pressure_compute_dry_run_report_invalid_point_count == 0 &&
+      readiness.pressure_compute_dry_run_report_skipped_point_count == 0 &&
+      !readiness.pressure_compute_dry_run_report_touched_overlap_cells &&
+      !readiness.pressure_compute_dry_run_report_touched_halo_cells &&
+      !readiness.pressure_refresh_applied;
   return readiness;
 }
 
@@ -823,6 +854,8 @@ struct PressureRefreshReadiness {
           << readiness.pressure_compute_dry_run_report_refreshed_point_count;
   message << "; pressure_compute_dry_run_report_invalid_point_count="
           << readiness.pressure_compute_dry_run_report_invalid_point_count;
+  message << "; pressure_compute_dry_run_report_skipped_point_count="
+          << readiness.pressure_compute_dry_run_report_skipped_point_count;
   message << "; pressure_compute_dry_run_report_touched_overlap_cells="
           << (readiness.pressure_compute_dry_run_report_touched_overlap_cells ? "true"
                                                                               : "false");
@@ -949,6 +982,7 @@ void probe_pressure_refresh_dry_run_contract(
       dry_run_report.pressure_compute_dry_run_report.refreshed_point_count ==
           dry_run_report.would_refresh_p_point_count &&
       dry_run_report.pressure_compute_dry_run_report.invalid_point_count == 0 &&
+      dry_run_report.pressure_compute_dry_run_report.skipped_point_count == 0 &&
       !dry_run_report.pressure_compute_dry_run_report.touched_overlap_cells &&
       !dry_run_report.pressure_compute_dry_run_report.touched_halo_cells &&
       !dry_run_report.pressure_refresh_applied;
@@ -991,6 +1025,8 @@ void probe_pressure_refresh_dry_run_contract(
           << dry_run_report.pressure_compute_dry_run_report.refreshed_point_count
           << "; pressure_compute_dry_run_report_invalid_point_count="
           << dry_run_report.pressure_compute_dry_run_report.invalid_point_count
+          << "; pressure_compute_dry_run_report_skipped_point_count="
+          << dry_run_report.pressure_compute_dry_run_report.skipped_point_count
           << "; pressure_compute_dry_run_report_touched_overlap_cells="
           << (dry_run_report.pressure_compute_dry_run_report.touched_overlap_cells ? "true"
                                                                                    : "false")
@@ -1010,6 +1046,11 @@ void require_pressure_refresh_hook_success(
       report.provider_report.terrain_provenance == "override:moved_candidate_HGT";
   if (report.ok() && report.provider_ok && report.staging_ok &&
       report.calls_pressure_refresh_compute && report.pressure_refresh_applied &&
+      report.base_state_sync_applied && report.synced_pb_point_count > 0 &&
+      report.synced_mub_point_count > 0 && report.synced_phb_point_count > 0 &&
+      report.compute_report.refreshed_point_count > 0 &&
+      report.compute_report.invalid_point_count == 0 &&
+      report.compute_report.skipped_point_count == 0 &&
       !report.touched_overlap_cells && !report.touched_halo_cells &&
       uses_moved_candidate_hgt) {
     return;
@@ -1024,6 +1065,14 @@ void require_pressure_refresh_hook_success(
           << " staging_ok=" << (report.staging_ok ? "true" : "false")
           << " compute_called=" << (report.calls_pressure_refresh_compute ? "true" : "false")
           << " applied=" << (report.pressure_refresh_applied ? "true" : "false")
+          << " base_state_sync_applied="
+          << (report.base_state_sync_applied ? "true" : "false")
+          << " synced_pb=" << report.synced_pb_point_count
+          << " synced_mub=" << report.synced_mub_point_count
+          << " synced_phb=" << report.synced_phb_point_count
+          << " refreshed_points=" << report.compute_report.refreshed_point_count
+          << " invalid_points=" << report.compute_report.invalid_point_count
+          << " skipped_points=" << report.compute_report.skipped_point_count
           << " touched_overlap=" << (report.touched_overlap_cells ? "true" : "false")
           << " touched_halo=" << (report.touched_halo_cells ? "true" : "false")
           << " terrain_override_used="

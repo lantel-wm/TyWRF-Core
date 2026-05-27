@@ -588,6 +588,30 @@ closure scope:
   gate evidence, and any transactional/report-parity or hidden-seam artifact
   presented as a gate pass.
 
+Round D53 keeps strict normal pressure-refresh promotion outside closure scope:
+
+- D53 may replace the hard-coded
+  `thermodynamic_base_state_consistency_ready=false` guard only with a derived
+  readiness decision from normal-path provider, dry-run, and transactional
+  apply evidence. A closure, probe, hidden seam, or report-only artifact cannot
+  supply that readiness.
+- A normal selected-field `--pressure-refresh` candidate may be written only
+  when static refresh is start-state based, provider terrain is
+  `moved_candidate_HGT`, base-state sync dry-run passes, pressure compute
+  dry-run passes, overlap/halo/invalid/skipped point checks are clean, and the
+  transactional real apply succeeds.
+- The hidden `--experimental-pressure-refresh-apply` seam remains
+  diagnostic-only, non-gate, and non-integrator output. A closure must not
+  convert it, its metadata, or its report into pressure production,
+  gate-eligible candidate metadata, or validation evidence.
+- Candidate eligibility is not a real KROSA gate pass. After any D53 normal
+  candidate is produced, the first validation must be the strict
+  `2025-07-26_00:10:00` gate. If it fails, reports must name the first failed
+  field or diagnostic and must not proceed to `00:20`.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  provider substitutes, direct parent interpolation of `P`, diagnostic/probe/
+  hidden artifacts, and any readiness telemetry presented as gate evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

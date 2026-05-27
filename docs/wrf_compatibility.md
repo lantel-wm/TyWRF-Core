@@ -923,6 +923,40 @@ parity, and hidden seam outputs are readiness evidence only until the normal
 guarded selected-field path produces a real candidate and passes the progressive
 `00:10` gate.
 
+## Round D53 Strict Readiness-Derived Normal Apply Boundary
+
+D53 may replace the hard-coded
+`thermodynamic_base_state_consistency_ready=false` guard with a strictly derived
+readiness decision, but only from normal-path provider, dry-run, and
+transactional apply evidence. Missing, inconsistent, diagnostic-only, or
+hidden-seam evidence must keep `selected_field_cycle --pressure-refresh`
+fail-closed with no output file, no candidate writes, and no
+`pressure_refresh_applied=true`.
+
+A normal selected-field `--pressure-refresh` candidate may be written only when
+all of the following are true:
+
+- moving-nest static refresh is start-state based and does not copy or blend
+  `00:10` reference-end static truth;
+- the pressure provider uses the selected candidate terrain source
+  `moved_candidate_HGT`, not template metadata terrain, restart terrain, or a
+  diagnostic substitute;
+- the base-state sync dry-run and pressure compute dry-run both pass for the
+  same domain, valid time, terrain source, and field selection;
+- overlap, halo, invalid-point, skipped-point, and count-consistency reports
+  all show no unsafe or unresolved pressure-refresh work;
+- the real apply is transactional: scratch compute and postcondition checks
+  succeed before candidate writes, and the only fields eligible to change are
+  `P`, `PB`, `MUB`, and `PHB`.
+
+These conditions make a produced normal-path artifact candidate-eligible, not a
+compatibility pass. The hidden `--experimental-pressure-refresh-apply` seam
+remains diagnostic-only, non-gate, and non-integrator output. Probe, dry-run,
+diagnostic, hidden-seam, and report-parity artifacts remain invalid as gate
+evidence. The first real validation after D53 must still be the progressive
+`2025-07-26_00:10:00` gate; if it fails, reports must name the first failed
+field or diagnostic and must not advance to `00:20`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

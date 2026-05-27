@@ -57,9 +57,12 @@ PARENT_FILL_METADATA_ATTRS = (
     "TYWRF_STAGGERED_STATIC_COORDS_STATUS",
     "TYWRF_P_DERIVED_REFRESH_STATUS",
     "TYWRF_PRESSURE_REFRESH_REQUIRED",
+    "TYWRF_PRESSURE_REFRESH_OPT_IN",
     "TYWRF_PRESSURE_REFRESH_APPLIED",
     "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS",
     "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS",
+    "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY",
+    "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY",
     "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS",
     "TYWRF_PRESSURE_REFRESH_FORMULA_STAGING_NAME",
     "TYWRF_PRESSURE_REFRESH_REGION_STAGING_NAME",
@@ -71,10 +74,27 @@ PARENT_FILL_METADATA_ATTRS = (
     "TYWRF_PRESSURE_REFRESH_PROVIDER_OK",
     "TYWRF_PRESSURE_REFRESH_STAGING_OK",
     "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED",
+    "TYWRF_PRESSURE_REFRESH_TERRAIN_OVERRIDE_USED",
+    "TYWRF_PRESSURE_REFRESH_TERRAIN_SOURCE",
+    "TYWRF_PRESSURE_REFRESH_TERRAIN_PROVENANCE",
     "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS",
     "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS",
     "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS",
+    "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT",
+    "TYWRF_PRESSURE_REFRESH_REFRESHED_COLUMN_COUNT",
+    "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT",
+    "TYWRF_PRESSURE_REFRESH_SKIPPED_POINT_COUNT",
+    "TYWRF_PRESSURE_REFRESH_INVALID_POINT_COUNT",
+    "TYWRF_PRESSURE_REFRESH_TOUCHED_OVERLAP_CELLS",
+    "TYWRF_PRESSURE_REFRESH_TOUCHED_HALO_CELLS",
     "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS",
+    "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS",
+    "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS",
+    "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS",
+    "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS",
+    "TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT",
+    "TYWRF_PRESSURE_REFRESH_INVALID_AND_SKIPPED_POINTS_ZERO",
+    "TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED",
     "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE",
     "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX",
     "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS",
@@ -292,6 +312,9 @@ def _combined_summary(
         ),
         "candidate_kind": candidate_metadata.get("candidate_kind"),
         "parent_fill_metadata_status": parent_fill_metadata.get("status"),
+        "pressure_refresh_metadata_status": parent_fill_metadata.get(
+            "pressure_refresh_metadata_status"
+        ),
         "diagnostic_remap_parent_fill": parent_fill_metadata.get(
             "diagnostic_remap_parent_fill"
         ),
@@ -307,6 +330,9 @@ def _combined_summary(
         "pressure_refresh_required": parent_fill_metadata.get(
             "pressure_refresh_required"
         ),
+        "pressure_refresh_opt_in": parent_fill_metadata.get(
+            "pressure_refresh_opt_in"
+        ),
         "pressure_refresh_applied": parent_fill_metadata.get(
             "pressure_refresh_applied"
         ),
@@ -315,6 +341,18 @@ def _combined_summary(
         ),
         "pressure_refresh_integration_status": parent_fill_metadata.get(
             "pressure_refresh_integration_status"
+        ),
+        "pressure_refresh_experimental_apply": parent_fill_metadata.get(
+            "pressure_refresh_experimental_apply"
+        ),
+        "experimental_pressure_refresh_apply": parent_fill_metadata.get(
+            "experimental_pressure_refresh_apply"
+        ),
+        "normal_candidate_pressure_refresh": parent_fill_metadata.get(
+            "normal_candidate_pressure_refresh"
+        ),
+        "hidden_seam_pressure_refresh": parent_fill_metadata.get(
+            "hidden_seam_pressure_refresh"
         ),
         "pressure_refresh_formula_status": parent_fill_metadata.get(
             "pressure_refresh_formula_status"
@@ -349,6 +387,15 @@ def _combined_summary(
         "pressure_refresh_compute_called": parent_fill_metadata.get(
             "pressure_refresh_compute_called"
         ),
+        "pressure_refresh_terrain_override_used": parent_fill_metadata.get(
+            "pressure_refresh_terrain_override_used"
+        ),
+        "pressure_refresh_terrain_source": parent_fill_metadata.get(
+            "pressure_refresh_terrain_source"
+        ),
+        "pressure_refresh_terrain_provenance": parent_fill_metadata.get(
+            "pressure_refresh_terrain_provenance"
+        ),
         "pressure_refresh_synced_pb_points": parent_fill_metadata.get(
             "pressure_refresh_synced_pb_points"
         ),
@@ -358,8 +405,52 @@ def _combined_summary(
         "pressure_refresh_synced_phb_points": parent_fill_metadata.get(
             "pressure_refresh_synced_phb_points"
         ),
+        "pressure_refresh_target_column_count": parent_fill_metadata.get(
+            "pressure_refresh_target_column_count"
+        ),
+        "pressure_refresh_refreshed_column_count": parent_fill_metadata.get(
+            "pressure_refresh_refreshed_column_count"
+        ),
+        "pressure_refresh_refreshed_point_count": parent_fill_metadata.get(
+            "pressure_refresh_refreshed_point_count"
+        ),
+        "pressure_refresh_skipped_point_count": parent_fill_metadata.get(
+            "pressure_refresh_skipped_point_count"
+        ),
+        "pressure_refresh_invalid_point_count": parent_fill_metadata.get(
+            "pressure_refresh_invalid_point_count"
+        ),
+        "pressure_refresh_touched_overlap_cells": parent_fill_metadata.get(
+            "pressure_refresh_touched_overlap_cells"
+        ),
+        "pressure_refresh_touched_halo_cells": parent_fill_metadata.get(
+            "pressure_refresh_touched_halo_cells"
+        ),
         "pressure_refresh_refreshed_p_points": parent_fill_metadata.get(
             "pressure_refresh_refreshed_p_points"
+        ),
+        "pressure_refresh_changed_p_points": parent_fill_metadata.get(
+            "pressure_refresh_changed_p_points"
+        ),
+        "pressure_refresh_changed_pb_points": parent_fill_metadata.get(
+            "pressure_refresh_changed_pb_points"
+        ),
+        "pressure_refresh_changed_mub_points": parent_fill_metadata.get(
+            "pressure_refresh_changed_mub_points"
+        ),
+        "pressure_refresh_changed_phb_points": parent_fill_metadata.get(
+            "pressure_refresh_changed_phb_points"
+        ),
+        "pressure_refresh_changed_p_matches_refreshed_point_count": (
+            parent_fill_metadata.get(
+                "pressure_refresh_changed_p_matches_refreshed_point_count"
+            )
+        ),
+        "pressure_refresh_invalid_and_skipped_points_zero": parent_fill_metadata.get(
+            "pressure_refresh_invalid_and_skipped_points_zero"
+        ),
+        "pressure_refresh_overlap_halo_untouched": parent_fill_metadata.get(
+            "pressure_refresh_overlap_halo_untouched"
         ),
         "pressure_refresh_metadata_source": parent_fill_metadata.get(
             "pressure_refresh_metadata_source"
@@ -470,6 +561,7 @@ def _read_candidate_metadata(candidate_file: Path | None) -> dict[str, Any]:
 
 def _candidate_gate_assessment(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
     status = candidate_metadata.get("status")
+    attrs = candidate_metadata.get("attrs", {})
     if status == "not_provided":
         blockers = ["candidate_file_not_provided"]
     elif status == "not_available":
@@ -497,6 +589,16 @@ def _candidate_gate_assessment(candidate_metadata: dict[str, Any]) -> dict[str, 
     if kind and any(token in kind for token in BLOCKING_CANDIDATE_KIND_TOKENS):
         blockers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
 
+    if _coerce_bool(attrs.get("TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY")) is True:
+        blockers.append("TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY=true")
+    if _coerce_bool(attrs.get("TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY")) is True:
+        blockers.append("TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY=true")
+    integration_status = attrs.get("TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS")
+    if str(integration_status).strip().lower() == "experimental_apply_test_only":
+        blockers.append(
+            "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS=experimental_apply_test_only"
+        )
+
     return {
         "candidate_gate_eligible": status == "available" and not blockers,
         "candidate_gate_blockers": blockers,
@@ -506,6 +608,11 @@ def _candidate_gate_assessment(candidate_metadata: dict[str, Any]) -> dict[str, 
 def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
     attrs = candidate_metadata.get("attrs", {})
     parent_fill = _coerce_bool(attrs.get("TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL"))
+    pressure_refresh_metadata_available = any(
+        name.startswith("TYWRF_PRESSURE_REFRESH_")
+        or name == "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY"
+        for name in attrs
+    )
     if candidate_metadata.get("status") != "available":
         status = candidate_metadata.get("status")
     elif parent_fill is True:
@@ -522,6 +629,9 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
         "candidate_model_pass": "not_applicable",
         "candidate_gate_eligible": candidate_metadata.get("candidate_gate_eligible"),
         "candidate_gate_blockers": candidate_metadata.get("candidate_gate_blockers"),
+        "pressure_refresh_metadata_status": (
+            "available" if pressure_refresh_metadata_available else "not_reported"
+        ),
         "diagnostic_remap_parent_fill": parent_fill,
         "minimum_static_refresh_fields": _split_csv_attr(
             attrs.get("TYWRF_MINIMUM_STATIC_REFRESH_FIELDS")
@@ -533,6 +643,9 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
         "pressure_refresh_required": _coerce_bool(
             attrs.get("TYWRF_PRESSURE_REFRESH_REQUIRED")
         ),
+        "pressure_refresh_opt_in": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_OPT_IN")
+        ),
         "pressure_refresh_applied": _coerce_bool(
             attrs.get("TYWRF_PRESSURE_REFRESH_APPLIED")
         ),
@@ -541,6 +654,12 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
         ),
         "pressure_refresh_integration_status": attrs.get(
             "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS"
+        ),
+        "pressure_refresh_experimental_apply": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY")
+        ),
+        "experimental_pressure_refresh_apply": _coerce_bool(
+            attrs.get("TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY")
         ),
         "pressure_refresh_formula_status": attrs.get(
             "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS"
@@ -575,6 +694,15 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
         "pressure_refresh_compute_called": _coerce_bool(
             attrs.get("TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED")
         ),
+        "pressure_refresh_terrain_override_used": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_TERRAIN_OVERRIDE_USED")
+        ),
+        "pressure_refresh_terrain_source": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_SOURCE"
+        ),
+        "pressure_refresh_terrain_provenance": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_PROVENANCE"
+        ),
         "pressure_refresh_synced_pb_points": _coerce_int(
             attrs.get("TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS")
         ),
@@ -584,8 +712,50 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
         "pressure_refresh_synced_phb_points": _coerce_int(
             attrs.get("TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS")
         ),
+        "pressure_refresh_target_column_count": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT")
+        ),
+        "pressure_refresh_refreshed_column_count": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_REFRESHED_COLUMN_COUNT")
+        ),
+        "pressure_refresh_refreshed_point_count": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT")
+        ),
+        "pressure_refresh_skipped_point_count": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_SKIPPED_POINT_COUNT")
+        ),
+        "pressure_refresh_invalid_point_count": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_INVALID_POINT_COUNT")
+        ),
+        "pressure_refresh_touched_overlap_cells": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_TOUCHED_OVERLAP_CELLS")
+        ),
+        "pressure_refresh_touched_halo_cells": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_TOUCHED_HALO_CELLS")
+        ),
         "pressure_refresh_refreshed_p_points": _coerce_int(
             attrs.get("TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS")
+        ),
+        "pressure_refresh_changed_p_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS")
+        ),
+        "pressure_refresh_changed_pb_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS")
+        ),
+        "pressure_refresh_changed_mub_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS")
+        ),
+        "pressure_refresh_changed_phb_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS")
+        ),
+        "pressure_refresh_changed_p_matches_refreshed_point_count": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT")
+        ),
+        "pressure_refresh_invalid_and_skipped_points_zero": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_INVALID_AND_SKIPPED_POINTS_ZERO")
+        ),
+        "pressure_refresh_overlap_halo_untouched": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED")
         ),
         "pressure_refresh_metadata_source": attrs.get(
             "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE"
@@ -598,11 +768,42 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
         ),
         "gate_candidate": candidate_metadata.get("gate_candidate"),
     }
+    result["hidden_seam_pressure_refresh"] = _hidden_seam_pressure_refresh(result)
+    result["normal_candidate_pressure_refresh"] = _normal_candidate_pressure_refresh(
+        result,
+        candidate_metadata,
+    )
     result["pressure_refresh_disposition"] = _pressure_refresh_disposition(
         result,
         candidate_metadata,
     )
     return result
+
+
+def _hidden_seam_pressure_refresh(parent_fill_metadata: dict[str, Any]) -> bool:
+    integration_status = parent_fill_metadata.get("pressure_refresh_integration_status")
+    return (
+        parent_fill_metadata.get("pressure_refresh_experimental_apply") is True
+        or parent_fill_metadata.get("experimental_pressure_refresh_apply") is True
+        or str(integration_status).strip().lower() == "experimental_apply_test_only"
+    )
+
+
+def _normal_candidate_pressure_refresh(
+    parent_fill_metadata: dict[str, Any],
+    candidate_metadata: dict[str, Any],
+) -> bool:
+    return (
+        parent_fill_metadata.get("pressure_refresh_applied") is True
+        and parent_fill_metadata.get("pressure_refresh_integration_status")
+        == "applied_to_candidate"
+        and candidate_metadata.get("candidate_gate_eligible") is True
+        and candidate_metadata.get("candidate_diagnostic_only") is False
+        and candidate_metadata.get("gate_candidate") is True
+        and candidate_metadata.get("integrator_output") is True
+        and candidate_metadata.get("validation_gate_only") is not True
+        and not _hidden_seam_pressure_refresh(parent_fill_metadata)
+    )
 
 
 def _pressure_refresh_disposition(
@@ -612,8 +813,24 @@ def _pressure_refresh_disposition(
     applied = parent_fill_metadata.get("pressure_refresh_applied")
     gate_eligible = bool(candidate_metadata.get("candidate_gate_eligible"))
     blockers = candidate_metadata.get("candidate_gate_blockers") or []
+    hidden_seam = parent_fill_metadata.get("hidden_seam_pressure_refresh") is True
+    normal_candidate = (
+        parent_fill_metadata.get("normal_candidate_pressure_refresh") is True
+    )
 
-    if applied is True and not gate_eligible:
+    if applied is True and hidden_seam:
+        status = "hidden_seam_diagnostic_evidence_only"
+        message = (
+            "pressure refresh came from an experimental hidden seam; "
+            "it is not a model validation gate pass"
+        )
+    elif applied is True and normal_candidate:
+        status = "normal_candidate_metadata_only"
+        message = (
+            "pressure_refresh_applied=true is attached to a gate-eligible "
+            "integrator candidate, but this report remains diagnostic-only"
+        )
+    elif applied is True and not gate_eligible:
         status = "diagnostic_helper_evidence_only"
         message = (
             "pressure_refresh_applied=true is diagnostic helper evidence only; "
@@ -635,6 +852,17 @@ def _pressure_refresh_disposition(
     return {
         "status": status,
         "pressure_refresh_applied": applied,
+        "pressure_refresh_integration_status": parent_fill_metadata.get(
+            "pressure_refresh_integration_status"
+        ),
+        "pressure_refresh_experimental_apply": parent_fill_metadata.get(
+            "pressure_refresh_experimental_apply"
+        ),
+        "experimental_pressure_refresh_apply": parent_fill_metadata.get(
+            "experimental_pressure_refresh_apply"
+        ),
+        "normal_candidate_pressure_refresh": normal_candidate,
+        "hidden_seam_pressure_refresh": hidden_seam,
         "candidate_gate_eligible": gate_eligible,
         "candidate_gate_blockers": blockers,
         "candidate_model_pass": "not_applicable",

@@ -745,6 +745,35 @@ truth, restart `PHB`/`ALB` provider substitutes, direct parent interpolation of
 `P`, diagnostic artifact gate evidence, and hidden seam output presented as
 gate evidence.
 
+Round D53 validation may promote the normal selected-field
+`--pressure-refresh` path only when readiness is derived from strict
+same-artifact evidence rather than from a hard-coded
+`thermodynamic_base_state_consistency_ready=false` placeholder. The required
+evidence is the normal provider report, base-state sync dry-run, pressure
+compute dry-run, and transactional real-apply report for the same candidate.
+
+A normal `--pressure-refresh` output is gate-eligible only if the report shows:
+
+- start-state-based static refresh, with no `00:10` reference-end or oracle
+  static fields;
+- provider terrain source `moved_candidate_HGT`;
+- passing base-state sync dry-run and pressure compute dry-run;
+- zero unsafe overlap writes, zero halo writes, zero invalid pressure points,
+  zero skipped pressure target points, and consistent requested/refreshed/
+  applied/changed counts;
+- successful transactional real apply after scratch postcondition checks, with
+  candidate writes limited to `P`, `PB`, `MUB`, and `PHB`.
+
+Gate eligibility is not validation success. The hidden
+`--experimental-pressure-refresh-apply` seam remains diagnostic-only,
+non-gate, and non-integrator output, and diagnostic, probe, dry-run, hidden
+seam, report-parity, oracle, and reference-copy artifacts remain invalid as
+gate evidence. The first real validation after D53 must be the strict
+`2025-07-26_00:10:00` d02 gate against the 1 h / 10 min WRF reference. If that
+gate fails, the report must identify the first failed field or TC diagnostic
+and the sequence must stop; no `00:20` validation is allowed until `00:10`
+passes.
+
 Example:
 
 ```bash

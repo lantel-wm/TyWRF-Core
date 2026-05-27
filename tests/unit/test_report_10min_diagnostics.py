@@ -143,9 +143,12 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
                 "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill"
             ),
             "TYWRF_PRESSURE_REFRESH_REQUIRED": "true",
+            "TYWRF_PRESSURE_REFRESH_OPT_IN": "true",
             "TYWRF_PRESSURE_REFRESH_APPLIED": "true",
             "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS": "required_after_parent_fill",
             "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS": "diagnostic_only_not_integrated",
+            "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY": "false",
+            "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY": "false",
             "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS": "staged_for_later_kernel",
             "TYWRF_PRESSURE_REFRESH_FORMULA_STAGING_NAME": "wrf_pressure_base_plus_perturbation",
             "TYWRF_PRESSURE_REFRESH_REGION_STAGING_NAME": "parent_fill_child_domain",
@@ -157,10 +160,27 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
             "TYWRF_PRESSURE_REFRESH_PROVIDER_OK": "true",
             "TYWRF_PRESSURE_REFRESH_STAGING_OK": "true",
             "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED": "true",
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_OVERRIDE_USED": "true",
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_SOURCE": "moved_candidate_HGT",
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_PROVENANCE": "override:moved_candidate_HGT",
             "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS": 42,
             "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS": "43",
             "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS": 44,
+            "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT": 9,
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_COLUMN_COUNT": "9",
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT": 90,
+            "TYWRF_PRESSURE_REFRESH_SKIPPED_POINT_COUNT": "0",
+            "TYWRF_PRESSURE_REFRESH_INVALID_POINT_COUNT": 0,
+            "TYWRF_PRESSURE_REFRESH_TOUCHED_OVERLAP_CELLS": "false",
+            "TYWRF_PRESSURE_REFRESH_TOUCHED_HALO_CELLS": "false",
             "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS": "45",
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS": "90",
+            "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS": 91,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS": "92",
+            "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS": 93,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT": "true",
+            "TYWRF_PRESSURE_REFRESH_INVALID_AND_SKIPPED_POINTS_ZERO": "true",
+            "TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED": "true",
             "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE": "candidate_attrs",
             "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX": 0,
             "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS": (
@@ -239,7 +259,26 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         ]
         == 42
     )
+    assert (
+        payload["candidate_metadata"]["attrs"][
+            "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT"
+        ]
+        == 9
+    )
+    assert (
+        payload["candidate_metadata"]["attrs"][
+            "TYWRF_PRESSURE_REFRESH_TOUCHED_OVERLAP_CELLS"
+        ]
+        == "false"
+    )
+    assert (
+        payload["candidate_metadata"]["attrs"][
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT"
+        ]
+        == "true"
+    )
     assert payload["parent_fill_metadata"]["status"] == "available"
+    assert payload["parent_fill_metadata"]["pressure_refresh_metadata_status"] == "available"
     assert payload["parent_fill_metadata"]["diagnostic_remap_parent_fill"] is True
     assert payload["parent_fill_metadata"]["minimum_static_refresh_fields"] == [
         "XLAT",
@@ -255,7 +294,21 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         == "diagnostic_only_nonphysical_non_gate"
     )
     assert payload["parent_fill_metadata"]["pressure_refresh_required"] is True
+    assert payload["parent_fill_metadata"]["pressure_refresh_opt_in"] is True
     assert payload["parent_fill_metadata"]["pressure_refresh_applied"] is True
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_experimental_apply"]
+        is False
+    )
+    assert (
+        payload["parent_fill_metadata"]["experimental_pressure_refresh_apply"]
+        is False
+    )
+    assert (
+        payload["parent_fill_metadata"]["normal_candidate_pressure_refresh"]
+        is False
+    )
+    assert payload["parent_fill_metadata"]["hidden_seam_pressure_refresh"] is False
     assert payload["parent_fill_metadata"]["candidate_gate_eligible"] is False
     assert payload["parent_fill_metadata"]["candidate_gate_blockers"] == [
         "TYWRF_DIAGNOSTIC_ONLY=true",
@@ -318,10 +371,58 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
     assert payload["parent_fill_metadata"]["pressure_refresh_provider_ok"] is True
     assert payload["parent_fill_metadata"]["pressure_refresh_staging_ok"] is True
     assert payload["parent_fill_metadata"]["pressure_refresh_compute_called"] is True
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_terrain_override_used"]
+        is True
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_terrain_source"]
+        == "moved_candidate_HGT"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_terrain_provenance"]
+        == "override:moved_candidate_HGT"
+    )
     assert payload["parent_fill_metadata"]["pressure_refresh_synced_pb_points"] == 42
     assert payload["parent_fill_metadata"]["pressure_refresh_synced_mub_points"] == 43
     assert payload["parent_fill_metadata"]["pressure_refresh_synced_phb_points"] == 44
+    assert payload["parent_fill_metadata"]["pressure_refresh_target_column_count"] == 9
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_refreshed_column_count"]
+        == 9
+    )
+    assert payload["parent_fill_metadata"]["pressure_refresh_refreshed_point_count"] == 90
+    assert payload["parent_fill_metadata"]["pressure_refresh_skipped_point_count"] == 0
+    assert payload["parent_fill_metadata"]["pressure_refresh_invalid_point_count"] == 0
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_touched_overlap_cells"]
+        is False
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_touched_halo_cells"]
+        is False
+    )
     assert payload["parent_fill_metadata"]["pressure_refresh_refreshed_p_points"] == 45
+    assert payload["parent_fill_metadata"]["pressure_refresh_changed_p_points"] == 90
+    assert payload["parent_fill_metadata"]["pressure_refresh_changed_pb_points"] == 91
+    assert payload["parent_fill_metadata"]["pressure_refresh_changed_mub_points"] == 92
+    assert payload["parent_fill_metadata"]["pressure_refresh_changed_phb_points"] == 93
+    assert (
+        payload["parent_fill_metadata"][
+            "pressure_refresh_changed_p_matches_refreshed_point_count"
+        ]
+        is True
+    )
+    assert (
+        payload["parent_fill_metadata"][
+            "pressure_refresh_invalid_and_skipped_points_zero"
+        ]
+        is True
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_overlap_halo_untouched"]
+        is True
+    )
     assert (
         payload["parent_fill_metadata"]["pressure_refresh_metadata_source"]
         == "candidate_attrs"
@@ -351,6 +452,7 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
     assert payload["summary"]["candidate_validation_gate_only"] is False
     assert payload["summary"]["candidate_kind"] == "pressure_refresh_remap_diagnostic"
     assert payload["summary"]["parent_fill_metadata_status"] == "available"
+    assert payload["summary"]["pressure_refresh_metadata_status"] == "available"
     assert payload["summary"]["diagnostic_remap_parent_fill"] is True
     assert payload["summary"]["minimum_static_refresh_fields"] == [
         "XLAT",
@@ -358,11 +460,16 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         "HGT",
     ]
     assert payload["summary"]["pressure_refresh_required"] is True
+    assert payload["summary"]["pressure_refresh_opt_in"] is True
     assert payload["summary"]["pressure_refresh_applied"] is True
     assert (
         payload["summary"]["pressure_refresh_integration_status"]
         == "diagnostic_only_not_integrated"
     )
+    assert payload["summary"]["pressure_refresh_experimental_apply"] is False
+    assert payload["summary"]["experimental_pressure_refresh_apply"] is False
+    assert payload["summary"]["normal_candidate_pressure_refresh"] is False
+    assert payload["summary"]["hidden_seam_pressure_refresh"] is False
     assert payload["summary"]["pressure_refresh_required_inputs"] == [
         "PB",
         "P",
@@ -377,10 +484,38 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
     assert payload["summary"]["pressure_refresh_provider_ok"] is True
     assert payload["summary"]["pressure_refresh_staging_ok"] is True
     assert payload["summary"]["pressure_refresh_compute_called"] is True
+    assert payload["summary"]["pressure_refresh_terrain_override_used"] is True
+    assert payload["summary"]["pressure_refresh_terrain_source"] == "moved_candidate_HGT"
+    assert (
+        payload["summary"]["pressure_refresh_terrain_provenance"]
+        == "override:moved_candidate_HGT"
+    )
     assert payload["summary"]["pressure_refresh_synced_pb_points"] == 42
     assert payload["summary"]["pressure_refresh_synced_mub_points"] == 43
     assert payload["summary"]["pressure_refresh_synced_phb_points"] == 44
+    assert payload["summary"]["pressure_refresh_target_column_count"] == 9
+    assert payload["summary"]["pressure_refresh_refreshed_column_count"] == 9
+    assert payload["summary"]["pressure_refresh_refreshed_point_count"] == 90
+    assert payload["summary"]["pressure_refresh_skipped_point_count"] == 0
+    assert payload["summary"]["pressure_refresh_invalid_point_count"] == 0
+    assert payload["summary"]["pressure_refresh_touched_overlap_cells"] is False
+    assert payload["summary"]["pressure_refresh_touched_halo_cells"] is False
     assert payload["summary"]["pressure_refresh_refreshed_p_points"] == 45
+    assert payload["summary"]["pressure_refresh_changed_p_points"] == 90
+    assert payload["summary"]["pressure_refresh_changed_pb_points"] == 91
+    assert payload["summary"]["pressure_refresh_changed_mub_points"] == 92
+    assert payload["summary"]["pressure_refresh_changed_phb_points"] == 93
+    assert (
+        payload["summary"][
+            "pressure_refresh_changed_p_matches_refreshed_point_count"
+        ]
+        is True
+    )
+    assert (
+        payload["summary"]["pressure_refresh_invalid_and_skipped_points_zero"]
+        is True
+    )
+    assert payload["summary"]["pressure_refresh_overlap_halo_untouched"] is True
     assert payload["summary"]["pressure_refresh_metadata_source"] == "candidate_attrs"
     assert payload["summary"]["pressure_refresh_metadata_time_index"] == 0
     assert (
@@ -472,6 +607,190 @@ def test_report_surfaces_candidate_gate_eligible_metadata(
     assert (
         payload["summary"]["pressure_refresh_disposition"]["status"] == "not_applied"
     )
+
+
+def test_report_distinguishes_normal_pressure_refresh_candidate_metadata(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_file = tmp_path / "candidate" / f"wrfout_d02_{END}_candidate"
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{START}",
+        i_parent_start=10,
+        j_parent_start=20,
+        u_value=9.0,
+    )
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{END}",
+        i_parent_start=12,
+        j_parent_start=21,
+        u_value=10.0,
+    )
+    _write_wrfout(
+        candidate_file,
+        i_parent_start=12,
+        j_parent_start=21,
+        attrs={
+            "TYWRF_DIAGNOSTIC_ONLY": "false",
+            "TYWRF_GATE_CANDIDATE": "true",
+            "TYWRF_INTEGRATOR_OUTPUT": "true",
+            "TYWRF_VALIDATION_GATE_ONLY": "false",
+            "TYWRF_CANDIDATE_KIND": "selected_field_integrator_v0",
+            "TYWRF_PRESSURE_REFRESH_OPT_IN": "true",
+            "TYWRF_PRESSURE_REFRESH_APPLIED": "true",
+            "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS": "applied_to_candidate",
+            "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY": "false",
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_OVERRIDE_USED": "true",
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_SOURCE": "moved_candidate_HGT",
+            "TYWRF_PRESSURE_REFRESH_TERRAIN_PROVENANCE": "override:moved_candidate_HGT",
+            "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT": 11,
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_COLUMN_COUNT": 11,
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT": 110,
+            "TYWRF_PRESSURE_REFRESH_SKIPPED_POINT_COUNT": 0,
+            "TYWRF_PRESSURE_REFRESH_INVALID_POINT_COUNT": 0,
+            "TYWRF_PRESSURE_REFRESH_TOUCHED_OVERLAP_CELLS": "false",
+            "TYWRF_PRESSURE_REFRESH_TOUCHED_HALO_CELLS": "false",
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS": 110,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS": 110,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS": 111,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS": 112,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS": 113,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT": "true",
+            "TYWRF_PRESSURE_REFRESH_INVALID_AND_SKIPPED_POINTS_ZERO": "true",
+            "TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED": "true",
+        },
+    )
+
+    payload = json.loads(
+        report_to_json(
+            report_10min_diagnostics(
+                reference_dir,
+                domain="d02",
+                start=START,
+                end=END,
+                variables=("U",),
+                thresholds={"U": 0.05},
+                candidate_file=candidate_file,
+            )
+        )
+    )
+
+    assert payload["diagnostic_only"] is True
+    assert payload["candidate_model_pass"] == "not_applicable"
+    assert payload["candidate_metadata"]["candidate_gate_eligible"] is True
+    assert payload["candidate_metadata"]["candidate_gate_blockers"] == []
+    assert payload["parent_fill_metadata"]["pressure_refresh_metadata_status"] == "available"
+    assert payload["parent_fill_metadata"]["normal_candidate_pressure_refresh"] is True
+    assert payload["parent_fill_metadata"]["hidden_seam_pressure_refresh"] is False
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_disposition"]["status"]
+        == "normal_candidate_metadata_only"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_disposition"][
+            "candidate_model_pass"
+        ]
+        == "not_applicable"
+    )
+    assert payload["summary"]["normal_candidate_pressure_refresh"] is True
+    assert payload["summary"]["pressure_refresh_metadata_status"] == "available"
+    assert payload["summary"]["hidden_seam_pressure_refresh"] is False
+    assert payload["summary"]["pressure_refresh_target_column_count"] == 11
+    assert payload["summary"]["pressure_refresh_refreshed_column_count"] == 11
+    assert payload["summary"]["pressure_refresh_refreshed_point_count"] == 110
+    assert payload["summary"]["pressure_refresh_changed_p_points"] == 110
+    assert (
+        payload["summary"]["pressure_refresh_changed_p_matches_refreshed_point_count"]
+        is True
+    )
+    assert payload["summary"]["pressure_refresh_overlap_halo_untouched"] is True
+    assert (
+        payload["disposition"]["pressure_refresh_disposition"]["status"]
+        == "normal_candidate_metadata_only"
+    )
+
+
+def test_report_rejects_hidden_seam_pressure_refresh_metadata(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_file = tmp_path / "candidate" / f"wrfout_d02_{END}_hidden_seam"
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{START}",
+        i_parent_start=10,
+        j_parent_start=20,
+        u_value=9.0,
+    )
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{END}",
+        i_parent_start=12,
+        j_parent_start=21,
+        u_value=10.0,
+    )
+    _write_wrfout(
+        candidate_file,
+        i_parent_start=12,
+        j_parent_start=21,
+        attrs={
+            "TYWRF_DIAGNOSTIC_ONLY": "true",
+            "TYWRF_GATE_CANDIDATE": "false",
+            "TYWRF_INTEGRATOR_OUTPUT": "false",
+            "TYWRF_VALIDATION_GATE_ONLY": "false",
+            "TYWRF_CANDIDATE_KIND": "selected_field_pressure_refresh_experimental_apply_v0",
+            "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY": "true",
+            "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY": "true",
+            "TYWRF_PRESSURE_REFRESH_APPLIED": "true",
+            "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS": "experimental_apply_test_only",
+            "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT": 4,
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_COLUMN_COUNT": 4,
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT": 40,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS": 40,
+            "TYWRF_PRESSURE_REFRESH_CHANGED_P_MATCHES_REFRESHED_POINT_COUNT": "true",
+            "TYWRF_PRESSURE_REFRESH_INVALID_AND_SKIPPED_POINTS_ZERO": "true",
+            "TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED": "true",
+        },
+    )
+
+    payload = json.loads(
+        report_to_json(
+            report_10min_diagnostics(
+                reference_dir,
+                domain="d02",
+                start=START,
+                end=END,
+                variables=("U",),
+                thresholds={"U": 0.05},
+                candidate_file=candidate_file,
+            )
+        )
+    )
+
+    blockers = payload["candidate_metadata"]["candidate_gate_blockers"]
+    assert payload["candidate_metadata"]["candidate_gate_eligible"] is False
+    assert "TYWRF_DIAGNOSTIC_ONLY=true" in blockers
+    assert "TYWRF_GATE_CANDIDATE=false" in blockers
+    assert "TYWRF_INTEGRATOR_OUTPUT=false" in blockers
+    assert "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY=true" in blockers
+    assert "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY=true" in blockers
+    assert (
+        "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS=experimental_apply_test_only"
+        in blockers
+    )
+    assert payload["parent_fill_metadata"]["hidden_seam_pressure_refresh"] is True
+    assert payload["parent_fill_metadata"]["pressure_refresh_metadata_status"] == "available"
+    assert payload["parent_fill_metadata"]["normal_candidate_pressure_refresh"] is False
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_disposition"]["status"]
+        == "hidden_seam_diagnostic_evidence_only"
+    )
+    assert payload["summary"]["hidden_seam_pressure_refresh"] is True
+    assert payload["summary"]["candidate_gate_eligible"] is False
+    assert payload["summary"]["pressure_refresh_refreshed_point_count"] == 40
+    assert (
+        payload["summary"]["pressure_refresh_disposition"]["candidate_model_pass"]
+        == "not_applicable"
+    )
+    assert payload["candidate_model_pass"] == "not_applicable"
 
 
 def test_report_marks_missing_positive_candidate_metadata_ineligible(

@@ -215,7 +215,8 @@ void create_wrf_fixture(
     const bool state_fields,
     const bool parent_values,
     const bool optional_state_fields = false,
-    const bool pressure_refresh_metadata = false) {
+    const bool pressure_refresh_metadata = false,
+    const bool invalid_parent_pressure_thermodynamics = false) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create fixture");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
@@ -290,7 +291,16 @@ void create_wrf_fixture(
     if (parent_values) {
       put_3d_linear(file_id, vars.u, shape.mass_nz, shape.mass_ny, shape.mass_nx + 1, 1'000.0F, 7.0F, 13.0F, 101.0F);
       put_3d_linear(file_id, vars.v, shape.mass_nz, shape.mass_ny + 1, shape.mass_nx, 2'000.0F, 11.0F, 17.0F, 103.0F);
-      put_3d_linear(file_id, vars.t, shape.mass_nz, shape.mass_ny, shape.mass_nx, 3'000.0F, 5.0F, 3.0F, 10.0F);
+      put_3d_linear(
+          file_id,
+          vars.t,
+          shape.mass_nz,
+          shape.mass_ny,
+          shape.mass_nx,
+          invalid_parent_pressure_thermodynamics ? -500.0F : 3'000.0F,
+          5.0F,
+          3.0F,
+          10.0F);
       put_3d_linear(file_id, vars.ph, shape.full_nz, shape.mass_ny, shape.mass_nx, 4'000.0F, 2.0F, 4.0F, 50.0F);
       put_2d_linear(file_id, vars.mu, shape.mass_ny, shape.mass_nx, 5'000.0F, 19.0F, 23.0F);
       put_3d_linear(file_id, vars.p, shape.mass_nz, shape.mass_ny, shape.mass_nx, 6'000.0F, 3.0F, 2.0F, 7.0F);
@@ -714,7 +724,60 @@ void assert_successful_candidate(
   return false;
 }
 
-void assert_pressure_refresh_not_ready(
+void assert_normal_pressure_refresh_apply(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path) {
+  std::filesystem::remove(output);
+  assert(!std::filesystem::exists(output));
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, output) +
+      " --pressure-refresh >" + shell_quote(log_path) + " 2>&1");
+  assert(std::filesystem::exists(output));
+  const auto log = read_file(log_path);
+  assert(log.find("\"status\": \"selected_field_candidate_generated\"") !=
+         std::string::npos);
+  assert(log.find("\"candidate_kind\": \"selected_field_integrator_v0\"") !=
+         std::string::npos);
+  assert(log.find("\"gate_candidate\": true") != std::string::npos);
+  assert(log.find("\"integrator_output\": true") != std::string::npos);
+  assert(log.find("\"experimental_pressure_refresh_apply\": true") ==
+         std::string::npos);
+  assert(log.find("\"pressure_refresh_applied\": true") != std::string::npos);
+  assert(log.find("\"pressure_refresh_experimental_apply\": false") !=
+         std::string::npos);
+  assert(log.find("\"pressure_refresh_integration_status\": \"applied_to_candidate\"") !=
+         std::string::npos);
+  assert(log.find("\"pressure_refresh_terrain_override_used\": true") != std::string::npos);
+  assert(log.find("\"pressure_refresh_terrain_source\": \"moved_candidate_HGT\"") !=
+         std::string::npos);
+  assert(log.find("\"pressure_refresh_terrain_provenance\": \"override:moved_candidate_HGT\"") !=
+         std::string::npos);
+  const auto target_columns = json_number_field(log, "pressure_refresh_target_column_count");
+  const auto refreshed_columns =
+      json_number_field(log, "pressure_refresh_refreshed_column_count");
+  const auto refreshed_points =
+      json_number_field(log, "pressure_refresh_refreshed_point_count");
+  const auto refreshed_p_points =
+      json_number_field(log, "pressure_refresh_refreshed_p_points");
+  assert(target_columns > 0.0);
+  assert(refreshed_columns == target_columns);
+  assert(refreshed_points > 0.0);
+  assert(refreshed_p_points == refreshed_points);
+  assert(json_number_field(log, "pressure_refresh_skipped_point_count") == 0.0);
+  assert(json_number_field(log, "pressure_refresh_invalid_point_count") == 0.0);
+  assert(!json_bool_field(log, "pressure_refresh_touched_overlap_cells"));
+  assert(!json_bool_field(log, "pressure_refresh_touched_halo_cells"));
+  assert(json_bool_field(log, "pressure_refresh_changed_p_matches_refreshed_point_count"));
+  assert(json_bool_field(log, "pressure_refresh_invalid_and_skipped_points_zero"));
+  assert(json_bool_field(log, "pressure_refresh_overlap_halo_untouched"));
+  assert_successful_candidate(output, true, template_path);
+}
+
+void assert_pressure_refresh_invalid_dry_run_fail_closed(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
     const std::filesystem::path& d02_start,
@@ -729,46 +792,17 @@ void assert_pressure_refresh_not_ready(
   assert(status != 0);
   assert(!std::filesystem::exists(output));
   const auto log = read_file(log_path);
-  assert(
-      log.find(
-          "pressure_refresh_not_ready: static refreshed but thermodynamic/base-state "
-          "consistency missing") != std::string::npos);
-  assert(log.find("static_refresh_applied=true") != std::string::npos);
-  assert(log.find("static_refresh_uses_reference_end=false") != std::string::npos);
-  assert(log.find("thermodynamic_base_state_consistency_ready=false") !=
-         std::string::npos);
-  assert(log.find("exposed T/PH are parent interpolated from d01 start-state fields") !=
-         std::string::npos);
-  assert(log.find("PB/PHB/MUB/P base-state ownership is still preserved") !=
-         std::string::npos);
-  assert(log.find("provider_terrain_uses_moved_candidate_hgt=true") !=
-         std::string::npos);
-  assert(log.find("provider_terrain_uses_moved_candidate_hgt=false") ==
-         std::string::npos);
-  assert(log.find("provider_base_state_reconstruct_ok=true") != std::string::npos);
-  assert(log.find("provider_terrain_source=moved_candidate_HGT") !=
-         std::string::npos);
-  assert(log.find("provider_terrain_source=metadata") == std::string::npos);
-  assert(log.find("provider_terrain_provenance=override:moved_candidate_HGT") !=
-         std::string::npos);
+  assert(log.find("pressure_refresh_dry_run_contract_failed") != std::string::npos);
+  assert(log.find("provider_ok=true") != std::string::npos);
   assert(log.find("base_state_sync_contract_ok=true") != std::string::npos);
   assert(log.find("base_state_sync_dry_run=true") != std::string::npos);
   assert(log.find("base_state_sync_applied=false") != std::string::npos);
-  assert(log_u64_field(log, "would_sync_pb_point_count") > 0);
-  assert(log_u64_field(log, "would_sync_mub_point_count") > 0);
-  assert(log_u64_field(log, "would_sync_phb_point_count") > 0);
-  assert(log.find("sync_overlap_write_count=0") != std::string::npos);
-  assert(log.find("sync_halo_write_count=0") != std::string::npos);
-  assert(log.find("pressure_refresh_compute_called=false") != std::string::npos);
   assert(log.find("pressure_compute_dry_run=true") != std::string::npos);
   assert(log.find("pressure_compute_dry_run_called=true") != std::string::npos);
-  assert(log.find("pressure_compute_dry_run_ok=true") != std::string::npos);
-  assert(log_u64_field(log, "would_refresh_p_point_count") > 0);
-  assert(log.find("dry_run_invalid_p_point_count=0") != std::string::npos);
-  assert(log_u64_field(log, "pressure_compute_dry_run_report_target_column_count") > 0);
-  assert(log_u64_field(log, "pressure_compute_dry_run_report_refreshed_point_count") > 0);
-  assert(log.find("pressure_compute_dry_run_report_invalid_point_count=0") !=
-         std::string::npos);
+  assert(log.find("pressure_compute_dry_run_ok=false") != std::string::npos);
+  assert(log_u64_field(log, "dry_run_invalid_p_point_count") > 0);
+  assert(log_u64_field(log, "pressure_compute_dry_run_report_invalid_point_count") > 0);
+  assert(log_u64_field(log, "pressure_compute_dry_run_report_skipped_point_count") > 0);
   assert(log.find("pressure_compute_dry_run_report_touched_overlap_cells=false") !=
          std::string::npos);
   assert(log.find("pressure_compute_dry_run_report_touched_halo_cells=false") !=
@@ -939,6 +973,8 @@ int main(const int argc, char** argv) {
     std::filesystem::create_directories(root);
 
     const auto d01_start = root / "wrfout_d01_2025-07-26_00:00:00";
+    const auto d01_invalid_pressure_start =
+        root / "wrfout_d01_invalid_pressure_2025-07-26_00:00:00";
     const auto d02_start = root / "wrfout_d02_2025-07-26_00:00:00";
     const auto template_path = root / "wrfout_d02_template";
     const auto pressure_template_path = root / "wrfout_d02_pressure_template";
@@ -947,9 +983,21 @@ int main(const int argc, char** argv) {
         root / "tywrf_selected_field_pressure_d02_2025-07-26_00:10:00";
     const auto experimental_pressure_output =
         root / "tywrf_selected_field_experimental_pressure_d02_2025-07-26_00:10:00";
-    const auto pressure_log = root / "pressure_refresh_not_ready.log";
+    const auto invalid_pressure_output =
+        root / "tywrf_selected_field_invalid_pressure_d02_2025-07-26_00:10:00";
+    const auto pressure_log = root / "pressure_refresh_normal_apply.log";
     const auto experimental_pressure_log = root / "pressure_refresh_experimental_apply.log";
+    const auto invalid_pressure_log = root / "pressure_refresh_invalid_dry_run.log";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
+    create_wrf_fixture(
+        d01_invalid_pressure_start,
+        10000.0,
+        FixtureShape{8, 8},
+        true,
+        true,
+        false,
+        false,
+        true);
     create_wrf_fixture(d02_start, 2000.0, FixtureShape{10, 10}, true, false, true);
     create_wrf_fixture(template_path, 2000.0, FixtureShape{10, 10}, false, false);
     create_wrf_fixture(
@@ -966,14 +1014,13 @@ int main(const int argc, char** argv) {
     run_command(base_command(executable, d01_start, d02_start, template_path, output));
     assert_successful_candidate(output);
 
-    assert_pressure_refresh_not_ready(
+    assert_normal_pressure_refresh_apply(
         executable,
         d01_start,
         d02_start,
         pressure_template_path,
         pressure_output,
         pressure_log);
-    assert(!std::filesystem::exists(pressure_output));
     assert_experimental_pressure_refresh_apply(
         executable,
         d01_start,
@@ -981,6 +1028,13 @@ int main(const int argc, char** argv) {
         pressure_template_path,
         experimental_pressure_output,
         experimental_pressure_log);
+    assert_pressure_refresh_invalid_dry_run_fail_closed(
+        executable,
+        d01_invalid_pressure_start,
+        d02_start,
+        pressure_template_path,
+        invalid_pressure_output,
+        invalid_pressure_log);
     run_rejection_tests(executable, d01_start, d02_start, template_path, root);
 
     std::filesystem::remove_all(root);
