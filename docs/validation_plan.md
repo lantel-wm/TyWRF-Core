@@ -511,6 +511,32 @@ sidecar metadata, and failure reporting only. It must not satisfy surface field
 comparisons or Vmax provenance until the ABI v2 wrapper actually executes the
 documented surface/physics producer.
 
+Round D41 validation records `fe01be1` as provider readiness plumbing only.
+`KrosaBaseStateProviderTerrainOverride` allows the provider to consume a moved
+candidate `HGT` view and report terrain provenance such as
+`moved_candidate_HGT`, but provider reconstruction is not pressure-refresh
+production and does not make a candidate gate-eligible. It must not be counted
+as written `P`, `PB`, `PHB`, `MUB`, `PH`, `T`, or surface diagnostics.
+
+Round D42 should use the moved-terrain provider path only as a read-only
+`--pressure-refresh` readiness probe. The probe may verify that moved
+candidate `HGT` can reconstruct provider base-state buffers, but it must not
+sync those buffers into the candidate, call the pressure hook as a producer, or
+write a candidate output when readiness is incomplete. Even with provider
+terrain source `moved_candidate_HGT`, `thermodynamic_base_state_consistency_ready`
+remains `false`; validation must therefore expect fail-closed behavior and no
+output file from `--pressure-refresh`.
+
+The default selected-field validation candidate still preserves `P`, `PB`,
+`PHB`, and `MUB` from the start-state source. `P` is not an allowed
+parent-interpolation variable and must stay outside direct parent fill until a
+derived or recomputed pressure producer passes readiness and numeric checks.
+Validation must reject any shortcut using `00:10` reference-end truth, restart
+`PHB`/`ALB` as a provider substitute, reference-end deltas, or probe/diagnostic
+pressure-refresh artifacts as gate evidence. The strict `00:10` endpoint has
+not passed; current failures remain `U`, `V`, `MU`, `P`, and storm-center
+distance.
+
 Example:
 
 ```bash

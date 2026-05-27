@@ -18,6 +18,7 @@ namespace {
 constexpr std::string_view kCycleStart = "2025-07-26_00:00:00";
 constexpr std::string_view kTenMinuteEnd = "2025-07-26_00:10:00";
 constexpr float kTolerance = 1.0e-3F;
+constexpr float kSyntheticHgtBase = 600.0F;
 
 void check_nc(const int status, const std::string_view operation) {
   if (status == NC_NOERR) {
@@ -280,7 +281,8 @@ void create_wrf_fixture(
   if (pressure_refresh_metadata) {
     put_2d_linear(file_id, vars.hgt, shape.mass_ny, shape.mass_nx, 20.0F, 1.0F, 5.0F);
   } else {
-    put_2d_linear(file_id, vars.hgt, shape.mass_ny, shape.mass_nx, 60'000.0F, 1.0F, 10.0F);
+    put_2d_linear(
+        file_id, vars.hgt, shape.mass_ny, shape.mass_nx, kSyntheticHgtBase, 1.0F, 10.0F);
   }
   if (state_fields) {
     if (parent_values) {
@@ -529,14 +531,17 @@ void assert_successful_candidate(
 
   expect_close(read_2d_value(file_id, "XLAT", 2, 0), linear_2d(2, 5, 40'000.0F, 1.0F, 10.0F), "XLAT overlap");
   expect_close(read_2d_value(file_id, "XLONG", 2, 0), linear_2d(2, 5, 50'000.0F, 1.0F, 10.0F), "XLONG overlap");
-  expect_close(read_2d_value(file_id, "HGT", 2, 0), linear_2d(2, 5, 60'000.0F, 1.0F, 10.0F), "HGT overlap");
+  expect_close(
+      read_2d_value(file_id, "HGT", 2, 0),
+      linear_2d(2, 5, kSyntheticHgtBase, 1.0F, 10.0F),
+      "HGT overlap");
   const auto exposed_xlat = read_2d_value(file_id, "XLAT", 0, 9);
   const auto stale_xlat = linear_2d(0, 9, 40'000.0F, 1.0F, 10.0F);
   assert(std::isfinite(exposed_xlat));
   assert(std::fabs(exposed_xlat - stale_xlat) > kTolerance);
   expect_close(exposed_xlat, linear_2d(0, 14, 40'000.0F, 1.0F, 10.0F), "XLAT exposed");
   expect_close(read_2d_value(file_id, "XLONG", 0, 9), linear_2d(0, 14, 50'000.0F, 1.0F, 10.0F), "XLONG exposed");
-  expect_close(read_2d_value(file_id, "HGT", 0, 9), 60'013.8F, "HGT parent exposed");
+  expect_close(read_2d_value(file_id, "HGT", 0, 9), 613.8F, "HGT parent exposed");
 
   expect_close(read_3d_value(file_id, "U", 1, 2, 0), linear_3d(1, 2, 5, 10'000.0F, 1.0F, 10.0F, 100.0F), "U overlap");
   expect_close(read_3d_value(file_id, "V", 1, 2, 0), linear_3d(1, 2, 5, 20'000.0F, 1.0F, 10.0F, 100.0F), "V overlap");
@@ -604,11 +609,19 @@ void assert_pressure_refresh_not_ready(
           "consistency missing") != std::string::npos);
   assert(log.find("static_refresh_applied=true") != std::string::npos);
   assert(log.find("static_refresh_uses_reference_end=false") != std::string::npos);
+  assert(log.find("thermodynamic_base_state_consistency_ready=false") !=
+         std::string::npos);
   assert(log.find("exposed T/PH are parent interpolated from d01 start-state fields") !=
          std::string::npos);
   assert(log.find("PB/PHB/MUB/P base-state ownership is still preserved") !=
          std::string::npos);
-  assert(log.find("moved candidate HGT is not injectable") != std::string::npos);
+  assert(log.find("provider_terrain_uses_moved_candidate_hgt=true") !=
+         std::string::npos);
+  assert(log.find("provider_base_state_reconstruct_ok=true") != std::string::npos);
+  assert(log.find("provider_terrain_source=moved_candidate_HGT") !=
+         std::string::npos);
+  assert(log.find("provider_terrain_provenance=override:moved_candidate_HGT") !=
+         std::string::npos);
 }
 
 void run_rejection_tests(

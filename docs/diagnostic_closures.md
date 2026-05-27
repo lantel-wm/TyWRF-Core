@@ -371,6 +371,28 @@ Round D40 keeps the D39 safety and ABI results outside closure scope:
   closure must not use sidecar fixture success to satisfy `U10`, `V10`, `T2`,
   `Q2`, `RAINC`, `RAINNC`, Vmax, or surface-producer validation.
 
+Round D41/D42 keeps moved-terrain provider work outside closure scope:
+
+- D41 commit `fe01be1` adds `KrosaBaseStateProviderTerrainOverride`, allowing
+  the provider to reconstruct base-state buffers from a moved candidate `HGT`
+  view. This is provider/probe plumbing only. A diagnostic closure must not
+  treat provider reconstruction as pressure-refresh production or as a writer
+  of `P`, `PB`, `PHB`, or `MUB`.
+- D42 `--pressure-refresh` readiness work may inject moved candidate `HGT` into
+  the provider as a read-only probe. The reconstructed buffers must not be
+  synced into the candidate, used to overwrite base-state fields, or emitted as
+  a diagnostic pressure-refresh artifact for gate credit.
+- Even when provider terrain source is `moved_candidate_HGT`,
+  `thermodynamic_base_state_consistency_ready=false`; `--pressure-refresh` must
+  fail closed and not generate output. A closure must not fill that missing
+  output from restart `PHB`/`ALB`, `pressure_mu_closure`, `00:10`
+  reference-end truth, or end-state deltas.
+- The default selected-field candidate must continue preserving
+  `P`/`PB`/`PHB`/`MUB` start-state ownership. `P` is forbidden from direct
+  parent interpolation. The current `00:10` gate is still failed on `U`, `V`,
+  `MU`, `P`, and storm-center distance; probe or diagnostic pressure-refresh
+  artifacts must not be reported as gate passes.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

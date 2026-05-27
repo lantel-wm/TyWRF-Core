@@ -650,6 +650,32 @@ truth to repair them. Any future write path for these base-state fields needs a
 separate provider/sync design that preserves overlap, halo, and moving-nest
 ownership rules.
 
+## Round D41/D42 Compatibility Boundary
+
+D41 commit `fe01be1` (`Allow moved terrain in base-state provider`) adds
+`KrosaBaseStateProviderTerrainOverride`. This lets the base-state provider
+reconstruct its buffers from an explicit moved candidate `HGT` view instead of
+only metadata terrain. That is a provider/probe capability, not a pressure
+producer: using moved terrain in the provider does not by itself write `P`,
+`PB`, `PHB`, `MUB`, or any other candidate field.
+
+D42 pressure-refresh work must keep that boundary read-only. The intended
+selected-field `--pressure-refresh` readiness probe may inject moved candidate
+`HGT` into the provider and verify that base-state buffers can be reconstructed,
+but the probe result must not be synced back into the candidate NetCDF. Even
+when the provider terrain source is `moved_candidate_HGT`,
+`thermodynamic_base_state_consistency_ready` remains `false`, so
+`--pressure-refresh` must still fail closed and produce no output.
+
+The default selected-field candidate continues to preserve `P`, `PB`, `PHB`,
+and `MUB` from start-state ownership. `P` must not be added to parent
+interpolation; only the documented non-oracle parent-fill variables may move
+through that path. D41/D42 also must not use `00:10` reference-end truth,
+restart `PHB`/`ALB` in place of the provider, end-state deltas, or probe and
+diagnostic pressure-refresh artifacts as compatibility evidence or gate passes.
+The current `00:10` gate is still failed on `U`, `V`, `MU`, `P`, and
+storm-center distance.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

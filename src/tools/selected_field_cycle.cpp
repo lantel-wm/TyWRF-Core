@@ -1,6 +1,7 @@
+#include "tywrf/dynamics/base_state_provider.hpp"
 #include "tywrf/dynamics/pressure_refresh_hook.hpp"
-#include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/io/pressure_refresh_io.hpp"
+#include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/nest/parent_child_interpolation.hpp"
 #include "tywrf/nest/static_fields.hpp"
 #include "tywrf/nest/state_exchange.hpp"
@@ -86,6 +87,8 @@ struct CandidateReport {
   tywrf::nest::StateExchangePlan exchange;
   tywrf::nest::ParentChildInterpolationReport interpolation;
   tywrf::nest::MovingNestStaticRefreshReport static_refresh;
+  std::optional<tywrf::dynamics::KrosaBaseStateProviderReport>
+      pressure_refresh_provider_probe;
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh;
   std::filesystem::path pressure_refresh_metadata_source;
   std::size_t pressure_refresh_metadata_time_index = 0;
@@ -158,8 +161,8 @@ Options:
                                   plus available d02 PB/PHB/MUB/PSFC/U10/V10/T2/Q2/RAINC/RAINNC.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
-                                  PB/PHB/MUB/P ownership and provider terrain are not yet from
-                                  the same moved-pose producer.
+                                  PB/PHB/MUB/P ownership is not yet thermodynamically consistent
+                                  with the moved-pose T/PH and terrain producer.
   --pretty                       Pretty-print JSON report.
   --help                         Show this help.
 
@@ -631,11 +634,15 @@ struct PressureRefreshReadiness {
   bool static_refresh_uses_reference_end = false;
   bool thermodynamic_base_state_consistency_ready = false;
   bool provider_terrain_uses_moved_candidate_hgt = false;
+  bool provider_base_state_reconstruct_ok = false;
+  std::string provider_terrain_source_name;
+  std::string provider_terrain_provenance;
 
   [[nodiscard]] bool ready() const noexcept {
     return static_refresh_applied && !static_refresh_uses_reference_end &&
            thermodynamic_base_state_consistency_ready &&
-           provider_terrain_uses_moved_candidate_hgt;
+           provider_terrain_uses_moved_candidate_hgt &&
+           provider_base_state_reconstruct_ok;
   }
 };
 
@@ -646,7 +653,15 @@ struct PressureRefreshReadiness {
       report.static_refresh.ok() && report.changed_static_template_points > 0;
   readiness.static_refresh_uses_reference_end = false;
   readiness.thermodynamic_base_state_consistency_ready = false;
-  readiness.provider_terrain_uses_moved_candidate_hgt = false;
+  if (report.pressure_refresh_provider_probe.has_value()) {
+    const auto& provider = *report.pressure_refresh_provider_probe;
+    readiness.provider_base_state_reconstruct_ok = provider.ok();
+    readiness.provider_terrain_uses_moved_candidate_hgt =
+        provider.ok() && provider.terrain_override_used &&
+        provider.terrain_source_name == "moved_candidate_HGT";
+    readiness.provider_terrain_source_name = provider.terrain_source_name;
+    readiness.provider_terrain_provenance = provider.terrain_provenance;
+  }
   return readiness;
 }
 
@@ -659,10 +674,20 @@ struct PressureRefreshReadiness {
           << (readiness.static_refresh_applied ? "true" : "false");
   message << "; static_refresh_uses_reference_end="
           << (readiness.static_refresh_uses_reference_end ? "true" : "false");
+  message << "; thermodynamic_base_state_consistency_ready="
+          << (readiness.thermodynamic_base_state_consistency_ready ? "true" : "false");
   message << "; exposed T/PH are parent interpolated from d01 start-state fields, but "
              "PB/PHB/MUB/P base-state ownership is still preserved d02 start-state data";
-  message << "; provider terrain would still come from template HGT because moved candidate HGT "
-             "is not injectable into the pressure-refresh provider yet";
+  message << "; provider_terrain_uses_moved_candidate_hgt="
+          << (readiness.provider_terrain_uses_moved_candidate_hgt ? "true" : "false");
+  message << "; provider_base_state_reconstruct_ok="
+          << (readiness.provider_base_state_reconstruct_ok ? "true" : "false");
+  if (!readiness.provider_terrain_source_name.empty()) {
+    message << "; provider_terrain_source=" << readiness.provider_terrain_source_name;
+  }
+  if (!readiness.provider_terrain_provenance.empty()) {
+    message << "; provider_terrain_provenance=" << readiness.provider_terrain_provenance;
+  }
   return message.str();
 }
 
@@ -691,6 +716,51 @@ void require_pressure_refresh_inputs_ready(
             << join_variables(inputs.report.missing_base_state_reconstruction_names);
   }
   throw std::runtime_error(message.str());
+}
+
+void probe_pressure_refresh_provider_readiness(
+    const Options& options,
+    const tywrf::State<float>& candidate,
+    const StaticFieldSet& output_static,
+    CandidateReport& report) {
+  tywrf::FieldStorage3D<float> direct_alb(candidate.grid.mass_layout());
+  const auto inputs = tywrf::io::read_krosa_pressure_refresh_inputs(
+      options.template_path,
+      candidate.grid,
+      direct_alb,
+      {.time_index = options.template_time_index});
+  require_pressure_refresh_inputs_ready(inputs);
+
+  tywrf::dynamics::KrosaBaseStateProvider provider;
+  const tywrf::dynamics::KrosaBaseStateProviderTerrainOverride terrain_override{
+      .terrain_height_m = output_static.hgt.view(),
+      .source_name = "moved_candidate_HGT",
+      .provenance = "override:moved_candidate_HGT"};
+  auto provider_report =
+      provider.reconstruct(candidate.grid, inputs.metadata, terrain_override);
+  const bool uses_moved_candidate_hgt =
+      provider_report.terrain_override_used &&
+      provider_report.terrain_source_name == "moved_candidate_HGT";
+  if (!provider_report.ok() || !provider_report.allocated_buffers ||
+      !provider_report.wrote_pb || !provider_report.wrote_t_init ||
+      !provider_report.wrote_mub || !provider_report.wrote_alb ||
+      !provider_report.wrote_phb || !uses_moved_candidate_hgt) {
+    std::ostringstream message;
+    message << "pressure_refresh_provider_probe_failed";
+    if (provider_report.result.message != nullptr &&
+        provider_report.result.message[0] != '\0') {
+      message << ": " << provider_report.result.message;
+    }
+    message << "; provider_terrain_uses_moved_candidate_hgt="
+            << (uses_moved_candidate_hgt ? "true" : "false");
+    message << "; provider_terrain_source=" << provider_report.terrain_source_name;
+    message << "; provider_terrain_provenance=" << provider_report.terrain_provenance;
+    throw std::runtime_error(message.str());
+  }
+
+  report.pressure_refresh_provider_probe = provider_report;
+  report.pressure_refresh_metadata_source = options.template_path;
+  report.pressure_refresh_metadata_time_index = options.template_time_index;
 }
 
 void require_pressure_refresh_hook_success(
@@ -1226,6 +1296,7 @@ int run(Options options) {
       output_static,
       report);
   if (options.pressure_refresh) {
+    probe_pressure_refresh_provider_readiness(options, candidate, output_static, report);
     require_pressure_refresh_ready_for_compute(report);
     apply_pressure_refresh(options, candidate, report);
   }
