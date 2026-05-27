@@ -722,6 +722,31 @@ not selected-field readiness, not a gate-eligible candidate, and not a real
 diagnostic artifacts as gate evidence. The current real `00:10` gate remains
 failed on `U`, `V`, `MU`, `P`, and storm-center distance.
 
+## Round D45/D46 Dry-Run Contract Boundary
+
+D45 adds a pressure-refresh hook dry-run report for the base-state sync
+contract. The dry-run path may reconstruct provider-backed buffers and report
+would-sync counts for `PB`, `MUB`, and `PHB`, plus overlap/halo write safety and
+no-write/no-compute status. This is contract evidence only: dry-run must keep
+`base_state_sync_applied=false`, must not call pressure compute, and must not
+modify `P`, `PB`, `PHB`, `MUB`, or any candidate output field.
+
+D46 selected-field work may connect that hook dry-run report into the
+`selected_field_cycle --pressure-refresh` opt-in guard so the abort message and
+metadata expose the contract status. The path must still fail closed while
+`thermodynamic_base_state_consistency_ready=false`. Even if the dry-run contract
+is internally consistent and reports zero overlap/halo writes, the tool must not
+generate an output file, must not write `P`/`PB`/`PHB`/`MUB`, and must not be
+classified as a compatibility gate pass.
+
+Dry-run fields and hook diagnostic smoke remain readiness evidence only. They
+do not replace the strict `2025-07-26_00:10:00` selected-field gate and cannot
+be used as validation evidence for the real integrator. The current real
+`00:10` gate remains failed on `U`, `V`, `MU`, `P`, and storm-center distance.
+Shortcuts remain forbidden: `00:10` reference-end truth, restart `PHB`/`ALB` as
+a provider substitute, direct parent interpolation of `P`, and diagnostic
+artifacts as gate evidence.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

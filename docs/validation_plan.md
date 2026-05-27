@@ -575,6 +575,26 @@ hook-level evidence only and must not be counted as selected-field readiness or
 a strict `00:10` gate pass. The real `00:10` gate still fails on `U`, `V`,
 `MU`, `P`, and storm-center distance.
 
+Round D45 adds hook-level dry-run reporting for the pressure-refresh base-state
+sync contract. Validation may inspect the would-sync counts for `PB`, `MUB`,
+and `PHB`, overlap/halo write counts, and no-write/no-compute flags, but these
+fields are readiness evidence rather than candidate evidence. A valid dry-run
+must leave the candidate state unchanged, report that base-state sync was not
+applied, and avoid pressure compute.
+
+Round D46 should surface that dry-run contract inside the selected-field
+`--pressure-refresh` opt-in guard. The expected validation result is still a
+fail-closed abort with no output file while
+`thermodynamic_base_state_consistency_ready=false`. Even if the dry-run contract
+is ok, validation must reject any output or report that writes `P`, `PB`,
+`PHB`, or `MUB`, and must not count the dry-run, hook diagnostic smoke, or any
+diagnostic artifact as a strict gate pass.
+
+The strict `2025-07-26_00:10:00` d02 gate remains failed on `U`, `V`, `MU`,
+`P`, and storm-center distance. Validation must continue rejecting
+reference-end truth, restart `PHB`/`ALB` provider substitutes, direct parent
+interpolation of `P`, and diagnostic artifact gate evidence.
+
 Example:
 
 ```bash

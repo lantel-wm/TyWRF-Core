@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -588,6 +590,21 @@ void assert_successful_candidate(
   check_nc(nc_close(file_id), "close output");
 }
 
+[[nodiscard]] std::uint64_t log_u64_field(
+    const std::string& log,
+    const std::string_view name) {
+  const std::string marker = std::string(name) + "=";
+  const auto value_begin = log.find(marker);
+  assert(value_begin != std::string::npos);
+  std::size_t digit_begin = value_begin + marker.size();
+  std::size_t digit_end = digit_begin;
+  while (digit_end < log.size() && std::isdigit(static_cast<unsigned char>(log[digit_end]))) {
+    ++digit_end;
+  }
+  assert(digit_end > digit_begin);
+  return static_cast<std::uint64_t>(std::stoull(log.substr(digit_begin, digit_end - digit_begin)));
+}
+
 void assert_pressure_refresh_not_ready(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
@@ -622,6 +639,16 @@ void assert_pressure_refresh_not_ready(
          std::string::npos);
   assert(log.find("provider_terrain_provenance=override:moved_candidate_HGT") !=
          std::string::npos);
+  assert(log.find("base_state_sync_contract_ok=true") != std::string::npos);
+  assert(log.find("base_state_sync_dry_run=true") != std::string::npos);
+  assert(log.find("base_state_sync_applied=false") != std::string::npos);
+  assert(log_u64_field(log, "would_sync_pb_point_count") > 0);
+  assert(log_u64_field(log, "would_sync_mub_point_count") > 0);
+  assert(log_u64_field(log, "would_sync_phb_point_count") > 0);
+  assert(log.find("sync_overlap_write_count=0") != std::string::npos);
+  assert(log.find("sync_halo_write_count=0") != std::string::npos);
+  assert(log.find("pressure_refresh_compute_called=false") != std::string::npos);
+  assert(log.find("pressure_refresh_applied=false") != std::string::npos);
 }
 
 void run_rejection_tests(

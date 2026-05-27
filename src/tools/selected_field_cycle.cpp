@@ -89,6 +89,8 @@ struct CandidateReport {
   tywrf::nest::MovingNestStaticRefreshReport static_refresh;
   std::optional<tywrf::dynamics::KrosaBaseStateProviderReport>
       pressure_refresh_provider_probe;
+  std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport>
+      pressure_refresh_dry_run_contract;
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh;
   std::filesystem::path pressure_refresh_metadata_source;
   std::size_t pressure_refresh_metadata_time_index = 0;
@@ -635,6 +637,16 @@ struct PressureRefreshReadiness {
   bool thermodynamic_base_state_consistency_ready = false;
   bool provider_terrain_uses_moved_candidate_hgt = false;
   bool provider_base_state_reconstruct_ok = false;
+  bool base_state_sync_contract_ok = false;
+  bool base_state_sync_dry_run = false;
+  bool base_state_sync_applied = false;
+  std::uint64_t would_sync_pb_point_count = 0;
+  std::uint64_t would_sync_mub_point_count = 0;
+  std::uint64_t would_sync_phb_point_count = 0;
+  std::uint64_t sync_overlap_write_count = 0;
+  std::uint64_t sync_halo_write_count = 0;
+  bool pressure_refresh_compute_called = false;
+  bool pressure_refresh_applied = false;
   std::string provider_terrain_source_name;
   std::string provider_terrain_provenance;
 
@@ -642,7 +654,12 @@ struct PressureRefreshReadiness {
     return static_refresh_applied && !static_refresh_uses_reference_end &&
            thermodynamic_base_state_consistency_ready &&
            provider_terrain_uses_moved_candidate_hgt &&
-           provider_base_state_reconstruct_ok;
+           provider_base_state_reconstruct_ok && base_state_sync_contract_ok &&
+           base_state_sync_dry_run && !base_state_sync_applied &&
+           would_sync_pb_point_count > 0 && would_sync_mub_point_count > 0 &&
+           would_sync_phb_point_count > 0 && sync_overlap_write_count == 0 &&
+           sync_halo_write_count == 0 && !pressure_refresh_compute_called &&
+           !pressure_refresh_applied;
   }
 };
 
@@ -661,6 +678,21 @@ struct PressureRefreshReadiness {
         provider.terrain_source_name == "moved_candidate_HGT";
     readiness.provider_terrain_source_name = provider.terrain_source_name;
     readiness.provider_terrain_provenance = provider.terrain_provenance;
+  }
+  if (report.pressure_refresh_dry_run_contract.has_value()) {
+    const auto& dry_run = *report.pressure_refresh_dry_run_contract;
+    readiness.base_state_sync_contract_ok = dry_run.ok() &&
+                                            dry_run.provider_ok &&
+                                            dry_run.base_state_sync_contract_ok;
+    readiness.base_state_sync_dry_run = dry_run.base_state_sync_dry_run;
+    readiness.base_state_sync_applied = dry_run.base_state_sync_applied;
+    readiness.would_sync_pb_point_count = dry_run.would_sync_pb_point_count;
+    readiness.would_sync_mub_point_count = dry_run.would_sync_mub_point_count;
+    readiness.would_sync_phb_point_count = dry_run.would_sync_phb_point_count;
+    readiness.sync_overlap_write_count = dry_run.sync_overlap_write_count;
+    readiness.sync_halo_write_count = dry_run.sync_halo_write_count;
+    readiness.pressure_refresh_compute_called = dry_run.calls_pressure_refresh_compute;
+    readiness.pressure_refresh_applied = dry_run.pressure_refresh_applied;
   }
   return readiness;
 }
@@ -688,6 +720,21 @@ struct PressureRefreshReadiness {
   if (!readiness.provider_terrain_provenance.empty()) {
     message << "; provider_terrain_provenance=" << readiness.provider_terrain_provenance;
   }
+  message << "; base_state_sync_contract_ok="
+          << (readiness.base_state_sync_contract_ok ? "true" : "false");
+  message << "; base_state_sync_dry_run="
+          << (readiness.base_state_sync_dry_run ? "true" : "false");
+  message << "; base_state_sync_applied="
+          << (readiness.base_state_sync_applied ? "true" : "false");
+  message << "; would_sync_pb_point_count=" << readiness.would_sync_pb_point_count;
+  message << "; would_sync_mub_point_count=" << readiness.would_sync_mub_point_count;
+  message << "; would_sync_phb_point_count=" << readiness.would_sync_phb_point_count;
+  message << "; sync_overlap_write_count=" << readiness.sync_overlap_write_count;
+  message << "; sync_halo_write_count=" << readiness.sync_halo_write_count;
+  message << "; pressure_refresh_compute_called="
+          << (readiness.pressure_refresh_compute_called ? "true" : "false");
+  message << "; pressure_refresh_applied="
+          << (readiness.pressure_refresh_applied ? "true" : "false");
   return message.str();
 }
 
@@ -761,6 +808,76 @@ void probe_pressure_refresh_provider_readiness(
   report.pressure_refresh_provider_probe = provider_report;
   report.pressure_refresh_metadata_source = options.template_path;
   report.pressure_refresh_metadata_time_index = options.template_time_index;
+}
+
+void probe_pressure_refresh_dry_run_contract(
+    const Options& options,
+    tywrf::State<float>& candidate,
+    const StaticFieldSet& output_static,
+    CandidateReport& report) {
+  tywrf::FieldStorage3D<float> direct_alb(candidate.grid.mass_layout());
+  const auto inputs = tywrf::io::read_krosa_pressure_refresh_inputs(
+      options.template_path,
+      candidate.grid,
+      direct_alb,
+      {.time_index = options.template_time_index});
+  require_pressure_refresh_inputs_ready(inputs);
+
+  const tywrf::dynamics::KrosaBaseStateProviderTerrainOverride terrain_override{
+      .terrain_height_m = output_static.hgt.view(),
+      .source_name = "moved_candidate_HGT",
+      .provenance = "override:moved_candidate_HGT"};
+  tywrf::dynamics::KrosaPressureRefreshHookOptions hook_options{};
+  hook_options.terrain_override = &terrain_override;
+  hook_options.base_state_sync_dry_run = true;
+  auto dry_run_report = tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+      report.remap_plan,
+      candidate,
+      inputs.metadata,
+      hook_options);
+  report.pressure_refresh_dry_run_contract = dry_run_report;
+  report.pressure_refresh_metadata_source = options.template_path;
+  report.pressure_refresh_metadata_time_index = options.template_time_index;
+
+  const bool dry_run_contract_ok =
+      dry_run_report.ok() && dry_run_report.provider_ok &&
+      dry_run_report.base_state_sync_dry_run &&
+      dry_run_report.base_state_sync_contract_ok &&
+      !dry_run_report.base_state_sync_applied &&
+      dry_run_report.would_sync_pb_point_count > 0 &&
+      dry_run_report.would_sync_mub_point_count > 0 &&
+      dry_run_report.would_sync_phb_point_count > 0 &&
+      dry_run_report.sync_overlap_write_count == 0 &&
+      dry_run_report.sync_halo_write_count == 0 &&
+      !dry_run_report.calls_pressure_refresh_compute &&
+      !dry_run_report.pressure_refresh_applied;
+  if (dry_run_contract_ok) {
+    return;
+  }
+
+  std::ostringstream message;
+  message << "pressure_refresh_dry_run_contract_failed";
+  if (dry_run_report.result.message != nullptr &&
+      dry_run_report.result.message[0] != '\0') {
+    message << ": " << dry_run_report.result.message;
+  }
+  message << "; provider_ok=" << (dry_run_report.provider_ok ? "true" : "false")
+          << "; base_state_sync_contract_ok="
+          << (dry_run_report.base_state_sync_contract_ok ? "true" : "false")
+          << "; base_state_sync_dry_run="
+          << (dry_run_report.base_state_sync_dry_run ? "true" : "false")
+          << "; base_state_sync_applied="
+          << (dry_run_report.base_state_sync_applied ? "true" : "false")
+          << "; would_sync_pb_point_count=" << dry_run_report.would_sync_pb_point_count
+          << "; would_sync_mub_point_count=" << dry_run_report.would_sync_mub_point_count
+          << "; would_sync_phb_point_count=" << dry_run_report.would_sync_phb_point_count
+          << "; sync_overlap_write_count=" << dry_run_report.sync_overlap_write_count
+          << "; sync_halo_write_count=" << dry_run_report.sync_halo_write_count
+          << "; pressure_refresh_compute_called="
+          << (dry_run_report.calls_pressure_refresh_compute ? "true" : "false")
+          << "; pressure_refresh_applied="
+          << (dry_run_report.pressure_refresh_applied ? "true" : "false");
+  throw std::runtime_error(message.str());
 }
 
 void require_pressure_refresh_hook_success(
@@ -1297,6 +1414,7 @@ int run(Options options) {
       report);
   if (options.pressure_refresh) {
     probe_pressure_refresh_provider_readiness(options, candidate, output_static, report);
+    probe_pressure_refresh_dry_run_contract(options, candidate, output_static, report);
     require_pressure_refresh_ready_for_compute(report);
     apply_pressure_refresh(options, candidate, report);
   }

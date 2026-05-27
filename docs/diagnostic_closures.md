@@ -434,6 +434,26 @@ Round D44 defines the selected-field pressure-refresh readiness boundary:
   artifact gate evidence. The current `00:10` gate remains failed on `U`, `V`,
   `MU`, `P`, and storm-center distance.
 
+Round D45/D46 keeps hook dry-run reporting outside closure scope:
+
+- D45 hook dry-run reporting may expose would-sync counts for `PB`, `MUB`, and
+  `PHB`, overlap/halo write safety, `base_state_sync_applied=false`, and
+  no pressure-compute status. Those fields describe a no-write/no-compute
+  contract only; they are not closure outputs and must not change candidate
+  state.
+- D46 selected-field `--pressure-refresh` work may report that dry-run contract
+  in the opt-in guard, but the guard must continue to fail closed while
+  `thermodynamic_base_state_consistency_ready=false`. A closure must not create
+  the missing output file or write `P`, `PB`, `PHB`, or `MUB` on behalf of that
+  aborted path.
+- Even a successful dry-run contract is readiness evidence, not a gate pass.
+  Hook diagnostic smoke is also hook evidence only. Neither may be used to
+  claim that the strict `2025-07-26_00:10:00` d02 gate passed.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  as a provider substitute, direct parent interpolation of `P`, and diagnostic
+  artifact gate evidence. The current `00:10` gate remains failed on `U`, `V`,
+  `MU`, `P`, and storm-center distance.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
