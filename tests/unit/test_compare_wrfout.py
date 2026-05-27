@@ -22,6 +22,51 @@ def _write_dataset(path: Path, variables: dict[str, np.ndarray]) -> None:
             variable[:] = data
 
 
+def _write_dataset_with_tc_fields(path: Path) -> None:
+    shape = (3, 4)
+    latitude = np.array(
+        [
+            [10.0, 10.0, 10.0, 10.0],
+            [11.0, 11.0, 11.0, 11.0],
+            [12.0, 12.0, 12.0, 12.0],
+        ],
+        dtype=np.float64,
+    )
+    longitude = np.array(
+        [
+            [120.0, 121.0, 122.0, 123.0],
+            [120.0, 121.0, 122.0, 123.0],
+            [120.0, 121.0, 122.0, 123.0],
+        ],
+        dtype=np.float64,
+    )
+    psfc = np.full(shape, 100000.0)
+    psfc[1, 2] = 95000.0
+    u10 = np.zeros(shape)
+    v10 = np.zeros(shape)
+    u10[0, 1] = 30.0
+    v10[0, 1] = 40.0
+    rainc = np.arange(12, dtype=np.float64).reshape(shape)
+    rainnc = np.full(shape, 0.5)
+
+    with netCDF4.Dataset(path, "w") as dataset:
+        dataset.createDimension("Time", 1)
+        dataset.createDimension("south_north", shape[0])
+        dataset.createDimension("west_east", shape[1])
+        for name, values in {
+            "U": np.ones(shape),
+            "XLAT": latitude,
+            "XLONG": longitude,
+            "PSFC": psfc,
+            "U10": u10,
+            "V10": v10,
+            "RAINC": rainc,
+            "RAINNC": rainnc,
+        }.items():
+            variable = dataset.createVariable(name, "f8", ("Time", "south_north", "west_east"))
+            variable[0, :, :] = values
+
+
 def test_normalized_rmse_identical_arrays() -> None:
     reference = np.array([1.0, 2.0, 3.0])
     rmse, norm, max_abs = normalized_rmse(reference, reference.copy())
@@ -70,6 +115,26 @@ def test_compare_files_reports_metrics_and_pending_tc_diagnostics(tmp_path: Path
     assert report.variables[0].total_count == 3
     assert report.variables[1].threshold is None
     assert report.diagnostics["tc"]["status"] == "pending"
+
+
+def test_compare_files_includes_tc_diagnostics_when_requested(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+    _write_dataset_with_tc_fields(reference)
+    _write_dataset_with_tc_fields(candidate)
+
+    report = compare_files(reference, candidate, variables=("U",), include_tc_diagnostics=True)
+
+    assert report.status == "ok"
+    tc = report.diagnostics["tc"]
+    assert tc.status == "ok"
+    assert tc.reference.center.j == 1
+    assert tc.reference.center.i == 2
+    assert tc.reference.mslp_proxy_hpa == 950.0
+    assert "PSFC-min proxy" in tc.reference.mslp_proxy_label
+    assert tc.candidate.vmax_10m_ms == 50.0
+    assert tc.center_error_km == 0.0
+    assert tc.mslp_proxy_abs_error_hpa == 0.0
 
 
 def test_compare_files_reports_threshold_exceeded(tmp_path: Path) -> None:
@@ -146,3 +211,31 @@ def test_main_writes_json_report(tmp_path: Path) -> None:
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["status"] == "ok"
     assert payload["variables"][0]["variable"] == "U"
+
+
+def test_main_writes_json_report_with_tc_diagnostics_flag(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+    output = tmp_path / "compare-tc.json"
+    _write_dataset_with_tc_fields(reference)
+    _write_dataset_with_tc_fields(candidate)
+
+    exit_code = compare_main(
+        [
+            str(reference),
+            str(candidate),
+            "--variables",
+            "U",
+            "--tc-diagnostics",
+            "--output",
+            str(output),
+            "--pretty",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["diagnostics"]["tc"]["status"] == "ok"
+    assert payload["diagnostics"]["tc"]["reference"]["center"]["latitude"] == 11.0
+    assert payload["diagnostics"]["tc"]["reference"]["mslp_proxy_hpa"] == 950.0
+    assert payload["diagnostics"]["tc"]["reference"]["rainfall"]["maximum_mm"] == 11.5

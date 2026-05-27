@@ -35,6 +35,27 @@ best-track nudging, and direct CUDA kernels.
 Phase 1 intentionally keeps these modules skeletal. Dynamics and physics
 implementation begins only after I/O and data layout are pinned down.
 
+## Nest And Nudging Interfaces
+
+`tywrf::nest` defines the v1 interface baseline for KROSA moving-nest and
+spectral-nudging call points. The interface is intentionally contract-first:
+
+- `ParentChildDescriptor` pins d01/d02 spacing, WRF namelist extents, mass-grid
+  extents, `parent_grid_ratio = 5`, and `parent_time_step_ratio = 5`.
+- `ParentChildPosition` stores the WRF namelist parent-start indices for d02
+  (`i_parent_start = 114`, `j_parent_start = 96`) with an explicit index base.
+- `MovingNestConfig` records the KROSA vortex interval, maximum vortex speed,
+  corral distance, 700 hPa tracking level, and `time_to_move` values for each
+  domain.
+- `SpectralNudgingConfig` records `grid_fdda = 2`, `wrffdda_d<domain>`, the
+  6 h FDDA interval, `guv = 0.0003`, `xwavenum = 2`, `ywavenum = 4`, and the
+  required old/new wrffdda field names for U, V, T, Q, PH, and MU.
+
+Numerical parent-child interpolation and two-way feedback are still explicit
+`not_implemented` stubs. They validate descriptors, position bounds, timing,
+and child-substep contracts before reporting that status, so the dynamics loop
+can wire to stable call contracts without pretending the numerics exist.
+
 ## Phase 4 Dynamics Skeleton
 
 The first dynamics implementation is an orchestration skeleton, not a numerical
@@ -62,3 +83,33 @@ All dynamics tendencies are currently zero/identity placeholders. The event sink
 is callback-based and carries no NetCDF, logging, or state-layout dependency, so
 Agent B's field/state interfaces and later physics/nesting work can attach at
 these call points without changing the tested time sequencing.
+
+## Phase 5 Physics Bridge ABI Baseline
+
+The initial physics bridge is an ABI and staging contract only. It does not
+execute Thompson, RRTMG, YSU, MM5 surface layer, Noah LSM, slab ocean, TC flux,
+or Kain-Fritsch physics.
+
+`bindings/wrf_physics/wrf_physics_bridge.h` defines the C-compatible boundary
+that a future Fortran `ISO_C_BINDING` wrapper must mirror:
+
+- `TywrfPhysicsGridMetadata` carries domain, KROSA grid spacing, time step,
+  active mass dimensions, and full-level count.
+- `TywrfPhysicsSuiteConfig` freezes the current KROSA physics option set:
+  Thompson `8`, RRTMG `4/4`, YSU `1`, MM5 surface layer `1`, Noah `2`, slab
+  ocean `1`, TC flux `2`, and KF cumulus only on d01.
+- `TywrfPhysicsField2D` and `TywrfPhysicsField3D` carry POD field views:
+  pointer, dimensions, strides, halo widths, and element size.
+- `TywrfPhysicsStaging` groups the current required core state fields for a
+  single domain physics call point.
+- `tywrf_wrf_physics_step` is the stable C entry point. The current
+  implementation validates staging and returns `stub_validated` for a valid
+  no-op call with `executed_physics = 0`.
+
+The C++ side in `include/tywrf/physics_bridge/staging.hpp` builds staging views
+from `Grid` and mutable `StateView` without copying field data. Validation is
+strict about the canonical field layout: `i` contiguous, `stride_k = nx`,
+`stride_j = nx * nz` for 3D fields, and `stride_j = nx` for 2D fields. Required
+field shapes follow the existing state layout: U/V staggered horizontally,
+W/PH/PHB on full eta levels, mass fields on mass levels, and near-surface fields
+on the mass horizontal grid.

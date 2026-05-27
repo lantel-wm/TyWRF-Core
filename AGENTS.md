@@ -41,6 +41,9 @@ Responsibilities:
   subagent intermediate work before main-agent review and unified validation.
 - Prefer small, coherent commits that match completed phases or reviewed
   integration slices.
+- After each successful commit, push the committed branch to `origin`.
+- If `origin` is missing or push fails, record the push blocker in
+  `PROGRESS.md` and report it to the user immediately.
 
 If subagents are unavailable, execute the same workstreams sequentially.
 

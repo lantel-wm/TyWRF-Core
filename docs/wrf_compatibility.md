@@ -13,6 +13,34 @@ writes a reduced, WRF-compatible core `wrfout` set.
 The v1 integrator reuses WPS and `real.exe`; it does not reimplement WRF
 pre-processing.
 
+## KROSA Nesting And FDDA Constants
+
+The v1 nesting interface is fixed to the current KROSA namelist subset:
+
+- d01/d02 horizontal spacing: `10000 m` / `2000 m`;
+- WRF namelist extents: d01 `e_we/e_sn = 266/430`, d02 `211/211`;
+- NetCDF mass-grid extents: d01 `265 x 429`, d02 `210 x 210`;
+- d02 parent start: `i_parent_start = 114`, `j_parent_start = 96`;
+- `parent_grid_ratio = 5`, `parent_time_step_ratio = 5`;
+- moving nest settings: `vortex_interval = 15,15`,
+  `max_vortex_speed = 30,30`, `corral_dist = 10,30`,
+  `track_level = 70000 Pa`, `time_to_move = 0,0`.
+
+Spectral nudging is fixed to the KROSA `wrffdda_d01` contract:
+
+- `grid_fdda = 2`;
+- `gfdda_inname = "wrffdda_d<domain>"`;
+- `gfdda_interval_m = 360`;
+- `guv = 0.0003`;
+- `xwavenum = 2`, `ywavenum = 4`;
+- old/new fields: `U_NDG_OLD/U_NDG_NEW`, `V_NDG_OLD/V_NDG_NEW`,
+  `T_NDG_OLD/T_NDG_NEW`, `Q_NDG_OLD/Q_NDG_NEW`, `PH_NDG_OLD/PH_NDG_NEW`,
+  and `MU_NDG_OLD/MU_NDG_NEW`.
+
+The current C++ nest module validates these constants and exchange contracts
+only. Parent-child interpolation and two-way feedback return explicit
+`not_implemented` statuses until the numerical kernels are added.
+
 ## Minimum Output Variables
 
 - Coordinates/static/time: `Times`, `XLAT`, `XLONG`, `HGT`
@@ -62,6 +90,22 @@ Sampled on 2026-05-27 from:
 ## Phase 2 Baseline Interfaces
 
 - C++ NetCDF schema reading lives in `tywrf::io::read_netcdf_schema`.
+- C++ state-layout loading lives in `tywrf::io::load_wrf_state`.
+- `tywrf::io::derive_grid_from_wrf_file` derives `Grid` from WRF mass and
+  staggered dimensions:
+  - `west_east`, `south_north`, `bottom_top`
+  - `west_east_stag = west_east + 1`
+  - `south_north_stag = south_north + 1`
+  - `bottom_top_stag = bottom_top + 1`
+- The loader reads WRF `Time,k,j,i` variables into the canonical TyWRF layout
+  `((j*nz)+k)*nx+i`, offset into the field's active region when halos are
+  present. The current tested baseline covers representative WRF-shaped fields
+  `U`, `T`, and `MU`; the API has dispatch entries for the remaining v1 core
+  state fields and reports missing/type/shape errors through
+  `tywrf::io::WrfStateIoError`.
+- `tywrf::io::write_wrf_state` is intentionally a contract stub for now. It
+  fails with a clear not-implemented error instead of producing partial or
+  silent output.
 - Current KROSA input validation is exposed through:
   - `validate_wrfinput_d01_schema`
   - `validate_wrfbdy_d01_schema`

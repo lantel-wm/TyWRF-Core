@@ -20,8 +20,11 @@ forecast to remain field-close.
 ## Typhoon Diagnostics
 
 - d02 storm center error <= `20 km`
-- MSLP error <= `5 hPa`
+- PSFC-min proxy MSLP error <= `5 hPa`
 - Vmax error <= `5 m s-1`
+
+The first TC diagnostics baseline intentionally uses the minimum `PSFC` value
+as a proxy for MSLP. It is not the exact WRF sea-level pressure diagnostic.
 
 ## Python Validation Tools
 
@@ -43,6 +46,15 @@ Default normalized RMSE thresholds follow the field thresholds above. Use
 `--no-thresholds` to report metrics without threshold failures, or repeat
 `--threshold VARIABLE=VALUE` to override individual thresholds.
 
+Use `--tc-diagnostics` to add an opt-in TC diagnostics block while preserving
+the default RMSE-only comparison behavior. The TC block reports the minimum
+`PSFC` center with `XLAT`/`XLONG`, `mslp_proxy_hpa` labeled as a PSFC-min proxy,
+10 m wind maximum from `sqrt(U10^2 + V10^2)`, accumulated rainfall summaries
+from `RAINC + RAINNC`, and reference-candidate errors for center distance,
+pressure proxy, Vmax, and rainfall summary metrics. Use
+`--diagnostic-time-index` when a file has multiple time records; the default is
+the last record.
+
 `tools/run_6h_cycle_test.py --dry-run` resolves the expected
 `wrfout_d01_YYYY-MM-DD_HH:MM:SS` and `wrfout_d02_YYYY-MM-DD_HH:MM:SS` files for
 the cycle start and end times without invoking the integrator. The dry-run plan
@@ -60,5 +72,5 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_
   --pretty
 ```
 
-TC diagnostics remain explicitly pending in JSON reports until a tested center,
-MSLP, Vmax, and rainfall diagnostic hook is added.
+TC diagnostics remain explicitly pending in JSON reports unless
+`--tc-diagnostics` is requested.

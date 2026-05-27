@@ -14,6 +14,11 @@ from typing import Iterable
 import netCDF4
 import numpy as np
 
+try:
+    from tools.tc_diagnostics import compare_tc_diagnostics
+except ModuleNotFoundError:
+    from tc_diagnostics import compare_tc_diagnostics
+
 
 STRICT_CORE_VARIABLES = (
     "U",
@@ -85,7 +90,7 @@ class ComparisonReport:
     status: str
     summary: dict[str, int]
     variables: list[VariableComparison]
-    diagnostics: dict[str, dict[str, str]]
+    diagnostics: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -236,6 +241,9 @@ def compare_files(
     candidate_path: Path,
     variables: Iterable[str] = DEFAULT_VARIABLES,
     thresholds: dict[str, float] | None = DEFAULT_THRESHOLDS,
+    *,
+    include_tc_diagnostics: bool = False,
+    diagnostic_time_index: int = -1,
 ) -> ComparisonReport:
     with netCDF4.Dataset(reference_path) as reference, netCDF4.Dataset(candidate_path) as candidate:
         comparisons = [
@@ -248,18 +256,25 @@ def compare_files(
     summary["total"] = len(comparisons)
     summary["failed"] = sum(1 for comparison in comparisons if comparison.status != "ok")
     status = "ok" if summary["failed"] == 0 else "failed"
+    tc_diagnostics = (
+        compare_tc_diagnostics(
+            reference_path,
+            candidate_path,
+            time_index=diagnostic_time_index,
+        )
+        if include_tc_diagnostics
+        else {
+            "status": "pending",
+            "message": "Run with --tc-diagnostics to report TC center, PSFC-min proxy MSLP, Vmax, and rainfall diagnostics.",
+        }
+    )
     return ComparisonReport(
         reference=str(reference_path),
         candidate=str(candidate_path),
         status=status,
         summary=summary,
         variables=comparisons,
-        diagnostics={
-            "tc": {
-                "status": "pending",
-                "message": "TC center, MSLP, Vmax, and rainfall diagnostics are not implemented yet.",
-            }
-        },
+        diagnostics={"tc": tc_diagnostics},
     )
 
 
@@ -318,6 +333,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Report metrics without failing variables that exceed default thresholds",
     )
+    parser.add_argument(
+        "--tc-diagnostics",
+        action="store_true",
+        help="Include TC center, PSFC-min proxy MSLP, Vmax, and rainfall diagnostics",
+    )
+    parser.add_argument(
+        "--diagnostic-time-index",
+        type=int,
+        default=-1,
+        help="Time index used for optional TC diagnostics; defaults to the last record",
+    )
     parser.add_argument("--output", type=Path, help="Write the JSON report to this path")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
     return parser
@@ -331,7 +357,14 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
 
-    report = compare_files(args.reference, args.candidate, args.variables, thresholds=thresholds)
+    report = compare_files(
+        args.reference,
+        args.candidate,
+        args.variables,
+        thresholds=thresholds,
+        include_tc_diagnostics=args.tc_diagnostics,
+        diagnostic_time_index=args.diagnostic_time_index,
+    )
     report_json = report_to_json(report, pretty=args.pretty)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
