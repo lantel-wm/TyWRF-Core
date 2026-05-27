@@ -11,6 +11,18 @@ CORE_VARIABLES = ("U", "V", "T", "PH", "MU", "P", "QVAPOR")
 START = "2025-07-26_00:00:00"
 END = "2025-07-26_06:00:00"
 END_FILE = "wrfout_d02_2025-07-26_06:00:00"
+PRODUCTION_CANDIDATE_ATTRS = {
+    "TYWRF_GATE_CANDIDATE": "true",
+    "TYWRF_INTEGRATOR_OUTPUT": "true",
+    "TYWRF_VALIDATION_GATE_ONLY": "false",
+    "TYWRF_CANDIDATE_KIND": "integrator_candidate",
+}
+
+
+def _production_attrs(overrides: dict[str, object] | None = None) -> dict[str, object]:
+    attrs = dict(PRODUCTION_CANDIDATE_ATTRS)
+    attrs.update(overrides or {})
+    return attrs
 
 
 def _tc_fields(*, center_shift: bool = False, slp_offset_hpa: float = 0.0, vmax_offset: float = 0.0):
@@ -64,8 +76,10 @@ def _write_wrfout(
 def _write_pair(tmp_path: Path, **candidate_kwargs) -> tuple[Path, Path]:
     reference_dir = tmp_path / "reference"
     candidate_dir = tmp_path / "candidate"
+    candidate_kwargs = dict(candidate_kwargs)
+    candidate_attrs = _production_attrs(candidate_kwargs.pop("attrs", None))
     _write_wrfout(reference_dir / END_FILE)
-    _write_wrfout(candidate_dir / END_FILE, **candidate_kwargs)
+    _write_wrfout(candidate_dir / END_FILE, attrs=candidate_attrs, **candidate_kwargs)
     return reference_dir, candidate_dir
 
 
@@ -110,6 +124,7 @@ def test_cycle_gate_reports_first_failure_for_10_min_progressive_run(tmp_path: P
         _write_wrfout(reference_dir / f"wrfout_d02_{end_time}")
         _write_wrfout(
             candidate_dir / f"wrfout_d02_{end_time}",
+            attrs=_production_attrs(),
             field_offset=1.0 if end_time == "2025-07-26_00:20:00" else 0.0,
         )
 
@@ -195,6 +210,59 @@ def test_cycle_gate_rejects_explicit_non_integrator_candidate_by_default(tmp_pat
     assert "TYWRF_INTEGRATOR_OUTPUT=false" in (metadata.message or "")
 
 
+def test_cycle_gate_rejects_remap_candidate_kind(tmp_path: Path) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={"TYWRF_CANDIDATE_KIND": "parent_remap_candidate"},
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert "TYWRF_CANDIDATE_KIND=parent_remap_candidate" in (metadata.message or "")
+
+
+def test_cycle_gate_rejects_oracle_candidate_kind(tmp_path: Path) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={"TYWRF_CANDIDATE_KIND": "reference_delta_oracle_candidate"},
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert "TYWRF_CANDIDATE_KIND=reference_delta_oracle_candidate" in (
+        metadata.message or ""
+    )
+
+
+def test_cycle_gate_rejects_missing_positive_candidate_metadata_in_strict_path(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(candidate_dir / END_FILE)
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert "TYWRF_GATE_CANDIDATE is not true" in (metadata.message or "")
+    assert "TYWRF_INTEGRATOR_OUTPUT is not true" in (metadata.message or "")
+
+
 def test_cycle_gate_allows_reference_copy_only_when_explicitly_requested(tmp_path: Path) -> None:
     attrs = {
         "TYWRF_CANDIDATE_KIND": "baseline_candidate",
@@ -202,7 +270,10 @@ def test_cycle_gate_allows_reference_copy_only_when_explicitly_requested(tmp_pat
         "TYWRF_INTEGRATOR_OUTPUT": "false",
         "TYWRF_VALIDATION_GATE_ONLY": "true",
     }
-    reference_dir, candidate_dir = _write_pair(tmp_path, attrs=attrs)
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(candidate_dir / END_FILE, attrs=attrs)
 
     default_report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
     allowed_report = evaluate_cycles(
@@ -223,6 +294,28 @@ def test_cycle_gate_allows_reference_copy_only_when_explicitly_requested(tmp_pat
     assert "TYWRF_VALIDATION_GATE_ONLY=true" in (default_metadata.message or "")
     assert allowed_report.status == "passed"
     assert allowed_metadata.status == "passed"
+
+
+def test_cycle_gate_legacy_flag_does_not_allow_unmarked_candidate(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(candidate_dir / END_FILE)
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END,
+        allow_validation_gate_only=True,
+    )
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert "TYWRF_GATE_CANDIDATE is not true" in (metadata.message or "")
 
 
 def test_cycle_gate_marks_missing_candidate_file_not_available(tmp_path: Path) -> None:

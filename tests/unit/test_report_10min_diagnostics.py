@@ -166,7 +166,11 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
             "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS": (
                 "diagnostic_only_nonphysical_non_gate"
             ),
+            "TYWRF_DIAGNOSTIC_ONLY": "true",
             "TYWRF_GATE_CANDIDATE": "false",
+            "TYWRF_INTEGRATOR_OUTPUT": "false",
+            "TYWRF_VALIDATION_GATE_ONLY": "false",
+            "TYWRF_CANDIDATE_KIND": "pressure_refresh_remap_diagnostic",
         },
     )
 
@@ -192,6 +196,20 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
     assert payload["candidate_metadata"]["status"] == "available"
     assert payload["candidate_metadata"]["path"] == str(candidate_file)
     assert payload["candidate_metadata"]["gate_candidate"] is False
+    assert payload["candidate_metadata"]["candidate_diagnostic_only"] is True
+    assert payload["candidate_metadata"]["integrator_output"] is False
+    assert payload["candidate_metadata"]["validation_gate_only"] is False
+    assert (
+        payload["candidate_metadata"]["candidate_kind"]
+        == "pressure_refresh_remap_diagnostic"
+    )
+    assert payload["candidate_metadata"]["candidate_gate_eligible"] is False
+    assert payload["candidate_metadata"]["candidate_gate_blockers"] == [
+        "TYWRF_DIAGNOSTIC_ONLY=true",
+        "TYWRF_GATE_CANDIDATE=false",
+        "TYWRF_INTEGRATOR_OUTPUT=false",
+        "TYWRF_CANDIDATE_KIND=pressure_refresh_remap_diagnostic",
+    ]
     assert payload["candidate_metadata"]["candidate_model_pass"] == "not_applicable"
     assert (
         payload["candidate_metadata"]["attrs"]["TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL"]
@@ -238,6 +256,23 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
     )
     assert payload["parent_fill_metadata"]["pressure_refresh_required"] is True
     assert payload["parent_fill_metadata"]["pressure_refresh_applied"] is True
+    assert payload["parent_fill_metadata"]["candidate_gate_eligible"] is False
+    assert payload["parent_fill_metadata"]["candidate_gate_blockers"] == [
+        "TYWRF_DIAGNOSTIC_ONLY=true",
+        "TYWRF_GATE_CANDIDATE=false",
+        "TYWRF_INTEGRATOR_OUTPUT=false",
+        "TYWRF_CANDIDATE_KIND=pressure_refresh_remap_diagnostic",
+    ]
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_disposition"]["status"]
+        == "diagnostic_helper_evidence_only"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_disposition"][
+            "candidate_model_pass"
+        ]
+        == "not_applicable"
+    )
     assert (
         payload["parent_fill_metadata"]["pressure_refresh_requirement_status"]
         == "required_after_parent_fill"
@@ -304,6 +339,17 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
     assert payload["summary"]["candidate_file"] == str(candidate_file)
     assert payload["summary"]["candidate_metadata_status"] == "available"
     assert payload["summary"]["candidate_gate_candidate"] is False
+    assert payload["summary"]["candidate_gate_eligible"] is False
+    assert payload["summary"]["candidate_gate_blockers"] == [
+        "TYWRF_DIAGNOSTIC_ONLY=true",
+        "TYWRF_GATE_CANDIDATE=false",
+        "TYWRF_INTEGRATOR_OUTPUT=false",
+        "TYWRF_CANDIDATE_KIND=pressure_refresh_remap_diagnostic",
+    ]
+    assert payload["summary"]["candidate_diagnostic_only"] is True
+    assert payload["summary"]["candidate_integrator_output"] is False
+    assert payload["summary"]["candidate_validation_gate_only"] is False
+    assert payload["summary"]["candidate_kind"] == "pressure_refresh_remap_diagnostic"
     assert payload["summary"]["parent_fill_metadata_status"] == "available"
     assert payload["summary"]["diagnostic_remap_parent_fill"] is True
     assert payload["summary"]["minimum_static_refresh_fields"] == [
@@ -337,12 +383,135 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
     assert payload["summary"]["pressure_refresh_refreshed_p_points"] == 45
     assert payload["summary"]["pressure_refresh_metadata_source"] == "candidate_attrs"
     assert payload["summary"]["pressure_refresh_metadata_time_index"] == 0
+    assert (
+        payload["summary"]["pressure_refresh_disposition"]["status"]
+        == "diagnostic_helper_evidence_only"
+    )
+    assert (
+        payload["summary"]["pressure_refresh_disposition"]["pressure_refresh_applied"]
+        is True
+    )
+    assert (
+        payload["summary"]["pressure_refresh_disposition"]["candidate_gate_eligible"]
+        is False
+    )
+    assert (
+        payload["summary"]["pressure_refresh_disposition"]["candidate_model_pass"]
+        == "not_applicable"
+    )
     assert isinstance(payload["summary"]["pressure_refresh_compute_called"], bool)
     assert isinstance(payload["summary"]["pressure_refresh_refreshed_p_points"], int)
     assert isinstance(payload["summary"]["pressure_refresh_alb_source"], str)
     assert payload["summary"]["diagnostic_only"] is True
     assert payload["summary"]["candidate_model_pass"] == "not_applicable"
     assert payload["disposition"]["creates_model_candidate"] is False
+    assert payload["disposition"]["candidate_gate_eligible"] is False
+    assert (
+        payload["disposition"]["pressure_refresh_disposition"]["status"]
+        == "diagnostic_helper_evidence_only"
+    )
+
+
+def test_report_surfaces_candidate_gate_eligible_metadata(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_file = tmp_path / "candidate" / f"wrfout_d02_{END}_candidate"
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{START}",
+        i_parent_start=10,
+        j_parent_start=20,
+        u_value=9.0,
+    )
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{END}",
+        i_parent_start=12,
+        j_parent_start=21,
+        u_value=10.0,
+    )
+    _write_wrfout(
+        candidate_file,
+        i_parent_start=12,
+        j_parent_start=21,
+        attrs={
+            "TYWRF_DIAGNOSTIC_ONLY": "false",
+            "TYWRF_GATE_CANDIDATE": "true",
+            "TYWRF_INTEGRATOR_OUTPUT": "true",
+            "TYWRF_VALIDATION_GATE_ONLY": "false",
+            "TYWRF_CANDIDATE_KIND": "integrator_candidate",
+            "TYWRF_PRESSURE_REFRESH_APPLIED": "false",
+        },
+    )
+
+    payload = json.loads(
+        report_to_json(
+            report_10min_diagnostics(
+                reference_dir,
+                domain="d02",
+                start=START,
+                end=END,
+                variables=("U",),
+                thresholds={"U": 0.05},
+                candidate_file=candidate_file,
+            )
+        )
+    )
+
+    assert payload["candidate_model_pass"] == "not_applicable"
+    assert payload["candidate_metadata"]["candidate_gate_eligible"] is True
+    assert payload["candidate_metadata"]["candidate_gate_blockers"] == []
+    assert payload["candidate_metadata"]["candidate_diagnostic_only"] is False
+    assert payload["candidate_metadata"]["gate_candidate"] is True
+    assert payload["candidate_metadata"]["integrator_output"] is True
+    assert payload["candidate_metadata"]["validation_gate_only"] is False
+    assert payload["candidate_metadata"]["candidate_kind"] == "integrator_candidate"
+    assert payload["summary"]["candidate_gate_eligible"] is True
+    assert payload["summary"]["candidate_gate_blockers"] == []
+    assert payload["summary"]["candidate_model_pass"] == "not_applicable"
+    assert payload["disposition"]["candidate_gate_eligible"] is True
+    assert (
+        payload["summary"]["pressure_refresh_disposition"]["status"] == "not_applied"
+    )
+
+
+def test_report_marks_missing_positive_candidate_metadata_ineligible(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_file = tmp_path / "candidate" / f"wrfout_d02_{END}_candidate"
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{START}",
+        i_parent_start=10,
+        j_parent_start=20,
+    )
+    _write_wrfout(
+        reference_dir / f"wrfout_d02_{END}",
+        i_parent_start=10,
+        j_parent_start=20,
+    )
+    _write_wrfout(candidate_file, i_parent_start=10, j_parent_start=20)
+
+    payload = json.loads(
+        report_to_json(
+            report_10min_diagnostics(
+                reference_dir,
+                domain="d02",
+                start=START,
+                end=END,
+                variables=("U",),
+                thresholds={"U": 0.05},
+                candidate_file=candidate_file,
+            )
+        )
+    )
+
+    assert payload["candidate_metadata"]["candidate_gate_eligible"] is False
+    assert payload["candidate_metadata"]["candidate_gate_blockers"] == [
+        "TYWRF_GATE_CANDIDATE is not true",
+        "TYWRF_INTEGRATOR_OUTPUT is not true",
+    ]
+    assert payload["summary"]["candidate_gate_eligible"] is False
+    assert payload["summary"]["candidate_model_pass"] == "not_applicable"
 
 
 def test_resolve_report_files_uses_reference_dir_naming(tmp_path: Path) -> None:

@@ -274,19 +274,24 @@ def _candidate_metadata_gate(
         )
 
     disqualifiers: list[str] = []
+    validation_gate_only_allowed = (
+        validation_gate_only is True and allow_validation_gate_only
+    )
     if diagnostic_only is True:
         disqualifiers.append("TYWRF_DIAGNOSTIC_ONLY=true")
     if gate_candidate is False:
         disqualifiers.append("TYWRF_GATE_CANDIDATE=false")
+    elif gate_candidate is not True and not validation_gate_only_allowed:
+        disqualifiers.append("TYWRF_GATE_CANDIDATE is not true")
     if validation_gate_only is True and not allow_validation_gate_only:
         disqualifiers.append("TYWRF_VALIDATION_GATE_ONLY=true")
-    if integrator_output is False and not (
-        validation_gate_only is True and allow_validation_gate_only
-    ):
+    if integrator_output is False and not validation_gate_only_allowed:
         disqualifiers.append("TYWRF_INTEGRATOR_OUTPUT=false")
+    elif integrator_output is not True and not validation_gate_only_allowed:
+        disqualifiers.append("TYWRF_INTEGRATOR_OUTPUT is not true")
 
     kind = candidate_kind.lower() if candidate_kind else ""
-    if kind and any(token in kind for token in ("diagnostic", "closure", "remap")):
+    if kind and any(token in kind for token in ("diagnostic", "closure", "remap", "oracle")):
         disqualifiers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
 
     if disqualifiers:

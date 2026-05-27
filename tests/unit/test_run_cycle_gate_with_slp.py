@@ -18,6 +18,18 @@ END_0010 = "2025-07-26_00:10:00"
 END_FILE = "wrfout_d02_2025-07-26_06:00:00"
 END_FILE2 = "wrfout_d02_2025-07-26_12:00:00"
 END_0010_FILE = "wrfout_d02_2025-07-26_00:10:00"
+PRODUCTION_CANDIDATE_ATTRS = {
+    "TYWRF_GATE_CANDIDATE": "true",
+    "TYWRF_INTEGRATOR_OUTPUT": "true",
+    "TYWRF_VALIDATION_GATE_ONLY": "false",
+    "TYWRF_CANDIDATE_KIND": "integrator_candidate",
+}
+
+
+def _production_attrs(overrides: dict[str, object] | None = None) -> dict[str, object]:
+    attrs = dict(PRODUCTION_CANDIDATE_ATTRS)
+    attrs.update(overrides or {})
+    return attrs
 
 
 def _tc_fields(shape: tuple[int, int]) -> dict[str, np.ndarray]:
@@ -84,11 +96,20 @@ def _write_wrfout(
             variable[:] = values
 
 
-def _write_pair(tmp_path: Path, *, omit_candidate: set[str] | None = None) -> tuple[Path, Path]:
+def _write_pair(
+    tmp_path: Path,
+    *,
+    omit_candidate: set[str] | None = None,
+    candidate_attrs: dict[str, object] | None = None,
+) -> tuple[Path, Path]:
     reference_dir = tmp_path / "reference"
     candidate_dir = tmp_path / "candidate"
     _write_wrfout(reference_dir / END_FILE)
-    _write_wrfout(candidate_dir / END_FILE, omit=omit_candidate)
+    _write_wrfout(
+        candidate_dir / END_FILE,
+        omit=omit_candidate,
+        attrs=_production_attrs(candidate_attrs),
+    )
     return reference_dir, candidate_dir
 
 
@@ -123,7 +144,7 @@ def test_run_cycle_gate_with_slp_derives_then_passes_gate(tmp_path: Path) -> Non
 def test_run_cycle_gate_with_slp_supports_multiple_cycle_endpoints(tmp_path: Path) -> None:
     reference_dir, candidate_dir = _write_pair(tmp_path)
     _write_wrfout(reference_dir / END_FILE2)
-    _write_wrfout(candidate_dir / END_FILE2)
+    _write_wrfout(candidate_dir / END_FILE2, attrs=_production_attrs())
 
     report = run_cycle_gate_with_slp(
         reference_dir,
@@ -144,7 +165,10 @@ def test_run_cycle_gate_with_slp_supports_10_min_interval(tmp_path: Path) -> Non
     candidate_dir = tmp_path / "candidate"
     for end_time in ("2025-07-26_00:10:00", "2025-07-26_00:20:00"):
         _write_wrfout(reference_dir / f"wrfout_d02_{end_time}")
-        _write_wrfout(candidate_dir / f"wrfout_d02_{end_time}")
+        _write_wrfout(
+            candidate_dir / f"wrfout_d02_{end_time}",
+            attrs=_production_attrs(),
+        )
 
     report = run_cycle_gate_with_slp(
         reference_dir,
@@ -166,7 +190,7 @@ def test_run_cycle_gate_with_slp_derives_single_0010_endpoint(tmp_path: Path) ->
     reference_dir = tmp_path / "reference"
     candidate_dir = tmp_path / "candidate"
     _write_wrfout(reference_dir / END_0010_FILE)
-    _write_wrfout(candidate_dir / END_0010_FILE)
+    _write_wrfout(candidate_dir / END_0010_FILE, attrs=_production_attrs())
     for path in (reference_dir / END_0010_FILE, candidate_dir / END_0010_FILE):
         with netCDF4.Dataset(path, "a") as dataset:
             dataset.variables["PH"][:, 0, :, :] = 100.0 * 9.80665
@@ -228,14 +252,71 @@ def test_run_cycle_gate_with_slp_preserves_metadata_rejection_after_derivation(
     assert "TYWRF_GATE_CANDIDATE=false" in metadata["message"]
 
 
+def test_run_cycle_gate_with_slp_rejects_missing_positive_metadata_after_derivation(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(candidate_dir / END_FILE)
+
+    report = run_cycle_gate_with_slp(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END,
+        derived_dir=tmp_path / "derived",
+    )
+    payload = report_to_dict(report)
+    metadata = {
+        item["name"]: item for item in payload["gate_report"]["cycles"][0]["diagnostics"]
+    }["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert metadata["status"] == "failed"
+    assert "TYWRF_GATE_CANDIDATE is not true" in metadata["message"]
+    assert "TYWRF_INTEGRATOR_OUTPUT is not true" in metadata["message"]
+
+
+def test_run_cycle_gate_with_slp_rejects_remap_candidate_kind_after_derivation(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        candidate_attrs={"TYWRF_CANDIDATE_KIND": "slp_remap_candidate"},
+    )
+
+    report = run_cycle_gate_with_slp(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END,
+        derived_dir=tmp_path / "derived",
+    )
+    payload = report_to_dict(report)
+    metadata = {
+        item["name"]: item for item in payload["gate_report"]["cycles"][0]["diagnostics"]
+    }["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert metadata["status"] == "failed"
+    assert "TYWRF_CANDIDATE_KIND=slp_remap_candidate" in metadata["message"]
+
+
 def test_run_cycle_gate_with_slp_preserves_validation_gate_only_metadata(
     tmp_path: Path,
 ) -> None:
-    reference_dir, candidate_dir = _write_pair(tmp_path)
-    with netCDF4.Dataset(candidate_dir / END_FILE, "a") as dataset:
-        dataset.setncattr("TYWRF_VALIDATION_GATE_ONLY", "true")
-        dataset.setncattr("TYWRF_INTEGRATOR_OUTPUT", "false")
-        dataset.setncattr("TYWRF_CANDIDATE_KIND", "baseline_candidate")
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(
+        candidate_dir / END_FILE,
+        attrs={
+            "TYWRF_VALIDATION_GATE_ONLY": "true",
+            "TYWRF_INTEGRATOR_OUTPUT": "false",
+            "TYWRF_CANDIDATE_KIND": "baseline_candidate",
+        },
+    )
 
     strict_report = run_cycle_gate_with_slp(
         reference_dir,

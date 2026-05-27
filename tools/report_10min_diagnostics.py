@@ -78,10 +78,15 @@ PARENT_FILL_METADATA_ATTRS = (
     "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE",
     "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX",
     "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS",
+    "TYWRF_DIAGNOSTIC_ONLY",
     "TYWRF_GATE_CANDIDATE",
+    "TYWRF_INTEGRATOR_OUTPUT",
+    "TYWRF_VALIDATION_GATE_ONLY",
+    "TYWRF_CANDIDATE_KIND",
 )
 BOOL_TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
 BOOL_FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
+BLOCKING_CANDIDATE_KIND_TOKENS = ("diagnostic", "remap", "oracle", "closure")
 
 
 @dataclass(frozen=True)
@@ -216,6 +221,15 @@ def report_10min_diagnostics(
             "mode": "diagnostic-only",
             "creates_model_candidate": False,
             "candidate_model_pass": "not_applicable",
+            "candidate_gate_eligible": candidate_metadata.get(
+                "candidate_gate_eligible"
+            ),
+            "candidate_gate_blockers": candidate_metadata.get(
+                "candidate_gate_blockers"
+            ),
+            "pressure_refresh_disposition": parent_fill_metadata.get(
+                "pressure_refresh_disposition"
+            ),
             "message": DIAGNOSTIC_ONLY_MESSAGE,
         },
         reference_dir=str(reference_dir),
@@ -267,6 +281,16 @@ def _combined_summary(
         "candidate_file": candidate_metadata.get("path"),
         "candidate_metadata_status": candidate_metadata.get("status"),
         "candidate_gate_candidate": candidate_metadata.get("gate_candidate"),
+        "candidate_gate_eligible": candidate_metadata.get("candidate_gate_eligible"),
+        "candidate_gate_blockers": candidate_metadata.get("candidate_gate_blockers"),
+        "candidate_diagnostic_only": candidate_metadata.get(
+            "candidate_diagnostic_only"
+        ),
+        "candidate_integrator_output": candidate_metadata.get("integrator_output"),
+        "candidate_validation_gate_only": candidate_metadata.get(
+            "validation_gate_only"
+        ),
+        "candidate_kind": candidate_metadata.get("candidate_kind"),
         "parent_fill_metadata_status": parent_fill_metadata.get("status"),
         "diagnostic_remap_parent_fill": parent_fill_metadata.get(
             "diagnostic_remap_parent_fill"
@@ -343,6 +367,9 @@ def _combined_summary(
         "pressure_refresh_metadata_time_index": parent_fill_metadata.get(
             "pressure_refresh_metadata_time_index"
         ),
+        "pressure_refresh_disposition": parent_fill_metadata.get(
+            "pressure_refresh_disposition"
+        ),
         "direct_wrf_end_state_oracle_status": parent_fill_metadata.get(
             "direct_wrf_end_state_oracle_status"
         ),
@@ -366,6 +393,12 @@ def _read_candidate_metadata(candidate_file: Path | None) -> dict[str, Any]:
             "present_attrs": [],
             "missing_attrs": [],
             "gate_candidate": None,
+            "candidate_diagnostic_only": None,
+            "integrator_output": None,
+            "validation_gate_only": None,
+            "candidate_kind": None,
+            "candidate_gate_eligible": False,
+            "candidate_gate_blockers": ["candidate_file_not_provided"],
             "message": "no candidate file supplied",
         }
     if not candidate_file.exists():
@@ -376,6 +409,12 @@ def _read_candidate_metadata(candidate_file: Path | None) -> dict[str, Any]:
             "present_attrs": [],
             "missing_attrs": list(PARENT_FILL_METADATA_ATTRS),
             "gate_candidate": None,
+            "candidate_diagnostic_only": None,
+            "integrator_output": None,
+            "validation_gate_only": None,
+            "candidate_kind": None,
+            "candidate_gate_eligible": False,
+            "candidate_gate_blockers": ["candidate_file_not_available"],
             "message": f"candidate file does not exist: {candidate_file}",
         }
 
@@ -395,10 +434,16 @@ def _read_candidate_metadata(candidate_file: Path | None) -> dict[str, Any]:
             "present_attrs": [],
             "missing_attrs": list(PARENT_FILL_METADATA_ATTRS),
             "gate_candidate": None,
+            "candidate_diagnostic_only": None,
+            "integrator_output": None,
+            "validation_gate_only": None,
+            "candidate_kind": None,
+            "candidate_gate_eligible": False,
+            "candidate_gate_blockers": ["candidate_metadata_unreadable"],
             "message": f"candidate metadata check failed: {exc}",
         }
 
-    return {
+    result = {
         **base,
         "status": "available",
         "attrs": attrs,
@@ -407,10 +452,54 @@ def _read_candidate_metadata(candidate_file: Path | None) -> dict[str, Any]:
             name for name in PARENT_FILL_METADATA_ATTRS if name not in attrs
         ],
         "gate_candidate": _coerce_bool(attrs.get("TYWRF_GATE_CANDIDATE")),
+        "candidate_diagnostic_only": _coerce_bool(
+            attrs.get("TYWRF_DIAGNOSTIC_ONLY")
+        ),
+        "integrator_output": _coerce_bool(attrs.get("TYWRF_INTEGRATOR_OUTPUT")),
+        "validation_gate_only": _coerce_bool(
+            attrs.get("TYWRF_VALIDATION_GATE_ONLY")
+        ),
+        "candidate_kind": attrs.get("TYWRF_CANDIDATE_KIND"),
         "message": (
             "candidate metadata surfaced for diagnostic context only; "
             "no model pass is created"
         ),
+    }
+    return {**result, **_candidate_gate_assessment(result)}
+
+
+def _candidate_gate_assessment(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
+    status = candidate_metadata.get("status")
+    if status == "not_provided":
+        blockers = ["candidate_file_not_provided"]
+    elif status == "not_available":
+        blockers = ["candidate_file_not_available"]
+    elif status != "available":
+        blockers = [f"candidate_metadata_status={status}"]
+    else:
+        blockers = []
+
+    if candidate_metadata.get("candidate_diagnostic_only") is True:
+        blockers.append("TYWRF_DIAGNOSTIC_ONLY=true")
+    if candidate_metadata.get("gate_candidate") is False:
+        blockers.append("TYWRF_GATE_CANDIDATE=false")
+    elif candidate_metadata.get("gate_candidate") is not True:
+        blockers.append("TYWRF_GATE_CANDIDATE is not true")
+    if candidate_metadata.get("integrator_output") is False:
+        blockers.append("TYWRF_INTEGRATOR_OUTPUT=false")
+    elif candidate_metadata.get("integrator_output") is not True:
+        blockers.append("TYWRF_INTEGRATOR_OUTPUT is not true")
+    if candidate_metadata.get("validation_gate_only") is True:
+        blockers.append("TYWRF_VALIDATION_GATE_ONLY=true")
+
+    candidate_kind = candidate_metadata.get("candidate_kind")
+    kind = str(candidate_kind).lower() if candidate_kind else ""
+    if kind and any(token in kind for token in BLOCKING_CANDIDATE_KIND_TOKENS):
+        blockers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
+
+    return {
+        "candidate_gate_eligible": status == "available" and not blockers,
+        "candidate_gate_blockers": blockers,
     }
 
 
@@ -426,11 +515,13 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
     else:
         status = "missing_parent_fill_flag"
 
-    return {
+    result = {
         "status": status,
         "path": candidate_metadata.get("path"),
         "diagnostic_only": True,
         "candidate_model_pass": "not_applicable",
+        "candidate_gate_eligible": candidate_metadata.get("candidate_gate_eligible"),
+        "candidate_gate_blockers": candidate_metadata.get("candidate_gate_blockers"),
         "diagnostic_remap_parent_fill": parent_fill,
         "minimum_static_refresh_fields": _split_csv_attr(
             attrs.get("TYWRF_MINIMUM_STATIC_REFRESH_FIELDS")
@@ -506,6 +597,48 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
             "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS"
         ),
         "gate_candidate": candidate_metadata.get("gate_candidate"),
+    }
+    result["pressure_refresh_disposition"] = _pressure_refresh_disposition(
+        result,
+        candidate_metadata,
+    )
+    return result
+
+
+def _pressure_refresh_disposition(
+    parent_fill_metadata: dict[str, Any],
+    candidate_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    applied = parent_fill_metadata.get("pressure_refresh_applied")
+    gate_eligible = bool(candidate_metadata.get("candidate_gate_eligible"))
+    blockers = candidate_metadata.get("candidate_gate_blockers") or []
+
+    if applied is True and not gate_eligible:
+        status = "diagnostic_helper_evidence_only"
+        message = (
+            "pressure_refresh_applied=true is diagnostic helper evidence only; "
+            "it is not a model validation gate pass"
+        )
+    elif applied is True:
+        status = "candidate_metadata_only"
+        message = (
+            "pressure_refresh_applied=true is candidate metadata only; "
+            "candidate_model_pass remains not_applicable in this diagnostic report"
+        )
+    elif applied is False:
+        status = "not_applied"
+        message = "pressure_refresh_applied=false"
+    else:
+        status = "not_reported"
+        message = "pressure_refresh_applied metadata is not present"
+
+    return {
+        "status": status,
+        "pressure_refresh_applied": applied,
+        "candidate_gate_eligible": gate_eligible,
+        "candidate_gate_blockers": blockers,
+        "candidate_model_pass": "not_applicable",
+        "message": message,
     }
 
 
