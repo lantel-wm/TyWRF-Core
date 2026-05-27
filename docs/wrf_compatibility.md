@@ -218,7 +218,7 @@ TyWRF now stages the WRF-style moving-nest start sequence as:
 1. overlap remap from the old child state;
 2. direct parent-fill for WRF direct-fill fields in newly exposed cells;
 3. post-`start_domain` time-level sync for exposed cells;
-4. a future derived/recomputed perturbation-pressure refresh.
+4. a required derived/recomputed perturbation-pressure refresh.
 
 The direct parent-fill field set intentionally excludes `P`. It fills exposed
 cells for `U`, `V`, `W`, `PH`, `PHB`, `T`, `PB`, water species, `MU`, `MUB`,
@@ -231,10 +231,24 @@ exposed-cell `_2 -> _1` copy. It takes POD field views for `U`, `V`, `T`, `W`,
 `PH`, `MU`, and optional `TKE`; it is not a `State` expansion and does not
 refresh pressure.
 
+The KROSA pressure-refresh helper now exists, and I/O staging exists for the
+pressure-refresh constants. Skeleton metadata reports the refresh as required
+and not applied, but the compute path is not invoked from the skeleton/remap
+sequence yet. Until that connection exists, pressure-refresh metadata is a
+blocker marker, not evidence that exposed-cell `P` was produced.
+
+The required KROSA pressure-refresh inputs are `P_TOP`, `C3F`, `C4F`, `C3H`,
+`C4H`, and `ALB`. `wrfinput_d01` contains the complete six-item source set.
+Current clean d02 start-time sources are incomplete: d02 history files provide
+the coefficients and `P_TOP` but not `ALB`, while later d02 restart samples do
+contain `ALB`. A clean source for d02 start-time `ALB` has not been found, so
+this is the current real wiring blocker for applying pressure refresh on d02.
+
 Diagnostic parent-fill candidates remain marked `not_physical`,
-`diagnostic_only`, and `gate_candidate = false`. A second-stage pressure
-refresh helper should stay KROSA-scoped and explicitly labeled until its `P`
-producer is validated against WRF.
+`diagnostic_only`, and `gate_candidate = false`. They are non-physical,
+non-gate artifacts even after direct parent-fill and time-level sync, and they
+must not be used as validation passes without a real pressure-refresh compute
+path validated against WRF.
 
 ## Physics Bridge Compatibility Notes
 

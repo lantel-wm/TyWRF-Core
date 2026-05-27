@@ -74,9 +74,10 @@ must remain `2000 m`.
 Diagnostic moving-nest parent-fill outputs and 10-minute diagnostic reports are
 also non-physical and non-gate, even when exposed cells have direct parent-fill
 values. The current staged sequence is overlap remap, direct parent-fill fields,
-post-start-domain time-level sync, then future `P` refresh. Because direct
-parent-fill intentionally excludes exposed-cell `P`, these reports must not
-relax the d02 strict gate or count as a validation pass.
+post-start-domain time-level sync, then required `P` refresh. Because direct
+parent-fill intentionally excludes exposed-cell `P`, and pressure-refresh
+compute is not invoked from skeleton/remap yet, these reports must not relax the
+d02 strict gate or count as a validation pass.
 
 ## Broader Field Thresholds
 
@@ -116,8 +117,13 @@ any required input field is missing or shape-incompatible.
 Because the derivation depends on finite `P + PB`, validation tools must not
 hide sentinel or pending exposed-cell `P`. A parent-fill candidate with pending
 pressure refresh should fail derivation or gate checks until the pressure
-producer is fixed. Any second-stage pressure-refresh helper remains
-KROSA-scoped and explicitly labeled until validated against WRF.
+producer is fixed. The KROSA pressure-refresh helper and I/O staging exist, and
+skeleton metadata reports the refresh as required/not applied, but the compute
+path is not invoked from skeleton/remap yet. Its required source fields are
+`P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`, and `ALB`; d02 start-time `ALB` still has
+no clean source, because d02 history has the coefficients and `P_TOP` without
+`ALB`, while later d02 restart samples include `ALB`. Output missing applied
+pressure refresh must not be counted as a gate pass.
 
 Example:
 
@@ -216,6 +222,7 @@ and quantifies the no-integration baseline gap. `reference-copy` copies the
 cycle-end reference file and marks both JSON metadata and NetCDF attributes with
 `reference_copy=true`, `integrator_output=false`, and
 `validation_gate_only=true`; it must be used only to verify the gate plumbing.
+WRF end-state/oracle output is never accepted as evidence of a TyWRF gate pass.
 Its `expected_to_meet_thresholds` flag is true only when a real SLP/MSLP
 diagnostic was copied, because a reference copy without SLP still fails the
 full d02 cycle gate.

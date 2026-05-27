@@ -28,9 +28,18 @@ derived or recomputed by a real pressure producer before a physical gate can use
 it. Diagnostic parent-fill files and 10-minute reports may surface the pending
 refresh metadata, but they must remain non-physical and non-gate artifacts.
 
-A second-stage pressure-refresh helper may be introduced only as a
-KROSA-scoped, explicitly labeled producer until validated against WRF. It must
-not hide sentinel `P`, rename `PSFC` as pressure, or patch validation metrics.
+The KROSA pressure-refresh helper and I/O staging are present, and skeleton
+metadata reports pressure refresh as required and not applied. The compute path
+is not invoked from skeleton/remap yet. Therefore parent-fill outputs that lack
+applied pressure refresh remain diagnostic only; they must not hide sentinel
+`P`, rename `PSFC` as pressure, patch validation metrics, or satisfy a normal
+gate.
+
+The pressure-refresh source set is `P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`, and
+`ALB`. `wrfinput_d01` has all six, but the clean d02 start-time `ALB` source is
+not resolved: d02 history has the coefficients and `P_TOP` without `ALB`, while
+later d02 restart samples include `ALB`. That missing clean start-time `ALB`
+source is a wiring blocker, not a diagnostic-closure permission.
 
 ## Hard Prohibitions
 
@@ -39,6 +48,8 @@ The following schemes are forbidden:
 - using a WRF reference end-state delta, such as
   `reference_end - reference_start`, to update candidate `MU`, `P`, `PSFC`,
   `SLP`, or any other field;
+- treating WRF end-state/oracle output, reference-copy files, or output without
+  applied pressure refresh as a validation-gate pass;
 - copying, blending, nudging toward, bias-correcting against, or otherwise
   patching metrics with WRF cycle-end reference output;
 - using reference output to move the TC center, adjust the minimum SLP, or tune

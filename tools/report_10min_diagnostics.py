@@ -56,6 +56,17 @@ PARENT_FILL_METADATA_ATTRS = (
     "TYWRF_MINIMUM_STATIC_REFRESH_FIELDS",
     "TYWRF_STAGGERED_STATIC_COORDS_STATUS",
     "TYWRF_P_DERIVED_REFRESH_STATUS",
+    "TYWRF_PRESSURE_REFRESH_REQUIRED",
+    "TYWRF_PRESSURE_REFRESH_APPLIED",
+    "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS",
+    "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS",
+    "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS",
+    "TYWRF_PRESSURE_REFRESH_FORMULA_STAGING_NAME",
+    "TYWRF_PRESSURE_REFRESH_REGION_STAGING_NAME",
+    "TYWRF_PRESSURE_REFRESH_THERMODYNAMIC_MODE",
+    "TYWRF_PRESSURE_REFRESH_REQUIRED_INPUTS",
+    "TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD",
+    "TYWRF_PRESSURE_REFRESH_HELPER_NAME",
     "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS",
     "TYWRF_GATE_CANDIDATE",
 )
@@ -259,6 +270,39 @@ def _combined_summary(
         "p_derived_refresh_status": parent_fill_metadata.get(
             "p_derived_refresh_status"
         ),
+        "pressure_refresh_required": parent_fill_metadata.get(
+            "pressure_refresh_required"
+        ),
+        "pressure_refresh_applied": parent_fill_metadata.get(
+            "pressure_refresh_applied"
+        ),
+        "pressure_refresh_requirement_status": parent_fill_metadata.get(
+            "pressure_refresh_requirement_status"
+        ),
+        "pressure_refresh_integration_status": parent_fill_metadata.get(
+            "pressure_refresh_integration_status"
+        ),
+        "pressure_refresh_formula_status": parent_fill_metadata.get(
+            "pressure_refresh_formula_status"
+        ),
+        "pressure_refresh_formula_staging_name": parent_fill_metadata.get(
+            "pressure_refresh_formula_staging_name"
+        ),
+        "pressure_refresh_region_staging_name": parent_fill_metadata.get(
+            "pressure_refresh_region_staging_name"
+        ),
+        "pressure_refresh_thermodynamic_mode": parent_fill_metadata.get(
+            "pressure_refresh_thermodynamic_mode"
+        ),
+        "pressure_refresh_required_inputs": parent_fill_metadata.get(
+            "pressure_refresh_required_inputs"
+        ),
+        "pressure_refresh_output_field": parent_fill_metadata.get(
+            "pressure_refresh_output_field"
+        ),
+        "pressure_refresh_helper_name": parent_fill_metadata.get(
+            "pressure_refresh_helper_name"
+        ),
         "direct_wrf_end_state_oracle_status": parent_fill_metadata.get(
             "direct_wrf_end_state_oracle_status"
         ),
@@ -355,6 +399,39 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
             "TYWRF_STAGGERED_STATIC_COORDS_STATUS"
         ),
         "p_derived_refresh_status": attrs.get("TYWRF_P_DERIVED_REFRESH_STATUS"),
+        "pressure_refresh_required": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_REQUIRED")
+        ),
+        "pressure_refresh_applied": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_APPLIED")
+        ),
+        "pressure_refresh_requirement_status": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS"
+        ),
+        "pressure_refresh_integration_status": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS"
+        ),
+        "pressure_refresh_formula_status": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS"
+        ),
+        "pressure_refresh_formula_staging_name": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_FORMULA_STAGING_NAME"
+        ),
+        "pressure_refresh_region_staging_name": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_REGION_STAGING_NAME"
+        ),
+        "pressure_refresh_thermodynamic_mode": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_THERMODYNAMIC_MODE"
+        ),
+        "pressure_refresh_required_inputs": _split_csv_attr(
+            attrs.get("TYWRF_PRESSURE_REFRESH_REQUIRED_INPUTS")
+        ),
+        "pressure_refresh_output_field": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD"
+        ),
+        "pressure_refresh_helper_name": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_HELPER_NAME"
+        ),
         "direct_wrf_end_state_oracle_status": attrs.get(
             "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS"
         ),

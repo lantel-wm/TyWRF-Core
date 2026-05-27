@@ -142,6 +142,17 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
             "TYWRF_P_DERIVED_REFRESH_STATUS": (
                 "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill"
             ),
+            "TYWRF_PRESSURE_REFRESH_REQUIRED": "true",
+            "TYWRF_PRESSURE_REFRESH_APPLIED": "false",
+            "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS": "required_after_parent_fill",
+            "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS": "diagnostic_only_not_integrated",
+            "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS": "staged_for_later_kernel",
+            "TYWRF_PRESSURE_REFRESH_FORMULA_STAGING_NAME": "wrf_pressure_base_plus_perturbation",
+            "TYWRF_PRESSURE_REFRESH_REGION_STAGING_NAME": "parent_fill_child_domain",
+            "TYWRF_PRESSURE_REFRESH_THERMODYNAMIC_MODE": "dry_reference",
+            "TYWRF_PRESSURE_REFRESH_REQUIRED_INPUTS": "PB,P,MU,MUB,PH,PHB,T",
+            "TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD": "P",
+            "TYWRF_PRESSURE_REFRESH_HELPER_NAME": "refresh_pressure_after_parent_fill",
             "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS": (
                 "diagnostic_only_nonphysical_non_gate"
             ),
@@ -176,6 +187,20 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         payload["candidate_metadata"]["attrs"]["TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL"]
         == "true"
     )
+    assert (
+        payload["candidate_metadata"]["attrs"]["TYWRF_PRESSURE_REFRESH_REQUIRED"]
+        == "true"
+    )
+    assert (
+        payload["candidate_metadata"]["attrs"][
+            "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS"
+        ]
+        == "diagnostic_only_not_integrated"
+    )
+    assert (
+        payload["candidate_metadata"]["attrs"]["TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD"]
+        == "P"
+    )
     assert payload["parent_fill_metadata"]["status"] == "available"
     assert payload["parent_fill_metadata"]["diagnostic_remap_parent_fill"] is True
     assert payload["parent_fill_metadata"]["minimum_static_refresh_fields"] == [
@@ -191,6 +216,46 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         payload["parent_fill_metadata"]["direct_wrf_end_state_oracle_status"]
         == "diagnostic_only_nonphysical_non_gate"
     )
+    assert payload["parent_fill_metadata"]["pressure_refresh_required"] is True
+    assert payload["parent_fill_metadata"]["pressure_refresh_applied"] is False
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_requirement_status"]
+        == "required_after_parent_fill"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_integration_status"]
+        == "diagnostic_only_not_integrated"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_formula_status"]
+        == "staged_for_later_kernel"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_formula_staging_name"]
+        == "wrf_pressure_base_plus_perturbation"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_region_staging_name"]
+        == "parent_fill_child_domain"
+    )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_thermodynamic_mode"]
+        == "dry_reference"
+    )
+    assert payload["parent_fill_metadata"]["pressure_refresh_required_inputs"] == [
+        "PB",
+        "P",
+        "MU",
+        "MUB",
+        "PH",
+        "PHB",
+        "T",
+    ]
+    assert payload["parent_fill_metadata"]["pressure_refresh_output_field"] == "P"
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_helper_name"]
+        == "refresh_pressure_after_parent_fill"
+    )
     assert payload["summary"]["candidate_file"] == str(candidate_file)
     assert payload["summary"]["candidate_metadata_status"] == "available"
     assert payload["summary"]["candidate_gate_candidate"] is False
@@ -201,6 +266,23 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         "XLONG",
         "HGT",
     ]
+    assert payload["summary"]["pressure_refresh_required"] is True
+    assert payload["summary"]["pressure_refresh_applied"] is False
+    assert (
+        payload["summary"]["pressure_refresh_integration_status"]
+        == "diagnostic_only_not_integrated"
+    )
+    assert payload["summary"]["pressure_refresh_required_inputs"] == [
+        "PB",
+        "P",
+        "MU",
+        "MUB",
+        "PH",
+        "PHB",
+        "T",
+    ]
+    assert payload["summary"]["pressure_refresh_output_field"] == "P"
+    assert payload["summary"]["diagnostic_only"] is True
     assert payload["summary"]["candidate_model_pass"] == "not_applicable"
 
 

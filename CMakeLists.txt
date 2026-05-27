@@ -76,6 +76,14 @@ set_target_properties(tywrf_tendency_cycle PROPERTIES
   CXX_EXTENSIONS OFF
 )
 
+add_executable(tywrf_pressure_refresh_probe src/tools/pressure_refresh_probe.cpp)
+target_link_libraries(tywrf_pressure_refresh_probe PRIVATE TyWRF::Core)
+set_target_properties(tywrf_pressure_refresh_probe PROPERTIES
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
+
 if(BUILD_TESTING)
   add_executable(tywrf_smoke tests/unit/smoke_test.cpp)
   target_link_libraries(tywrf_smoke PRIVATE TyWRF::Core)
@@ -157,5 +165,13 @@ if(BUILD_TESTING)
   add_test(
     NAME tywrf_tendency_cycle_tool_test
     COMMAND tywrf_tendency_cycle_tool_test $<TARGET_FILE:tywrf_tendency_cycle>
+  )
+
+  add_executable(tywrf_pressure_refresh_probe_tool_test
+    tests/unit/pressure_refresh_probe_tool_test.cpp)
+  target_link_libraries(tywrf_pressure_refresh_probe_tool_test PRIVATE PkgConfig::NETCDF)
+  add_test(
+    NAME tywrf_pressure_refresh_probe_tool_test
+    COMMAND tywrf_pressure_refresh_probe_tool_test $<TARGET_FILE:tywrf_pressure_refresh_probe>
   )
 endif()
