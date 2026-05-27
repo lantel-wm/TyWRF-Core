@@ -1,20 +1,23 @@
 # Validation Plan
 
-Validation is based on 6 h cycle tests rather than requiring a full 168 h free
-forecast to remain field-close.
+Validation starts with progressive 10 min gates against the 1 h KROSA reference
+run. Longer 3 h or 6 h cycle tests are deferred until the 10 min sequence is
+stable.
 
 ## Cycle Procedure
 
 1. Start from the matching WRF reference initial state.
-2. Integrate a 6 h TyWRF-Core segment.
+2. Integrate the next TyWRF-Core segment, starting with `00:00 -> 00:10`.
 3. Write WRF-compatible core `wrfout` files.
 4. Compare against the WRF reference output for the same valid time.
-5. Repeat over multiple 6 h windows.
+5. Stop at the first failed 10 min endpoint and fix that field/kernel before
+   advancing to the next endpoint.
 
-## d02 6 h Cycle Gate
+## d02 10 min Strict Gate
 
 The current acceptance gate is intentionally narrower than the full validation
-plan. For each d02 cycle-end `wrfout`, it requires:
+plan. For each d02 cycle-end `wrfout`, starting at
+`2025-07-26_00:10:00`, it requires:
 
 - `U`, `V`, `T`, `PH`, `MU`, `P`, `QVAPOR`: normalized RMSE <= `5%`
 - d02 storm center error <= `20 km`
@@ -27,7 +30,8 @@ The gate requires a real `SLP`, `MSLP`, `AFWA_MSLP`, `PMSL`, `PRMSL`, or
 `SEA_LEVEL_PRESSURE` variable for the storm-center and minimum-SLP diagnostics.
 It does not pass the minimum-SLP gate from a `PSFC` proxy.
 
-Run the gate over one or more 6 h cycles:
+Longer cycle checks use the same gate interface once the 10 min sequence is
+stable:
 
 ```bash
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/cycle_gate.py \
@@ -42,6 +46,30 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/cycl
 `--interval` to gate multiple cycle endpoints between `--start` and `--end`.
 The JSON report contains each cycle, each field gate, each diagnostic gate, and
 the top-level `passed` or `failed` status.
+
+For the current 10 min KROSA smoke, use the 1 h / 10 min reference directory
+and force the interval in minutes:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/cycle_gate.py \
+  --reference-dir /home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF_1h_10min_20260527_172838 \
+  --candidate-dir /path/to/tywrf/output \
+  --start 2025-07-26_00:00:00 \
+  --end 2025-07-26_00:10:00 \
+  --domain d02 \
+  --interval-minutes 10 \
+  --pretty
+```
+
+`tywrf_skeleton_cycle` can generate a d02 persistence/skeleton candidate for
+this smoke by reading the `00:00` d02 state/template and writing
+`wrfout_d02_2025-07-26_00:10:00` with `--times 2025-07-26_00:10:00`. The output
+is explicitly marked `not_physical`, `integrator_output=false`, and
+`validation_gate_only=true`. Default strict `cycle_gate.py` behavior must reject
+that candidate at `00:10`; this is a wiring smoke and is not a passing
+integrator result. The skeleton metadata/report records `--interval-minutes 10`
+when `--cycle-start` and `--cycle-end` imply a 10 min segment. d02 `DX` and `DY`
+must remain `2000 m`.
 
 ## Broader Field Thresholds
 

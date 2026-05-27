@@ -17,6 +17,8 @@ enum class StateStepStatus : std::uint8_t {
 
 struct DomainStateStepReport {
   std::int64_t zero_tendency_apply_count = 0;
+  std::int64_t explicit_tendency_apply_count = 0;
+  std::int64_t tendency_dt_seconds = 0;
   std::int64_t active_points = 0;
   TendencyApplyStatus tendency_status = TendencyApplyStatus::ok;
   bool missing_state = false;
@@ -34,6 +36,11 @@ struct SkeletonStateStepReport {
   TendencyApplyStatus tendency_status = TendencyApplyStatus::ok;
 };
 
+struct ExplicitStateTendencySet {
+  const State<float>* d01_tendency = nullptr;
+  const State<float>* d02_tendency = nullptr;
+};
+
 class SkeletonStateStepper {
  public:
   explicit SkeletonStateStepper(DynamicsLoopRunner runner);
@@ -48,6 +55,16 @@ class SkeletonStateStepper {
   [[nodiscard]] SkeletonStateStepReport run(
       State<float>& d01_state,
       State<float>& d02_state) const;
+
+  [[nodiscard]] SkeletonStateStepReport run_with_explicit_tendencies(
+      State<float>* d01_state,
+      State<float>* d02_state,
+      ExplicitStateTendencySet tendencies) const;
+
+  [[nodiscard]] SkeletonStateStepReport run_with_explicit_tendencies(
+      State<float>& d01_state,
+      State<float>& d02_state,
+      ExplicitStateTendencySet tendencies) const;
 
  private:
   DynamicsLoopRunner runner_;

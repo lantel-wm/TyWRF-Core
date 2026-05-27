@@ -14,6 +14,7 @@ import numpy as np
 
 REQUIRED_VARIABLES = ("P", "PB", "T", "QVAPOR", "PH", "PHB", "PSFC")
 SLP_VARIABLE_NAME = "SLP"
+DERIVED_SLP_METHOD = "hypsometric_lowest_mass_level_virtual_temperature"
 P0_PA = 100000.0
 RD_J_KG_K = 287.05
 CP_J_KG_K = 1004.0
@@ -60,6 +61,17 @@ def _require_variables(dataset: netCDF4.Dataset) -> None:
     if missing:
         raise DeriveMSLPError(
             "missing required variable(s) for derived SLP: " + ", ".join(missing)
+        )
+
+
+def _require_safe_output_variable(variable_name: str) -> None:
+    source_collisions = {
+        required.lower() for required in REQUIRED_VARIABLES
+    }
+    if variable_name.lower() in source_collisions:
+        raise DeriveMSLPError(
+            f"derived SLP output variable {variable_name!r} would replace a required "
+            "source field; choose a diagnostic name such as SLP"
         )
 
 
@@ -162,10 +174,9 @@ def _copy_dataset_with_derived_slp(
 ) -> None:
     _copy_attributes(source, destination)
     destination.setncattr("TYWRF_DERIVED_SLP", "true")
-    destination.setncattr(
-        "TYWRF_DERIVED_SLP_METHOD",
-        "hypsometric_lowest_mass_level_virtual_temperature",
-    )
+    destination.setncattr("TYWRF_DERIVED_SLP_DIAGNOSTIC", "true")
+    destination.setncattr("TYWRF_DERIVED_SLP_IS_PSFC_PROXY", "false")
+    destination.setncattr("TYWRF_DERIVED_SLP_METHOD", DERIVED_SLP_METHOD)
     destination.setncattr("TYWRF_DERIVED_SLP_REQUIRED_VARIABLES", ",".join(REQUIRED_VARIABLES))
 
     for name, dimension in source.dimensions.items():
@@ -192,17 +203,23 @@ def _copy_dataset_with_derived_slp(
         psfc_variable.dimensions,
         fill_value=np.float32(np.nan),
     )
-    slp_variable.long_name = "sea level pressure derived by TyWRF-Core validation tooling"
+    slp_variable.long_name = (
+        "sea level pressure diagnostic derived by TyWRF-Core validation tooling"
+    )
     slp_variable.description = (
         "Hypsometric reduction from PSFC using lowest mass-level virtual temperature "
-        "from P, PB, T, QVAPOR and surface geopotential height from PH, PHB"
+        "from P, PB, T, QVAPOR and surface geopotential height from PH, PHB; "
+        "this is not a copied WRF end-state SLP field and not a PSFC proxy renamed as SLP"
     )
     slp_variable.units = "hPa"
     slp_variable.FieldType = 104
     slp_variable.MemoryOrder = getattr(psfc_variable, "MemoryOrder", "XY")
     slp_variable.coordinates = getattr(psfc_variable, "coordinates", "XLONG XLAT")
     slp_variable.derived_from = ",".join(REQUIRED_VARIABLES)
-    slp_variable.method = "hypsometric_lowest_mass_level_virtual_temperature"
+    slp_variable.method = DERIVED_SLP_METHOD
+    slp_variable.TYWRF_DERIVED_DIAGNOSTIC = "true"
+    slp_variable.TYWRF_IS_PSFC_PROXY = "false"
+    slp_variable.TYWRF_SOURCE_KIND = "hypsometric_diagnostic_from_core_fields"
     slp_variable[:] = slp_hpa.astype(np.float32)
 
 
@@ -216,6 +233,7 @@ def write_derived_mslp(
 
     if source_path.resolve() == destination_path.resolve():
         raise DeriveMSLPError("source and destination must be different paths")
+    _require_safe_output_variable(variable_name)
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     with netCDF4.Dataset(source_path) as source:

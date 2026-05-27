@@ -14,8 +14,10 @@ from tools.run_cycle_gate_with_slp import (
 START = "2025-07-26_00:00:00"
 END = "2025-07-26_06:00:00"
 END2 = "2025-07-26_12:00:00"
+END_0010 = "2025-07-26_00:10:00"
 END_FILE = "wrfout_d02_2025-07-26_06:00:00"
 END_FILE2 = "wrfout_d02_2025-07-26_12:00:00"
+END_0010_FILE = "wrfout_d02_2025-07-26_00:10:00"
 
 
 def _tc_fields(shape: tuple[int, int]) -> dict[str, np.ndarray]:
@@ -160,6 +162,44 @@ def test_run_cycle_gate_with_slp_supports_10_min_interval(tmp_path: Path) -> Non
     assert payload["gate_report"]["summary"] == {"total": 2, "passed": 2, "failed": 0}
 
 
+def test_run_cycle_gate_with_slp_derives_single_0010_endpoint(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_0010_FILE)
+    _write_wrfout(candidate_dir / END_0010_FILE)
+    for path in (reference_dir / END_0010_FILE, candidate_dir / END_0010_FILE):
+        with netCDF4.Dataset(path, "a") as dataset:
+            dataset.variables["PH"][:, 0, :, :] = 100.0 * 9.80665
+
+    report = run_cycle_gate_with_slp(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END_0010,
+        interval_minutes=10,
+        derived_dir=tmp_path / "derived",
+    )
+    payload = report_to_dict(report)
+
+    assert report.status == "passed"
+    assert payload["end_time"] == END_0010
+    assert payload["interval_hours"] == 0
+    assert payload["interval_minutes"] == 10
+    assert [item["cycle_end_time"] for item in payload["derivations"]] == [
+        END_0010,
+        END_0010,
+    ]
+    assert payload["gate_report"]["cycles"][0]["end_time"] == END_0010
+    with netCDF4.Dataset(tmp_path / "derived" / "candidate" / END_0010_FILE) as dataset:
+        assert dataset.getncattr("TYWRF_DERIVED_SLP_DIAGNOSTIC") == "true"
+        assert dataset.getncattr("TYWRF_DERIVED_SLP_IS_PSFC_PROXY") == "false"
+        assert dataset.variables["SLP"].TYWRF_IS_PSFC_PROXY == "false"
+        np.testing.assert_array_less(
+            0.1,
+            np.abs(dataset.variables["SLP"][:] - dataset.variables["PSFC"][:] / 100.0),
+        )
+
+
 def test_run_cycle_gate_with_slp_preserves_metadata_rejection_after_derivation(
     tmp_path: Path,
 ) -> None:
@@ -186,6 +226,54 @@ def test_run_cycle_gate_with_slp_preserves_metadata_rejection_after_derivation(
     assert metadata["status"] == "failed"
     assert "TYWRF_DIAGNOSTIC_ONLY=true" in metadata["message"]
     assert "TYWRF_GATE_CANDIDATE=false" in metadata["message"]
+
+
+def test_run_cycle_gate_with_slp_preserves_validation_gate_only_metadata(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(tmp_path)
+    with netCDF4.Dataset(candidate_dir / END_FILE, "a") as dataset:
+        dataset.setncattr("TYWRF_VALIDATION_GATE_ONLY", "true")
+        dataset.setncattr("TYWRF_INTEGRATOR_OUTPUT", "false")
+        dataset.setncattr("TYWRF_CANDIDATE_KIND", "baseline_candidate")
+
+    strict_report = run_cycle_gate_with_slp(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END,
+        derived_dir=tmp_path / "derived-strict",
+    )
+    strict_payload = report_to_dict(strict_report)
+    strict_metadata = {
+        item["name"]: item
+        for item in strict_payload["gate_report"]["cycles"][0]["diagnostics"]
+    }["candidate_metadata"]
+
+    assert strict_report.status == "failed"
+    assert strict_metadata["status"] == "failed"
+    assert "TYWRF_VALIDATION_GATE_ONLY=true" in strict_metadata["message"]
+
+    allowed_report = run_cycle_gate_with_slp(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END,
+        derived_dir=tmp_path / "derived-allowed",
+        allow_validation_gate_only=True,
+    )
+    allowed_payload = report_to_dict(allowed_report)
+    allowed_metadata = {
+        item["name"]: item
+        for item in allowed_payload["gate_report"]["cycles"][0]["diagnostics"]
+    }["candidate_metadata"]
+
+    assert allowed_report.status == "passed"
+    assert allowed_metadata["status"] == "passed"
+    with netCDF4.Dataset(tmp_path / "derived-allowed" / "candidate" / END_FILE) as dataset:
+        assert dataset.getncattr("TYWRF_VALIDATION_GATE_ONLY") == "true"
+        assert dataset.getncattr("TYWRF_INTEGRATOR_OUTPUT") == "false"
+        assert dataset.getncattr("TYWRF_DERIVED_SLP") == "true"
 
 
 def test_run_cycle_gate_with_slp_fails_derivation_without_psfc_fallback(tmp_path: Path) -> None:

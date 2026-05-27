@@ -26,6 +26,12 @@ enum class ForcingApplyStatus {
   unsupported_field,
 };
 
+enum class ForcingApplyOperation {
+  validation_only,
+  synthetic_nudging_delta,
+  direct_boundary_copy_skeleton,
+};
+
 class ForcingApplyError : public std::runtime_error {
  public:
   ForcingApplyError(ForcingApplyStatus status, const std::string& message)
@@ -43,6 +49,7 @@ struct ForcingApplyReport {
   std::size_t field_count = 0;
   std::size_t point_count = 0;
   ForcingApplyStatus status = ForcingApplyStatus::ok;
+  ForcingApplyOperation operation = ForcingApplyOperation::validation_only;
   bool would_modify_state = false;
   bool synthetic = false;
   std::string detail;
@@ -57,6 +64,9 @@ struct SyntheticNudgingDeltaConfig {
 [[nodiscard]] std::string_view forcing_apply_status_name(
     ForcingApplyStatus status) noexcept;
 
+[[nodiscard]] std::string_view forcing_apply_operation_name(
+    ForcingApplyOperation operation) noexcept;
+
 [[nodiscard]] ForcingApplyReport validate_boundary_pack_for_view(
     FieldView3D<const float> target,
     BoundarySide side,
@@ -69,6 +79,22 @@ struct SyntheticNudgingDeltaConfig {
 
 [[nodiscard]] ForcingApplyReport validate_boundary_pack_for_state(
     const State<float>& state,
+    std::string_view field_name,
+    BoundarySide side,
+    const PackedForcingField& packed);
+
+ForcingApplyReport apply_boundary_copy_skeleton_to_view(
+    FieldView3D<float> target,
+    BoundarySide side,
+    const PackedForcingField& packed);
+
+ForcingApplyReport apply_boundary_copy_skeleton_to_view(
+    FieldView2D<float> target,
+    BoundarySide side,
+    const PackedForcingField& packed);
+
+ForcingApplyReport apply_boundary_copy_skeleton_to_state(
+    State<float>& state,
     std::string_view field_name,
     BoundarySide side,
     const PackedForcingField& packed);

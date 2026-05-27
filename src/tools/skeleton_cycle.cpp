@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -391,6 +392,68 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
   return value ? "true" : "false";
 }
 
+[[nodiscard]] std::optional<std::tm> parse_wrf_timestamp(const std::string& value) {
+  if (value.size() != 19 || value[4] != '-' || value[7] != '-' || value[10] != '_' ||
+      value[13] != ':' || value[16] != ':') {
+    return std::nullopt;
+  }
+
+  const auto parse_int = [&](const std::size_t offset, const std::size_t count)
+      -> std::optional<int> {
+    int parsed = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+      const char c = value[offset + index];
+      if (!std::isdigit(static_cast<unsigned char>(c))) {
+        return std::nullopt;
+      }
+      parsed = parsed * 10 + (c - '0');
+    }
+    return parsed;
+  };
+
+  const auto year = parse_int(0, 4);
+  const auto month = parse_int(5, 2);
+  const auto day = parse_int(8, 2);
+  const auto hour = parse_int(11, 2);
+  const auto minute = parse_int(14, 2);
+  const auto second = parse_int(17, 2);
+  if (!year || !month || !day || !hour || !minute || !second) {
+    return std::nullopt;
+  }
+
+  std::tm timestamp{};
+  timestamp.tm_year = *year - 1900;
+  timestamp.tm_mon = *month - 1;
+  timestamp.tm_mday = *day;
+  timestamp.tm_hour = *hour;
+  timestamp.tm_min = *minute;
+  timestamp.tm_sec = *second;
+  timestamp.tm_isdst = -1;
+  return timestamp;
+}
+
+[[nodiscard]] std::optional<int> cycle_interval_minutes(const Options& options) {
+  if (options.cycle_start.empty() || options.cycle_end.empty()) {
+    return std::nullopt;
+  }
+  auto start = parse_wrf_timestamp(options.cycle_start);
+  auto end = parse_wrf_timestamp(options.cycle_end);
+  if (!start || !end) {
+    return std::nullopt;
+  }
+
+  const std::time_t start_time = std::mktime(&*start);
+  const std::time_t end_time = std::mktime(&*end);
+  if (start_time == static_cast<std::time_t>(-1) || end_time == static_cast<std::time_t>(-1)) {
+    return std::nullopt;
+  }
+  const double seconds = std::difftime(end_time, start_time);
+  if (seconds <= 0.0) {
+    return std::nullopt;
+  }
+  return static_cast<int>(std::llround(seconds / 60.0));
+}
+
 void mark_skeleton_output(
     const Options& options,
     const Resolution resolution,
@@ -443,6 +506,19 @@ void mark_skeleton_output(
   }
   if (!options.cycle_end.empty()) {
     write_text_attr(file, "TYWRF_CYCLE_END", options.cycle_end);
+  }
+  const auto interval_minutes = cycle_interval_minutes(options);
+  if (interval_minutes.has_value()) {
+    write_double_attr(
+        file,
+        "TYWRF_SUGGESTED_GATE_INTERVAL_MINUTES",
+        static_cast<double>(*interval_minutes));
+    if (*interval_minutes != 360) {
+      write_text_attr(
+          file,
+          "TYWRF_SUGGESTED_GATE_INTERVAL_OPTION",
+          "--interval-minutes " + std::to_string(*interval_minutes));
+    }
   }
   std::ostringstream loaded;
   for (std::size_t index = 0; index < state_variables.size(); ++index) {
@@ -632,6 +708,23 @@ void print_report(
   write_json_string(std::cout, "d02_resolution_check", "d02_2km", true, pretty);
   write_json_number(std::cout, "dx_m", resolution.dx, true, pretty);
   write_json_number(std::cout, "dy_m", resolution.dy, true, pretty);
+  const auto interval_minutes = cycle_interval_minutes(options);
+  if (interval_minutes.has_value()) {
+    write_json_number(
+        std::cout,
+        "suggested_gate_interval_minutes",
+        static_cast<double>(*interval_minutes),
+        true,
+        pretty);
+    if (*interval_minutes != 360) {
+      write_json_string(
+          std::cout,
+          "suggested_gate_interval_option",
+          "--interval-minutes " + std::to_string(*interval_minutes),
+          true,
+          pretty);
+    }
+  }
   write_json_array(std::cout, "variables", options.variables, true, pretty);
   write_json_array(std::cout, "state_variables", state_variables, true, pretty);
   if (diagnostic_remap) {

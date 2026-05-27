@@ -15,6 +15,11 @@
 
 namespace {
 
+constexpr std::string_view kCycleStart = "2025-07-26_00:00:00";
+constexpr std::string_view kTenMinuteEnd = "2025-07-26_00:10:00";
+const std::filesystem::path kKrosaTenMinuteReferenceDir =
+    "/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF_1h_10min_20260527_172838";
+
 void check_nc(const int status, const std::string_view operation) {
   if (status == NC_NOERR) {
     return;
@@ -193,6 +198,15 @@ void run_command_expect_failure(const std::string& command) {
   }
 }
 
+void run_command_capture_expect_failure(
+    const std::string& command,
+    const std::filesystem::path& output) {
+  const int status = std::system((command + " > " + shell_quote(output)).c_str());
+  if (status == 0) {
+    throw std::runtime_error("command unexpectedly passed: " + command);
+  }
+}
+
 [[nodiscard]] std::string read_text_attr(
     const int file_id,
     const std::string_view name) {
@@ -276,14 +290,16 @@ void assert_output(const std::filesystem::path& output) {
   assert(!has_global_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_OVERLAP"));
   assert(read_text_attr(file_id, "TYWRF_STATIC_SOURCE").find("wrfout_d02_2025-07-26_00:00:00") !=
          std::string::npos);
-  assert(read_text_attr(file_id, "TYWRF_TIMES_SOURCE") == "--times:2025-07-26_06:00:00");
+  assert(read_text_attr(file_id, "TYWRF_TIMES_SOURCE") == "--times:2025-07-26_00:10:00");
   assert(read_text_attr(file_id, "TYWRF_STATIC_COORDS_MATCH_STATE_SOURCE") == "same_file");
   assert(
       read_text_attr(file_id, "TYWRF_STATE_STATIC_CONSISTENCY") ==
       "static_coords_same_file_as_state_source");
+  assert(read_double_attr(file_id, "TYWRF_SUGGESTED_GATE_INTERVAL_MINUTES") == 10.0);
+  assert(read_text_attr(file_id, "TYWRF_SUGGESTED_GATE_INTERVAL_OPTION") == "--interval-minutes 10");
   assert(read_double_attr(file_id, "DX") == 2000.0);
   assert(read_double_attr(file_id, "DY") == 2000.0);
-  assert(read_times(file_id).substr(0, 19) == "2025-07-26_06:00:00");
+  assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
   assert(read_3d_value(file_id, "U", 1, 2, 4) == value_3d(0, 1, 2, 4, 10000.0F));
   assert(read_3d_value(file_id, "T", 1, 2, 3) == value_3d(0, 1, 2, 3, 20000.0F));
   assert(read_2d_value(file_id, "MU", 2, 3) == value_2d(0, 2, 3, 30000.0F));
@@ -335,10 +351,66 @@ std::string base_command(
     const std::filesystem::path& output) {
   return shell_quote(executable) + " --state " + shell_quote(state) + " --template " +
          shell_quote(template_path) + " --output " + shell_quote(output) +
-         " --cycle-start " + shell_quote(std::string("2025-07-26_00:00:00")) +
-         " --cycle-end " + shell_quote(std::string("2025-07-26_06:00:00")) +
-         " --times " + shell_quote(std::string("2025-07-26_06:00:00")) +
+         " --cycle-start " + shell_quote(std::string(kCycleStart)) +
+         " --cycle-end " + shell_quote(std::string(kTenMinuteEnd)) +
+         " --times " + shell_quote(std::string(kTenMinuteEnd)) +
          " --variables Times,XLAT,XLONG,HGT,U,T,MU --pretty";
+}
+
+void run_real_krosa_smoke_if_available(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& root) {
+  const auto state = kKrosaTenMinuteReferenceDir / "wrfout_d02_2025-07-26_00:00:00";
+  const auto reference_end = kKrosaTenMinuteReferenceDir / "wrfout_d02_2025-07-26_00:10:00";
+  if (!std::filesystem::exists(state) || !std::filesystem::exists(reference_end)) {
+    std::cerr << "skipping real KROSA 10 min smoke; reference files are not present\n";
+    return;
+  }
+
+  const auto candidate_dir = root / "real_krosa_candidate";
+  const auto output = candidate_dir / "wrfout_d02_2025-07-26_00:10:00";
+  const auto skeleton_report = root / "real_krosa_skeleton_report.json";
+  const auto gate_report = root / "real_krosa_strict_gate_report.json";
+  std::filesystem::create_directories(candidate_dir);
+  std::filesystem::remove(output);
+  std::filesystem::remove(skeleton_report);
+  std::filesystem::remove(gate_report);
+
+  run_command(
+      base_command(executable, state, state, output) + " > " + shell_quote(skeleton_report));
+
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open real KROSA output");
+  assert(read_text_attr(file_id, "TYWRF_NOT_PHYSICAL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
+  assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "true");
+  assert(read_double_attr(file_id, "DX") == 2000.0);
+  assert(read_double_attr(file_id, "DY") == 2000.0);
+  assert(read_double_attr(file_id, "TYWRF_SUGGESTED_GATE_INTERVAL_MINUTES") == 10.0);
+  assert(read_text_attr(file_id, "TYWRF_SUGGESTED_GATE_INTERVAL_OPTION") == "--interval-minutes 10");
+  assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
+  check_nc(nc_close(file_id), "close real KROSA output");
+
+  const auto source_root = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path();
+  const std::string gate_command =
+      "cd " +
+      shell_quote(source_root) +
+      " && UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python "
+      "tools/cycle_gate.py --reference-dir " +
+      shell_quote(kKrosaTenMinuteReferenceDir) + " --candidate-dir " + shell_quote(candidate_dir) +
+      " --start " + shell_quote(std::string(kCycleStart)) + " --end " +
+      shell_quote(std::string(kTenMinuteEnd)) + " --domain d02 --interval-minutes 10 --pretty";
+  run_command_capture_expect_failure(gate_command, gate_report);
+
+  std::ifstream report_file(gate_report);
+  std::ostringstream report_buffer;
+  report_buffer << report_file.rdbuf();
+  const auto report = report_buffer.str();
+  assert(report.find("\"status\": \"failed\"") != std::string::npos);
+  assert(report.find("\"interval_minutes\": 10") != std::string::npos);
+  assert(report.find("\"first_failure\":") != std::string::npos);
+  assert(report.find("\"end_time\": \"2025-07-26_00:10:00\"") != std::string::npos);
+  assert(report.find("TYWRF_VALIDATION_GATE_ONLY=true") != std::string::npos);
 }
 
 }  // namespace
@@ -354,8 +426,8 @@ int main(const int argc, char** argv) {
     std::filesystem::create_directories(root);
 
     const auto state = root / "wrfout_d02_2025-07-26_00:00:00";
-    const auto end_template = root / "wrfout_d02_2025-07-26_06:00:00";
-    const auto output = root / "tywrf_cpp_skeleton_wrfout_d02_2025-07-26_06:00:00";
+    const auto end_template = root / "wrfout_d02_2025-07-26_00:10:00";
+    const auto output = root / "tywrf_cpp_skeleton_wrfout_d02_2025-07-26_00:10:00";
     const auto remap_state = root / "wrfout_d02_krosa_remap_state";
     const auto remap_output = root / "tywrf_cpp_skeleton_remap_wrfout_d02";
     const auto remap_report = root / "tywrf_cpp_skeleton_remap_report.json";
@@ -369,7 +441,7 @@ int main(const int argc, char** argv) {
     create_synthetic_wrfout(
         end_template,
         2000.0,
-        "2025-07-26_06:00:00",
+        "2025-07-26_00:10:00",
         false,
         70000.0F,
         80000.0F,
@@ -402,6 +474,8 @@ int main(const int argc, char** argv) {
     std::filesystem::remove(bad_output);
     create_synthetic_wrfout(bad_state, 1000.0, "2025-07-26_00:00:00", true);
     run_command_expect_failure(base_command(executable, bad_state, state, bad_output));
+
+    run_real_krosa_smoke_if_available(executable, root);
 
     std::filesystem::remove_all(root);
   } catch (const std::exception& error) {

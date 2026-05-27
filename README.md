@@ -8,7 +8,8 @@ The v1 target is deliberately narrow:
 - reuse WPS and `real.exe`;
 - read the current WRF standard inputs;
 - write WRF-compatible core `wrfout` fields;
-- validate 6 h cycle tests against the existing WRF reference;
+- validate progressive 10 min gates against the existing WRF reference before
+  longer cycle tests;
 - defer best-track nudging, arbitrary namelists, full WRF replacement behavior,
   and direct CUDA implementation.
 
@@ -28,7 +29,7 @@ ctest --test-dir build --output-on-failure
 
 ## C++ Tools
 
-`tywrf_skeleton_cycle` is the current C++ executable shell for a d02 6 h
+`tywrf_skeleton_cycle` is the current C++ executable shell for a d02 10 min
 candidate. It reads a cycle-start WRF state, copies `XLAT/XLONG/HGT` from the
 static template, writes selected core fields, and marks the result as
 `skeleton=true`, `not_physical=true`, and `integrator_output=false`. It enforces
@@ -44,16 +45,21 @@ been remapped to the end nest pose by a real integrator.
 ./build/tywrf_skeleton_cycle \
   --state /path/to/wrfout_d02_2025-07-26_00:00:00 \
   --template /path/to/wrfout_d02_2025-07-26_00:00:00 \
-  --output /path/to/candidate/wrfout_d02_2025-07-26_06:00:00 \
+  --output /path/to/candidate/wrfout_d02_2025-07-26_00:10:00 \
   --cycle-start 2025-07-26_00:00:00 \
-  --cycle-end 2025-07-26_06:00:00 \
-  --times 2025-07-26_06:00:00 \
+  --cycle-end 2025-07-26_00:10:00 \
+  --times 2025-07-26_00:10:00 \
   --pretty
 ```
 
 The output NetCDF metadata and JSON report identify the state source, static
 coordinate source, `Times` source, and whether static coordinates came from the
-same source file as the state.
+same source file as the state. When `--cycle-start` and `--cycle-end` describe
+a 10 min candidate, the metadata/report also records `--interval-minutes 10` as
+the gate interval option. The default strict gate still rejects this output
+because it is marked `TYWRF_VALIDATION_GATE_ONLY=true` and
+`TYWRF_INTEGRATOR_OUTPUT=false`; that failure is expected for the current
+skeleton smoke and must not be reported as a physical pass.
 
 An opt-in diagnostic remap path is available for wiring the moving-nest overlap
 remap into this C++ skeleton:
@@ -64,8 +70,8 @@ remap into this C++ skeleton:
   --template /path/to/wrfout_d02_2025-07-26_00:00:00 \
   --output /path/to/diagnostic/remap_overlap_wrfout_d02 \
   --cycle-start 2025-07-26_00:00:00 \
-  --cycle-end 2025-07-26_06:00:00 \
-  --times 2025-07-26_06:00:00 \
+  --cycle-end 2025-07-26_00:10:00 \
+  --times 2025-07-26_00:10:00 \
   --diagnostic-remap-overlap \
   --from-parent-start 114,96 \
   --to-parent-start 115,96 \
@@ -77,8 +83,8 @@ overlap. Newly exposed cells are left as NaN until a future parent-fill step is
 implemented. Its NetCDF metadata and JSON report mark
 `TYWRF_DIAGNOSTIC_REMAP_OVERLAP=true`, `TYWRF_NEEDS_PARENT_FILL`, copied
 field/point counts, from/to parent starts, and `TYWRF_NOT_PHYSICAL=true`. It is
-a diagnostic candidate only, not a physical 6 h result and not a validation-gate
-candidate.
+a diagnostic candidate only, not a physical integrator result and not a
+validation-gate candidate.
 
 ## Python Tools
 
@@ -132,10 +138,13 @@ Its JSON and NetCDF metadata also mark `skeleton=true`, `not_physical=true`, and
 an integrator result.
 
 The current acceptance gate is `tools/cycle_gate.py`. It defaults to d02 and
-checks each 6 h cycle-end `wrfout` for `U,V,T,PH,MU,P,QVAPOR` normalized RMSE <=
+checks each cycle-end `wrfout` for `U,V,T,PH,MU,P,QVAPOR` normalized RMSE <=
 `0.05`, storm-center error <= `20 km`, minimum SLP error <= `5 hPa`, and
 Vmax10m error <= `5 m s-1`. Missing candidate files or missing real SLP
-diagnostics fail the gate.
+diagnostics fail the gate. For the KROSA progressive validation smoke, run the
+first endpoint with `--start 2025-07-26_00:00:00 --end 2025-07-26_00:10:00
+--interval-minutes 10`; a C++ skeleton/persistence candidate is expected to
+fail strict mode at `00:10`.
 
 TC diagnostics report `minimum_slp_hpa` only from a real sea-level pressure
 field such as `SLP`, `MSLP`, `AFWA_MSLP`, `PMSL`, or `PRMSL`. When no accepted
@@ -147,8 +156,10 @@ meeting the minimum SLP validation objective.
 
 - Storm: `2025WP12 KROSA`
 - Initial time: `2025-07-26 00 UTC`
-- Forecast length: `168 h`
-- Output interval: `6 h`
+- Primary validation length: `1 h`
+- Primary validation output interval: `10 min`
+- Full reference length: `168 h`
+- Full reference output interval: `6 h`
 - d01: `10 km`
 - d02: `2 km`, moving, two-way nested
 - Vertical levels: `60` full eta levels, `59` mass levels

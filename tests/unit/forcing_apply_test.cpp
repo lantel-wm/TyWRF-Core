@@ -136,6 +136,8 @@ void test_boundary_validation_reports_shape_and_does_not_write_state() {
          "boundary validation status ok");
   expect(report.field_count == 1, "boundary validation reports one field");
   expect(report.point_count == 12, "boundary validation reports packed point count");
+  expect(report.operation == tywrf::io::ForcingApplyOperation::validation_only,
+         "boundary validation operation is explicit");
   expect(!report.would_modify_state, "boundary validation is read-only");
   expect(!report.synthetic, "boundary validation is not synthetic apply");
   expect(snapshot_storage(state.t) == t_before, "boundary validation does not write T");
@@ -183,6 +185,8 @@ void test_synthetic_nudging_delta_writes_only_requested_window() {
          "synthetic delta status ok");
   expect(report.field_count == 1, "synthetic delta reports one field");
   expect(report.point_count == 2, "synthetic delta reports written points");
+  expect(report.operation == tywrf::io::ForcingApplyOperation::synthetic_nudging_delta,
+         "synthetic delta operation is explicit");
   expect(report.would_modify_state, "synthetic delta reports state write");
   expect(report.synthetic, "synthetic delta metadata is explicit");
 
@@ -227,6 +231,70 @@ void test_synthetic_nudging_delta_rejects_out_of_range_window() {
       "out-of-range synthetic window raises invalid_range");
 }
 
+void test_direct_boundary_copy_skeleton_writes_i_upper_active_edge() {
+  tywrf::State<float> state(make_grid());
+  zero_state(state);
+
+  const auto packed = make_i_side_t_boundary_pack();
+  const auto report = tywrf::io::apply_boundary_copy_skeleton_to_state(
+      state,
+      "T",
+      tywrf::io::BoundarySide::i_upper,
+      packed);
+
+  expect(report.status == tywrf::io::ForcingApplyStatus::ok,
+         "i_upper direct boundary copy status ok");
+  expect(report.field_count == 1, "i_upper copy reports one field");
+  expect(report.point_count == 12, "i_upper copy reports copied point count");
+  expect(report.operation ==
+             tywrf::io::ForcingApplyOperation::direct_boundary_copy_skeleton,
+         "i_upper copy operation is direct boundary skeleton");
+  expect(report.would_modify_state, "i_upper copy reports state write");
+  expect(!report.synthetic, "i_upper copy is real forcing skeleton, not synthetic");
+
+  const auto view = state.view().t;
+  expect_close(view(3, 1, 0), 0.0F, "i_upper first copied point");
+  expect_close(view(4, 1, 0), 100.0F, "i_upper second copied point");
+  expect_close(view(3, 3, 1), 12.0F, "i_upper copied y/k point");
+  expect_close(view(4, 3, 1), 112.0F, "i_upper copied last point");
+  expect_close(view(1, 1, 0), 0.0F, "i_upper copy leaves lower active edge unchanged");
+  expect_close(view(0, 1, 0), 0.0F, "i_upper copy leaves i_lower halo unchanged");
+}
+
+void test_direct_boundary_copy_skeleton_writes_j_lower_2d_edge() {
+  tywrf::State<float> state(make_grid());
+  zero_state(state);
+
+  tywrf::io::PackedForcingField packed;
+  packed.layout = tywrf::io::make_canonical_forcing_layout(4, 2, 1);
+  packed.values = {
+      1.0F, 2.0F, 3.0F, 4.0F,
+      11.0F, 12.0F, 13.0F, 14.0F,
+  };
+
+  const auto report = tywrf::io::apply_boundary_copy_skeleton_to_state(
+      state,
+      "MU",
+      tywrf::io::BoundarySide::j_lower,
+      packed);
+
+  expect(report.status == tywrf::io::ForcingApplyStatus::ok,
+         "j_lower 2D direct boundary copy status ok");
+  expect(report.operation ==
+             tywrf::io::ForcingApplyOperation::direct_boundary_copy_skeleton,
+         "j_lower 2D copy operation is direct boundary skeleton");
+  expect(report.point_count == packed.values.size(),
+         "j_lower 2D copy reports copied point count");
+
+  const auto view = state.view().mu;
+  expect_close(view(1, 1), 1.0F, "j_lower first copied row");
+  expect_close(view(4, 1), 4.0F, "j_lower first row last copied column");
+  expect_close(view(1, 2), 11.0F, "j_lower second copied row");
+  expect_close(view(4, 2), 14.0F, "j_lower second row last copied column");
+  expect_close(view(1, 3), 0.0F, "j_lower copy leaves next active row unchanged");
+  expect_close(view(1, 0), 0.0F, "j_lower copy leaves j_lower halo unchanged");
+}
+
 int run_krosa_reference_boundary_pack_smoke() {
   const auto root = reference_dir();
   const auto wrfbdy = root / "wrfbdy_d01";
@@ -267,6 +335,28 @@ int run_krosa_reference_boundary_pack_smoke() {
   expect(!report.would_modify_state, "KROSA U_BXS validation is read-only");
   expect(!report.synthetic, "KROSA U_BXS validation is real forcing, not synthetic");
 
+  const auto copy_report = tywrf::io::apply_boundary_copy_skeleton_to_state(
+      state,
+      "U",
+      tywrf::io::BoundarySide::i_lower,
+      packed);
+  expect(copy_report.status == tywrf::io::ForcingApplyStatus::ok,
+         "KROSA U_BXS direct copy skeleton status ok");
+  expect(copy_report.operation ==
+             tywrf::io::ForcingApplyOperation::direct_boundary_copy_skeleton,
+         "KROSA U_BXS direct copy skeleton operation");
+  expect(copy_report.point_count == u_bxs_slice.values.size(),
+         "KROSA U_BXS direct copy preserves point count");
+  expect(copy_report.would_modify_state,
+         "KROSA U_BXS direct copy reports state write");
+  expect(!copy_report.synthetic,
+         "KROSA U_BXS direct copy is not synthetic nudging");
+  const auto u_view = state.view().u;
+  expect_close(
+      u_view(u_view.halo.i_lower, u_view.halo.j_lower, u_view.halo.k_lower),
+      packed.at(0, 0, 0),
+      "KROSA U_BXS direct copy writes first active U boundary value");
+
   const auto config = state.grid.config();
   expect(config.mass_nx == 265, "KROSA d01 grid mass_nx");
   expect(config.mass_ny == 429, "KROSA d01 grid mass_ny");
@@ -286,6 +376,8 @@ int main() {
   test_boundary_validation_rejects_wrong_shape();
   test_synthetic_nudging_delta_writes_only_requested_window();
   test_synthetic_nudging_delta_rejects_out_of_range_window();
+  test_direct_boundary_copy_skeleton_writes_i_upper_active_edge();
+  test_direct_boundary_copy_skeleton_writes_j_lower_2d_edge();
   if (const int status = run_krosa_reference_boundary_pack_smoke(); status != 0) {
     return status;
   }

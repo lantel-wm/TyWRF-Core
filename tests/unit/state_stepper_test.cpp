@@ -3,6 +3,7 @@
 #include "tywrf/grid.hpp"
 #include "tywrf/state.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -19,6 +20,10 @@ void expect(const bool condition, const std::string_view message) {
     std::cerr << "FAIL: " << message << '\n';
     ++failures;
   }
+}
+
+bool nearly_equal(const float lhs, const float rhs) {
+  return std::abs(lhs - rhs) < 1.0e-5F;
 }
 
 tywrf::Grid make_grid(const std::int32_t nx, const std::int32_t ny) {
@@ -66,6 +71,13 @@ void fill_state(tywrf::State<float>& state, const float start) {
   fill_storage(state.q2, next);
   fill_storage(state.rainc, next);
   fill_storage(state.rainnc, next);
+}
+
+template <typename Storage>
+void fill_storage_constant(Storage& storage, const float value) {
+  for (std::size_t idx = 0; idx < storage.size(); ++idx) {
+    storage.data()[idx] = value;
+  }
 }
 
 template <typename Storage>
@@ -141,6 +153,14 @@ void test_zero_tendency_stepper_preserves_state_and_counts_events() {
          "d01 zero-tendency applies once per parent step");
   expect(report.d02.zero_tendency_apply_count == report.loop.child_steps,
          "d02 zero-tendency applies once per child substep");
+  expect(report.d01.explicit_tendency_apply_count == 0,
+         "default d01 has no explicit tendency applies");
+  expect(report.d02.explicit_tendency_apply_count == 0,
+         "default d02 has no explicit tendency applies");
+  expect(report.d01.tendency_dt_seconds == 21'600,
+         "d01 zero tendency reports integrated dt");
+  expect(report.d02.tendency_dt_seconds == 21'600,
+         "d02 zero tendency reports integrated dt");
   expect(report.d01.zero_tendency_apply_count + report.d02.zero_tendency_apply_count ==
              report.loop.dynamics_tendency_calls,
          "domain apply counts match loop dynamics event count");
@@ -164,6 +184,91 @@ void test_zero_tendency_stepper_preserves_state_and_counts_events() {
   expect(snapshot_state(d02) == d02_before, "d02 state remains unchanged");
 }
 
+void test_zero_tendency_reports_600_second_validation_segment_dt() {
+  tywrf::State<float> d01(make_grid(4, 3));
+  tywrf::State<float> d02(make_grid(5, 4));
+  fill_state(d01, 1.0F);
+  fill_state(d02, 10'000.0F);
+  const auto d01_before = snapshot_state(d01);
+  const auto d02_before = snapshot_state(d02);
+
+  const tywrf::dynamics::SkeletonStateStepper stepper(
+      tywrf::dynamics::make_krosa_10min_validation_loop_config());
+  const auto report = stepper.run(d01, d02);
+
+  expect(report.status == tywrf::dynamics::StateStepStatus::ok,
+         "600 s zero tendency status ok");
+  expect(report.loop.parent_steps == 15, "600 s d01 parent step count");
+  expect(report.loop.child_steps == 75, "600 s d02 child substep count");
+  expect(report.d01.zero_tendency_apply_count == 15,
+         "600 s d01 zero-tendency apply count");
+  expect(report.d02.zero_tendency_apply_count == 75,
+         "600 s d02 zero-tendency apply count");
+  expect(report.d01.tendency_dt_seconds == 600,
+         "600 s d01 zero tendency accumulates event dt");
+  expect(report.d02.tendency_dt_seconds == 600,
+         "600 s d02 zero tendency accumulates event dt");
+  expect(snapshot_state(d01) == d01_before, "600 s d01 zero tendency is no-op");
+  expect(snapshot_state(d02) == d02_before, "600 s d02 zero tendency is no-op");
+}
+
+void test_explicit_tendency_hook_applies_dt_scaled_state_tendency() {
+  const auto d01_grid = make_grid(4, 3);
+  tywrf::State<float> d01(d01_grid);
+  tywrf::State<float> d02(make_grid(5, 4));
+  tywrf::State<float> d01_tendency(d01_grid);
+  fill_state(d01, 1.0F);
+  fill_state(d02, 10'000.0F);
+  fill_storage_constant(d01_tendency.t, 0.25F);
+  const auto d02_before = snapshot_state(d02);
+
+  const auto mass = d01_grid.mass_layout();
+  const auto active_i = mass.i_begin();
+  const auto active_j = mass.j_begin();
+  const auto active_k = mass.k_begin();
+  const auto active_before = d01.t.view()(active_i, active_j, active_k);
+  const auto halo_before = d01.t.view()(0, 0, 0);
+  const auto u_before = d01.u.view()(
+      d01_grid.u_layout().i_begin(),
+      d01_grid.u_layout().j_begin(),
+      d01_grid.u_layout().k_begin());
+
+  const tywrf::dynamics::SkeletonStateStepper stepper(
+      tywrf::dynamics::make_krosa_10min_validation_loop_config());
+  const auto report = stepper.run_with_explicit_tendencies(
+      d01,
+      d02,
+      tywrf::dynamics::ExplicitStateTendencySet{&d01_tendency, nullptr});
+
+  expect(report.status == tywrf::dynamics::StateStepStatus::ok,
+         "explicit tendency status ok");
+  expect(report.d01.explicit_tendency_apply_count == report.loop.parent_steps,
+         "d01 explicit tendency applies once per parent step");
+  expect(report.d01.zero_tendency_apply_count == 0,
+         "d01 explicit tendency replaces zero tendency");
+  expect(report.d01.tendency_dt_seconds == 600,
+         "d01 explicit tendency accumulates 600 s dt");
+  expect(report.d02.zero_tendency_apply_count == report.loop.child_steps,
+         "d02 remains on default zero tendency");
+  expect(report.d02.explicit_tendency_apply_count == 0,
+         "d02 has no explicit tendency applies");
+  expect(report.d02.tendency_dt_seconds == 600,
+         "d02 zero tendency still accumulates 600 s dt");
+
+  expect(nearly_equal(d01.t.view()(active_i, active_j, active_k),
+                      active_before + 150.0F),
+         "d01 active T receives dt-scaled explicit tendency");
+  expect(nearly_equal(d01.t.view()(0, 0, 0), halo_before),
+         "d01 T halo remains unchanged");
+  expect(nearly_equal(d01.u.view()(
+                          d01_grid.u_layout().i_begin(),
+                          d01_grid.u_layout().j_begin(),
+                          d01_grid.u_layout().k_begin()),
+                      u_before),
+         "d01 unrelated U field remains unchanged");
+  expect(snapshot_state(d02) == d02_before, "d02 state remains zero-tendency no-op");
+}
+
 void test_missing_d02_state_reports_failure() {
   tywrf::State<float> d01(make_grid(4, 3));
   fill_state(d01, 2.0F);
@@ -181,6 +286,8 @@ void test_missing_d02_state_reports_failure() {
   expect(report.d02.failed, "d02 domain report marks failure");
   expect(report.d02.tendency_status == tywrf::dynamics::TendencyApplyStatus::null_field,
          "missing d02 domain tendency status");
+  expect(report.d02.tendency_dt_seconds == 0,
+         "missing d02 has no applied tendency dt");
   expect(report.d02.zero_tendency_apply_count == 0, "missing d02 is not applied");
   expect(report.d01.zero_tendency_apply_count == report.loop.parent_steps,
          "d01 continues to apply zero tendency");
@@ -193,6 +300,8 @@ void test_missing_d02_state_reports_failure() {
 
 int main() {
   test_zero_tendency_stepper_preserves_state_and_counts_events();
+  test_zero_tendency_reports_600_second_validation_segment_dt();
+  test_explicit_tendency_hook_applies_dt_scaled_state_tendency();
   test_missing_d02_state_reports_failure();
 
   if (failures != 0) {

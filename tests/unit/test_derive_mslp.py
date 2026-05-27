@@ -125,17 +125,33 @@ def test_write_derived_mslp_copies_source_and_replaces_existing_slp(tmp_path: Pa
     with netCDF4.Dataset(destination) as dataset:
         assert dataset.getncattr("TITLE") == "derive mslp unit test"
         assert dataset.getncattr("TYWRF_DERIVED_SLP") == "true"
+        assert dataset.getncattr("TYWRF_DERIVED_SLP_DIAGNOSTIC") == "true"
+        assert dataset.getncattr("TYWRF_DERIVED_SLP_IS_PSFC_PROXY") == "false"
         assert "P" in dataset.variables
         assert "SLP" in dataset.variables
         assert dataset.variables["SLP"].dimensions == dataset.variables["PSFC"].dimensions
         assert dataset.variables["SLP"].units == "hPa"
         assert dataset.variables["SLP"].derived_from == "P,PB,T,QVAPOR,PH,PHB,PSFC"
+        assert dataset.variables["SLP"].TYWRF_DERIVED_DIAGNOSTIC == "true"
+        assert dataset.variables["SLP"].TYWRF_IS_PSFC_PROXY == "false"
+        assert "not a PSFC proxy" in dataset.variables["SLP"].description
         np.testing.assert_allclose(
             dataset.variables["SLP"][:],
             _expected_slp_hpa(fields).astype(np.float32),
             rtol=2e-7,
         )
         assert not np.all(dataset.variables["SLP"][:] == 9999.0)
+
+
+def test_write_derived_mslp_rejects_required_source_field_output_name(tmp_path: Path) -> None:
+    source = tmp_path / "source.nc"
+    destination = tmp_path / "destination.nc"
+    _write_core_fields(source)
+
+    with pytest.raises(DeriveMSLPError, match="would replace a required source field"):
+        write_derived_mslp(source, destination, variable_name="PSFC")
+
+    assert not destination.exists()
 
 
 def test_derive_mslp_requires_all_core_source_fields(tmp_path: Path) -> None:
