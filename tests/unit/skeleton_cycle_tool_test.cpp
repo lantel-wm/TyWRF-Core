@@ -364,6 +364,16 @@ void assert_parent_fill_output(
   assert(read_text_attr(file_id, "TYWRF_EXPECTED_TO_MEET_THRESHOLDS") == "false");
   assert(read_text_attr(file_id, "TYWRF_NOT_PHYSICAL") == "true");
   assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
+  assert(read_text_attr(file_id, "TYWRF_MINIMUM_STATIC_REFRESH_FIELDS") == "XLAT,XLONG,HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_STAGGERED_STATIC_COORDS_STATUS") ==
+      "pending_unless_emitted_later");
+  assert(
+      read_text_attr(file_id, "TYWRF_P_DERIVED_REFRESH_STATUS") ==
+      "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS") ==
+      "diagnostic_only_nonphysical_non_gate");
   assert(read_text_attr(file_id, "TYWRF_NEEDS_PARENT_FILL") == "false");
   assert(read_text_attr(file_id, "TYWRF_REMAP_EXPOSED_CELLS_FILLED_BY_PARENT") == "true");
   assert(read_text_attr(file_id, "TYWRF_UNFILLED_EXPOSED_CELLS") == "none_parent_fill_diagnostic");
@@ -396,6 +406,19 @@ void assert_parent_fill_output(
   assert(report.find("\"exposed_cells_filled_by_parent\": true") != std::string::npos);
   assert(report.find("\"gate_candidate\": false") != std::string::npos);
   assert(report.find("\"integrator_output\": false") != std::string::npos);
+  assert(report.find("\"minimum_static_refresh_fields\": [\"XLAT\", \"XLONG\", \"HGT\"]") !=
+         std::string::npos);
+  assert(report.find("\"staggered_static_coords_status\": \"pending_unless_emitted_later\"") !=
+         std::string::npos);
+  assert(
+      report.find(
+          "\"p_derived_refresh_status\": "
+          "\"pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill\"") !=
+      std::string::npos);
+  assert(
+      report.find(
+          "\"direct_wrf_end_state_oracle_status\": "
+          "\"diagnostic_only_nonphysical_non_gate\"") != std::string::npos);
   assert(report.find("\"parent_fill_source\": \"" + parent_fill_state.string()) !=
          std::string::npos);
   assert(report.find("\"remap_parent_fill_point_count\":") != std::string::npos);
@@ -495,6 +518,16 @@ void run_real_krosa_smoke_if_available(
   assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "false");
   assert(read_text_attr(file_id, "TYWRF_NOT_PHYSICAL") == "true");
   assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
+  assert(read_text_attr(file_id, "TYWRF_MINIMUM_STATIC_REFRESH_FIELDS") == "XLAT,XLONG,HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_STAGGERED_STATIC_COORDS_STATUS") ==
+      "pending_unless_emitted_later");
+  assert(
+      read_text_attr(file_id, "TYWRF_P_DERIVED_REFRESH_STATUS") ==
+      "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS") ==
+      "diagnostic_only_nonphysical_non_gate");
   assert(read_text_attr(file_id, "TYWRF_PARENT_FILL_SOURCE") == reference_end.string());
   assert(read_double_attr(file_id, "TYWRF_REMAP_PARENT_FILL_FIELD_COUNT") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_REMAP_PARENT_FILL_POINT_COUNT") > 0.0);
@@ -502,6 +535,28 @@ void run_real_krosa_smoke_if_available(
   assert(read_double_attr(file_id, "DY") == 2000.0);
   assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
   check_nc(nc_close(file_id), "close real KROSA parent-fill output");
+
+  std::ifstream parent_fill_report_file(parent_fill_report);
+  std::ostringstream parent_fill_report_buffer;
+  parent_fill_report_buffer << parent_fill_report_file.rdbuf();
+  const auto parent_fill_report_text = parent_fill_report_buffer.str();
+  assert(
+      parent_fill_report_text.find(
+          "\"minimum_static_refresh_fields\": [\"XLAT\", \"XLONG\", \"HGT\"]") !=
+      std::string::npos);
+  assert(
+      parent_fill_report_text.find(
+          "\"staggered_static_coords_status\": \"pending_unless_emitted_later\"") !=
+      std::string::npos);
+  assert(
+      parent_fill_report_text.find(
+          "\"p_derived_refresh_status\": "
+          "\"pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill\"") !=
+      std::string::npos);
+  assert(
+      parent_fill_report_text.find(
+          "\"direct_wrf_end_state_oracle_status\": "
+          "\"diagnostic_only_nonphysical_non_gate\"") != std::string::npos);
 }
 
 }  // namespace

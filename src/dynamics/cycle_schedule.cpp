@@ -1,5 +1,7 @@
 #include "tywrf/dynamics/cycle_schedule.hpp"
 
+#include "tywrf/nest/nest_interface.hpp"
+
 #include <stdexcept>
 #include <utility>
 
@@ -47,6 +49,9 @@ void validate_config(const CycleScheduleConfig& config) {
           "history interval must be positive");
   require(config.moving_nest_interval_seconds > 0,
           "moving nest interval must be positive");
+  require(config.moving_nest_pose_event_count == 0 ||
+              config.moving_nest_pose_events != nullptr,
+          "moving nest pose metadata requires a non-null event array");
 }
 
 void count_call(const CycleScheduleCallKind kind, CycleScheduleSummary& summary) noexcept {
@@ -79,11 +84,39 @@ void count_call(const CycleScheduleCallKind kind, CycleScheduleSummary& summary)
     case CycleScheduleCallKind::history_output:
       ++summary.history_outputs;
       break;
+    case CycleScheduleCallKind::moving_nest_post_move_parent_fill:
+      ++summary.moving_nest_parent_fills;
+      break;
     case CycleScheduleCallKind::moving_nest_position_update:
       ++summary.moving_nest_move_checks;
       ++summary.moving_nest_position_updates;
       break;
   }
+}
+
+[[nodiscard]] bool moving_nest_pose_changed_at(
+    const CycleScheduleConfig& config,
+    const std::int64_t model_seconds) noexcept {
+  for (std::size_t index = 0; index < config.moving_nest_pose_event_count; ++index) {
+    const auto& event = config.moving_nest_pose_events[index];
+    if (event.model_seconds == model_seconds) {
+      return event.moved;
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] std::int64_t count_post_move_parent_fills(
+    const CycleScheduleConfig& config) noexcept {
+  std::int64_t count = 0;
+  for (std::size_t index = 0; index < config.moving_nest_pose_event_count; ++index) {
+    const auto& event = config.moving_nest_pose_events[index];
+    if (event.moved && event.model_seconds > 0 &&
+        event.model_seconds <= config.segment_seconds) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 void emit_call(
@@ -144,10 +177,11 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
       static_cast<std::int64_t>(config.segment_seconds /
                                 config.history_interval_seconds) *
       2;
+  const auto post_move_parent_fills = count_post_move_parent_fills(config);
   const auto expected_calls =
       boundary_input_refreshes + spectral_nudging_input_refreshes +
       parent_steps * 4 + child_substeps + vortex_center_recomputes +
-      history_outputs;
+      history_outputs + post_move_parent_fills;
   calls.reserve(static_cast<std::size_t>(expected_calls));
   summary.parent_steps = parent_steps;
   summary.child_substeps = child_substeps;
@@ -187,6 +221,12 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
     emit_call(
         calls, summary, CycleScheduleCallKind::moving_nest_move_check,
         DomainId::d02, parent_step, -1, parent_end, parent_end, parent_end);
+    if (moving_nest_pose_changed_at(config, parent_end)) {
+      emit_call(
+          calls, summary,
+          CycleScheduleCallKind::moving_nest_post_move_parent_fill,
+          DomainId::d02, parent_step, -1, parent_end, parent_end, parent_end);
+    }
 
     for (std::int64_t nominal = 0;
          nominal <= config.segment_seconds;
@@ -240,8 +280,22 @@ CycleScheduleConfig make_krosa_6h_cycle_schedule_config() noexcept {
   return {};
 }
 
+CycleScheduleConfig make_krosa_10min_cycle_schedule_config() noexcept {
+  auto config = make_krosa_6h_cycle_schedule_config();
+  config.segment_seconds = 600;
+  config.history_interval_seconds = 600;
+  const auto timeline = nest::make_krosa_first_10min_d02_pose_timeline();
+  config.moving_nest_pose_events = timeline.events;
+  config.moving_nest_pose_event_count = timeline.event_count;
+  return config;
+}
+
 CycleSchedule build_krosa_6h_cycle_schedule() {
   return CycleSchedule::build(make_krosa_6h_cycle_schedule_config());
+}
+
+CycleSchedule build_krosa_10min_cycle_schedule() {
+  return CycleSchedule::build(make_krosa_10min_cycle_schedule_config());
 }
 
 std::string_view cycle_schedule_call_name(const CycleScheduleCallKind kind) noexcept {
@@ -266,6 +320,8 @@ std::string_view cycle_schedule_call_name(const CycleScheduleCallKind kind) noex
       return "two_way_feedback";
     case CycleScheduleCallKind::history_output:
       return "history_output";
+    case CycleScheduleCallKind::moving_nest_post_move_parent_fill:
+      return "moving_nest_post_move_parent_fill";
   }
   return "unknown";
 }

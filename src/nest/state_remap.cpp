@@ -86,6 +86,19 @@ template <typename Real>
          window.extent_i == active_nx(field) && window.extent_j == active_ny(field);
 }
 
+template <typename Real>
+[[nodiscard]] std::uint64_t exposed_horizontal_cell_count(
+    const RemapWindow& window,
+    const FieldView3D<Real>& field) noexcept {
+  const auto field_cell_count =
+      static_cast<std::uint64_t>(active_nx(field)) *
+      static_cast<std::uint64_t>(active_ny(field));
+  const auto overlap_cell_count =
+      static_cast<std::uint64_t>(window.extent_i) *
+      static_cast<std::uint64_t>(window.extent_j);
+  return field_cell_count - overlap_cell_count;
+}
+
 [[nodiscard]] bool all_new_active_cells_covered(
     const RemapPlan& plan,
     const StateView<float>& new_child) noexcept {
@@ -290,7 +303,7 @@ void fill_exposed_3d(
   }
 }
 
-void fill_all_supported_exposed_cells(
+void fill_wrf_direct_parent_fill_exposed_cells(
     const RemapPlan& plan,
     const StateView<const float>& parent_view,
     const StateView<float>& new_view,
@@ -302,7 +315,6 @@ void fill_all_supported_exposed_cells(
   fill_exposed_3d(plan.w_full, parent_view.phb, new_view.phb, report);
 
   fill_exposed_3d(plan.mass, parent_view.t, new_view.t, report);
-  fill_exposed_3d(plan.mass, parent_view.p, new_view.p, report);
   fill_exposed_3d(plan.mass, parent_view.pb, new_view.pb, report);
   fill_exposed_3d(plan.mass, parent_view.qvapor, new_view.qvapor, report);
   fill_exposed_3d(plan.mass, parent_view.qcloud, new_view.qcloud, report);
@@ -398,9 +410,11 @@ ChildStateRemapReport remap_child_state_overlap_with_parent_fill(
 
   const auto parent_view = parent_filled_child.view();
   const auto new_view = new_child.view();
-  fill_all_supported_exposed_cells(plan, parent_view, new_view, report);
+  fill_wrf_direct_parent_fill_exposed_cells(plan, parent_view, new_view, report);
 
   report.filled_exposed_cells = report.parent_fill_point_count > 0;
+  report.needs_derived_pressure_refresh =
+      exposed_horizontal_cell_count(plan.mass, new_view.p) > 0;
   report.needs_parent_fill = false;
   return report;
 }

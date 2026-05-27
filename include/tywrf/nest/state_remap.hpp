@@ -15,6 +15,7 @@ struct ChildStateRemapReport {
   std::uint64_t parent_fill_point_count = 0;
   bool needs_parent_fill = false;
   bool filled_exposed_cells = false;
+  bool needs_derived_pressure_refresh = false;
   bool copied_halo_cells = false;
 
   [[nodiscard]] constexpr bool ok() const noexcept {
@@ -32,8 +33,10 @@ struct ChildStateRemapReport {
 
 // Staging helper for moving nests: copies the old-child overlap, then fills
 // newly exposed active cells from an already interpolated child-shaped parent
-// state. Halo cells are left untouched; no parent-child interpolation is done
-// here.
+// state for WRF direct parent-fill fields. Halo cells are left untouched; no
+// parent-child interpolation is done here. Perturbation pressure P is copied
+// only in the retained overlap and remains pending derived refresh in exposed
+// cells.
 [[nodiscard]] ChildStateRemapReport remap_child_state_overlap_with_parent_fill(
     const RemapPlan& plan,
     const State<float>& old_child,

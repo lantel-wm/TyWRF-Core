@@ -2,10 +2,15 @@
 
 #include "tywrf/dynamics/dynamics_loop.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string_view>
 #include <vector>
+
+namespace tywrf::nest {
+struct MovingNestPoseEvent;
+}  // namespace tywrf::nest
 
 namespace tywrf::dynamics {
 
@@ -19,6 +24,7 @@ enum class CycleScheduleCallKind : std::uint8_t {
   parent_child_interpolation,
   two_way_feedback,
   history_output,
+  moving_nest_post_move_parent_fill,
   moving_nest_position_update,
 };
 
@@ -44,6 +50,8 @@ struct CycleScheduleConfig {
   SegmentEndpointPolicy endpoint_policy = SegmentEndpointPolicy::bracket_start_and_end;
   MovingNestTimingPolicy moving_nest_policy =
       MovingNestTimingPolicy::snap_to_next_parent_step;
+  const nest::MovingNestPoseEvent* moving_nest_pose_events = nullptr;
+  std::size_t moving_nest_pose_event_count = 0;
 };
 
 struct CycleScheduleCall {
@@ -71,6 +79,7 @@ struct CycleScheduleSummary {
   std::int64_t moving_nest_move_checks = 0;
   std::int64_t vortex_center_recomputes = 0;
   std::int64_t moving_nest_position_updates = 0;
+  std::int64_t moving_nest_parent_fills = 0;
   std::int64_t parent_child_interpolations = 0;
   std::int64_t two_way_feedbacks = 0;
   std::int64_t history_outputs = 0;
@@ -94,7 +103,9 @@ class CycleSchedule {
 };
 
 [[nodiscard]] CycleScheduleConfig make_krosa_6h_cycle_schedule_config() noexcept;
+[[nodiscard]] CycleScheduleConfig make_krosa_10min_cycle_schedule_config() noexcept;
 [[nodiscard]] CycleSchedule build_krosa_6h_cycle_schedule();
+[[nodiscard]] CycleSchedule build_krosa_10min_cycle_schedule();
 
 [[nodiscard]] std::string_view cycle_schedule_call_name(
     CycleScheduleCallKind kind) noexcept;

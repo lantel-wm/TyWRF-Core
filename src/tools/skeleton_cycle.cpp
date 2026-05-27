@@ -35,6 +35,11 @@ const std::vector<std::string>& template_variable_names() {
   return names;
 }
 
+const std::vector<std::string>& minimum_static_refresh_fields() {
+  static const std::vector<std::string> names = {"XLAT", "XLONG", "HGT"};
+  return names;
+}
+
 struct Options {
   std::filesystem::path state_path;
   std::filesystem::path template_path;
@@ -319,6 +324,17 @@ validation-gate candidate.
   return std::find(values.begin(), values.end(), value) != values.end();
 }
 
+[[nodiscard]] std::string comma_join(const std::vector<std::string>& values) {
+  std::ostringstream joined;
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    if (index != 0) {
+      joined << ",";
+    }
+    joined << values[index];
+  }
+  return joined.str();
+}
+
 [[nodiscard]] std::vector<std::string> state_variables_from_selection(
     const std::vector<std::string>& variables) {
   const auto writable = tywrf::io::wrf_state_writable_field_names();
@@ -574,6 +590,11 @@ void mark_skeleton_output(
   write_text_attr(file, "TYWRF_STATIC_SOURCE", options.template_path.string());
   write_text_attr(
       file,
+      "TYWRF_MINIMUM_STATIC_REFRESH_FIELDS",
+      comma_join(minimum_static_refresh_fields()));
+  write_text_attr(file, "TYWRF_STAGGERED_STATIC_COORDS_STATUS", "pending_unless_emitted_later");
+  write_text_attr(
+      file,
       "TYWRF_TEMPLATE_SOURCE_ROLE",
       "static_fields_xlat_xlong_hgt_and_default_times_when_no_times_override");
   write_text_attr(file, "TYWRF_TIMES_SOURCE", times_source(options));
@@ -655,6 +676,14 @@ void mark_skeleton_output(
           file,
           "TYWRF_PARENT_FILL_TIME_INDEX",
           static_cast<double>(options.parent_fill_time_index));
+      write_text_attr(
+          file,
+          "TYWRF_P_DERIVED_REFRESH_STATUS",
+          "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill");
+      write_text_attr(
+          file,
+          "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS",
+          "diagnostic_only_nonphysical_non_gate");
     }
   }
   file.check(nc_enddef(file.id()), "leave define mode");
@@ -792,6 +821,18 @@ void print_report(
   write_json_string(std::cout, "template", options.template_path.string(), true, pretty);
   write_json_string(std::cout, "state_source", options.state_path.string(), true, pretty);
   write_json_string(std::cout, "static_source", options.template_path.string(), true, pretty);
+  write_json_array(
+      std::cout,
+      "minimum_static_refresh_fields",
+      minimum_static_refresh_fields(),
+      true,
+      pretty);
+  write_json_string(
+      std::cout,
+      "staggered_static_coords_status",
+      "pending_unless_emitted_later",
+      true,
+      pretty);
   write_json_string(std::cout, "times_source", times_source(options), true, pretty);
   write_json_string(
       std::cout,
@@ -922,6 +963,18 @@ void print_report(
           std::cout,
           "remap_parent_fill_point_count",
           report.parent_fill_point_count,
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "p_derived_refresh_status",
+          "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill",
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "direct_wrf_end_state_oracle_status",
+          "diagnostic_only_nonphysical_non_gate",
           true,
           pretty);
     }

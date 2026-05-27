@@ -168,6 +168,56 @@ void expect_10min_parent_step_order(
   }
 }
 
+void expect_10min_parent_fill_hooks(
+    const std::vector<CycleScheduleCall>& calls,
+    const std::int32_t parent_time_step_seconds) {
+  const auto parent_fills = find_calls_by_kind(
+      calls, CycleScheduleCallKind::moving_nest_post_move_parent_fill);
+  expect(parent_fills.size() == 12,
+         "10 min KROSA timeline emits parent-fill hooks for 12 actual moves");
+
+  for (std::int64_t parent_step = 0; parent_step < 15; ++parent_step) {
+    const auto parent_end =
+        (parent_step + 1) * static_cast<std::int64_t>(parent_time_step_seconds);
+    const auto move_check_index = find_call_index(
+        calls, CycleScheduleCallKind::moving_nest_move_check, DomainId::d02,
+        parent_step, -1);
+    const auto parent_fill_index = find_call_index(
+        calls, CycleScheduleCallKind::moving_nest_post_move_parent_fill,
+        DomainId::d02, parent_step, -1);
+    const auto parent_step_label =
+        std::string("10 min parent step ") + std::to_string(parent_step);
+
+    expect(move_check_index != calls.size(), parent_step_label + " move check exists");
+    if (parent_step < 12) {
+      expect(parent_fill_index != calls.size(),
+             parent_step_label + " parent-fill hook exists after actual move");
+      if (move_check_index != calls.size() && parent_fill_index != calls.size()) {
+        expect_call(
+            calls[parent_fill_index],
+            CycleScheduleCallKind::moving_nest_post_move_parent_fill,
+            DomainId::d02, parent_step, -1, parent_end, parent_end, parent_end,
+            parent_step_label + " parent-fill hook");
+        expect(parent_fill_index == move_check_index + 1,
+               parent_step_label + " parent-fill hook immediately follows move check");
+      }
+    } else {
+      expect(parent_fill_index == calls.size(),
+             parent_step_label + " endpoint hold has no parent-fill hook");
+    }
+  }
+
+  expect(find_call(calls, CycleScheduleCallKind::moving_nest_post_move_parent_fill,
+                   520) == nullptr,
+         "10 min first endpoint hold at 520 s has no parent-fill hook");
+  expect(find_call(calls, CycleScheduleCallKind::moving_nest_post_move_parent_fill,
+                   560) == nullptr,
+         "10 min second endpoint hold at 560 s has no parent-fill hook");
+  expect(find_call(calls, CycleScheduleCallKind::moving_nest_post_move_parent_fill,
+                   600) == nullptr,
+         "10 min final endpoint hold at 600 s has no parent-fill hook");
+}
+
 }  // namespace
 
 int main() {
@@ -185,6 +235,17 @@ int main() {
   expect(config.moving_nest_interval_seconds == 900,
          "moving nest interval is 15 minutes");
   expect(config.history_interval_seconds == 21'600, "history interval is 6 h");
+
+  const auto ten_min_config =
+      tywrf::dynamics::make_krosa_10min_cycle_schedule_config();
+  expect(ten_min_config.segment_seconds == 600,
+         "10 min schedule config segment is 600 s");
+  expect(ten_min_config.history_interval_seconds == 600,
+         "10 min schedule config history interval is 600 s");
+  expect(ten_min_config.moving_nest_pose_events != nullptr,
+         "10 min schedule config carries moving-nest pose metadata");
+  expect(ten_min_config.moving_nest_pose_event_count == 16,
+         "10 min schedule config carries the first KROSA pose timeline");
 
   const auto schedule = tywrf::dynamics::build_krosa_6h_cycle_schedule();
   const auto summary = schedule.summary();
@@ -214,6 +275,8 @@ int main() {
          "moving nest move check is called once per parent step");
   expect(summary.vortex_center_recomputes == expected_vortex_recomputes,
          "vortex center recompute has inclusive 15 minute endpoint schedule");
+  expect(summary.moving_nest_parent_fills == 0,
+         "6 h schedule has no parent-fill hooks without explicit pose-change metadata");
   expect(summary.parent_child_interpolations == expected_child_substeps,
          "parent-child interpolation is called once per d02 substep");
   expect(summary.two_way_feedbacks == expected_parent_steps,
@@ -378,6 +441,11 @@ int main() {
       "call kind name");
   expect(
       tywrf::dynamics::cycle_schedule_call_name(
+          CycleScheduleCallKind::moving_nest_post_move_parent_fill) ==
+          "moving_nest_post_move_parent_fill",
+      "post-move parent-fill call kind name");
+  expect(
+      tywrf::dynamics::cycle_schedule_call_name(
           CycleScheduleCallKind::vortex_center_recompute) ==
           "vortex_center_recompute",
       "vortex recompute call kind name");
@@ -392,9 +460,8 @@ int main() {
           "snap_to_next_parent_step",
       "moving nest policy name");
 
-  auto validation_config = tywrf::dynamics::make_krosa_6h_cycle_schedule_config();
-  validation_config.segment_seconds = 600;
-  validation_config.history_interval_seconds = 600;
+  const auto validation_config =
+      tywrf::dynamics::make_krosa_10min_cycle_schedule_config();
   const auto validation_schedule =
       tywrf::dynamics::CycleSchedule::build(validation_config);
   const auto validation_summary = validation_schedule.summary();
@@ -415,6 +482,8 @@ int main() {
          "10 min validation segment has one moving nest check per parent step");
   expect(validation_summary.vortex_center_recomputes == 1,
          "10 min validation segment has only the snapped initial vortex recompute");
+  expect(validation_summary.moving_nest_parent_fills == 12,
+         "10 min validation segment has parent-fill hooks for actual d02 moves only");
 
   const auto validation_boundary_refreshes = find_calls_by_kind(
       validation_calls, CycleScheduleCallKind::boundary_input_refresh);
@@ -458,6 +527,7 @@ int main() {
                    900) == nullptr,
          "10 min validation segment does not emit the nominal 900 s recompute");
   expect_10min_parent_step_order(validation_calls, 15, 5, 40, 8);
+  expect_10min_parent_fill_hooks(validation_calls, 40);
 
   const auto final_validation_move_check = find_call_index(
       validation_calls, CycleScheduleCallKind::moving_nest_move_check,

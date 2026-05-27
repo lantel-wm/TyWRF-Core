@@ -22,12 +22,31 @@ tywrf::Grid make_child_grid() {
   });
 }
 
+tywrf::Grid make_ratio5_child_grid() {
+  return tywrf::Grid({
+      .mass_nx = 10,
+      .mass_ny = 5,
+      .mass_nz = 2,
+      .full_nz = 3,
+      .halo = tywrf::Halo3D{1, 1, 1, 1, 1, 1},
+  });
+}
+
 tywrf::nest::ParentChildDescriptor make_small_descriptor() {
   return {
       tywrf::nest::HorizontalDomainDescriptor{1, 2'000, 8, 8, 9, 9},
       tywrf::nest::HorizontalDomainDescriptor{2, 2'000, 4, 3, 5, 4},
       1,
       1,
+  };
+}
+
+tywrf::nest::ParentChildDescriptor make_ratio5_descriptor() {
+  return {
+      tywrf::nest::HorizontalDomainDescriptor{1, 10'000, 8, 8, 9, 9},
+      tywrf::nest::HorizontalDomainDescriptor{2, 2'000, 10, 5, 11, 6},
+      5,
+      5,
   };
 }
 
@@ -257,6 +276,133 @@ void expect_parent_fill_spots_3d(
       label);
 }
 
+void expect_i_strip_parent_fill_2d(
+    const tywrf::FieldStorage2D<float>& old_field,
+    const tywrf::FieldStorage2D<float>& parent_field,
+    const tywrf::FieldStorage2D<float>& new_field,
+    const tywrf::nest::RemapWindow& window,
+    const std::int32_t exposed_width,
+    const bool direct_parent_fill,
+    const std::string_view label) {
+  const auto old_layout = old_field.layout();
+  const auto parent_layout = parent_field.layout();
+  const auto new_layout = new_field.layout();
+  const auto old_view = old_field.view();
+  const auto parent_view = parent_field.view();
+  const auto new_view = new_field.view();
+
+  assert(window.new_i_begin == 0);
+  assert(window.new_j_begin == 0);
+  assert(window.old_i_begin == exposed_width);
+  assert(window.old_j_begin == 0);
+  assert(window.extent_i == new_layout.active_nx() - exposed_width);
+  assert(window.extent_j == new_layout.active_ny());
+
+  for (std::int32_t j = 0; j < new_layout.active_ny(); ++j) {
+    for (std::int32_t i = 0; i < new_layout.active_nx(); ++i) {
+      const auto new_i = new_layout.i_begin() + i;
+      const auto new_j = new_layout.j_begin() + j;
+      if (i < window.extent_i) {
+        const auto old_i = old_layout.i_begin() + i + window.old_i_begin;
+        const auto old_j = old_layout.j_begin() + j;
+        expect_value(new_view(new_i, new_j), old_view(old_i, old_j), label);
+      } else if (direct_parent_fill) {
+        const auto parent_i = parent_layout.i_begin() + i;
+        const auto parent_j = parent_layout.j_begin() + j;
+        expect_value(new_view(new_i, new_j), parent_view(parent_i, parent_j), label);
+      } else {
+        expect_value(new_view(new_i, new_j), kSentinel, label);
+      }
+    }
+  }
+}
+
+void expect_i_strip_parent_fill_3d(
+    const tywrf::FieldStorage3D<float>& old_field,
+    const tywrf::FieldStorage3D<float>& parent_field,
+    const tywrf::FieldStorage3D<float>& new_field,
+    const tywrf::nest::RemapWindow& window,
+    const std::int32_t exposed_width,
+    const bool direct_parent_fill,
+    const std::string_view label) {
+  const auto old_layout = old_field.layout();
+  const auto parent_layout = parent_field.layout();
+  const auto new_layout = new_field.layout();
+  const auto old_view = old_field.view();
+  const auto parent_view = parent_field.view();
+  const auto new_view = new_field.view();
+
+  assert(window.new_i_begin == 0);
+  assert(window.new_j_begin == 0);
+  assert(window.old_i_begin == exposed_width);
+  assert(window.old_j_begin == 0);
+  assert(window.extent_i == new_layout.active_nx() - exposed_width);
+  assert(window.extent_j == new_layout.active_ny());
+
+  for (std::int32_t j = 0; j < new_layout.active_ny(); ++j) {
+    for (std::int32_t k = 0; k < new_layout.active_nz(); ++k) {
+      for (std::int32_t i = 0; i < new_layout.active_nx(); ++i) {
+        const auto new_i = new_layout.i_begin() + i;
+        const auto new_j = new_layout.j_begin() + j;
+        const auto new_k = new_layout.k_begin() + k;
+        if (i < window.extent_i) {
+          const auto old_i = old_layout.i_begin() + i + window.old_i_begin;
+          const auto old_j = old_layout.j_begin() + j;
+          const auto old_k = old_layout.k_begin() + k;
+          expect_value(new_view(new_i, new_j, new_k), old_view(old_i, old_j, old_k), label);
+        } else if (direct_parent_fill) {
+          const auto parent_i = parent_layout.i_begin() + i;
+          const auto parent_j = parent_layout.j_begin() + j;
+          const auto parent_k = parent_layout.k_begin() + k;
+          expect_value(
+              new_view(new_i, new_j, new_k),
+              parent_view(parent_i, parent_j, parent_k),
+              label);
+        } else {
+          expect_value(new_view(new_i, new_j, new_k), kSentinel, label);
+        }
+      }
+    }
+  }
+}
+
+void expect_halo_2d(
+    const tywrf::FieldStorage2D<float>& field,
+    const std::string_view label) {
+  const auto layout = field.layout();
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.ny; ++j) {
+    for (std::int32_t i = 0; i < layout.nx; ++i) {
+      const bool is_halo =
+          i < layout.i_begin() || i >= layout.i_end() ||
+          j < layout.j_begin() || j >= layout.j_end();
+      if (is_halo) {
+        expect_value(view(i, j), kSentinel, label);
+      }
+    }
+  }
+}
+
+void expect_halo_3d(
+    const tywrf::FieldStorage3D<float>& field,
+    const std::string_view label) {
+  const auto layout = field.layout();
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.ny; ++j) {
+    for (std::int32_t k = 0; k < layout.nz; ++k) {
+      for (std::int32_t i = 0; i < layout.nx; ++i) {
+        const bool is_halo =
+            i < layout.i_begin() || i >= layout.i_end() ||
+            j < layout.j_begin() || j >= layout.j_end() ||
+            k < layout.k_begin() || k >= layout.k_end();
+        if (is_halo) {
+          expect_value(view(i, j, k), kSentinel, label);
+        }
+      }
+    }
+  }
+}
+
 [[nodiscard]] std::uint64_t points_2d(
     const tywrf::nest::RemapWindow& window) {
   return static_cast<std::uint64_t>(window.extent_i) *
@@ -342,6 +488,158 @@ void expect_representative_halos(const tywrf::State<float>& state) {
   expect_value(mu(0, mu_layout.j_begin()), kSentinel, "MU halo");
 }
 
+void expect_all_halos(const tywrf::State<float>& state) {
+  expect_halo_3d(state.u, "U halo");
+  expect_halo_3d(state.v, "V halo");
+  expect_halo_3d(state.w, "W halo");
+  expect_halo_3d(state.ph, "PH halo");
+  expect_halo_3d(state.phb, "PHB halo");
+  expect_halo_3d(state.t, "T halo");
+  expect_halo_3d(state.p, "P halo");
+  expect_halo_3d(state.pb, "PB halo");
+  expect_halo_3d(state.qvapor, "QVAPOR halo");
+  expect_halo_3d(state.qcloud, "QCLOUD halo");
+  expect_halo_3d(state.qrain, "QRAIN halo");
+  expect_halo_3d(state.qice, "QICE halo");
+  expect_halo_3d(state.qsnow, "QSNOW halo");
+  expect_halo_3d(state.qgraup, "QGRAUP halo");
+  expect_halo_3d(state.qnice, "QNICE halo");
+  expect_halo_3d(state.qnrain, "QNRAIN halo");
+  expect_halo_2d(state.mu, "MU halo");
+  expect_halo_2d(state.mub, "MUB halo");
+  expect_halo_2d(state.psfc, "PSFC halo");
+  expect_halo_2d(state.u10, "U10 halo");
+  expect_halo_2d(state.v10, "V10 halo");
+  expect_halo_2d(state.t2, "T2 halo");
+  expect_halo_2d(state.q2, "Q2 halo");
+  expect_halo_2d(state.rainc, "RAINC halo");
+  expect_halo_2d(state.rainnc, "RAINNC halo");
+}
+
+void expect_wrf_direct_parent_fill_i_strip(
+    const tywrf::State<float>& old_state,
+    const tywrf::State<float>& parent_state,
+    const tywrf::State<float>& new_state,
+    const tywrf::nest::RemapPlan& plan,
+    const std::int32_t exposed_width) {
+  expect_i_strip_parent_fill_3d(
+      old_state.u, parent_state.u, new_state.u, plan.u, exposed_width, true, "U");
+  expect_i_strip_parent_fill_3d(
+      old_state.v, parent_state.v, new_state.v, plan.v, exposed_width, true, "V");
+  expect_i_strip_parent_fill_3d(
+      old_state.w, parent_state.w, new_state.w, plan.w_full, exposed_width, true, "W");
+  expect_i_strip_parent_fill_3d(
+      old_state.ph, parent_state.ph, new_state.ph, plan.w_full, exposed_width, true, "PH");
+  expect_i_strip_parent_fill_3d(
+      old_state.phb, parent_state.phb, new_state.phb, plan.w_full, exposed_width, true, "PHB");
+  expect_i_strip_parent_fill_3d(
+      old_state.t, parent_state.t, new_state.t, plan.mass, exposed_width, true, "T");
+  expect_i_strip_parent_fill_3d(
+      old_state.p, parent_state.p, new_state.p, plan.mass, exposed_width, false, "P");
+  expect_i_strip_parent_fill_3d(
+      old_state.pb, parent_state.pb, new_state.pb, plan.mass, exposed_width, true, "PB");
+  expect_i_strip_parent_fill_3d(
+      old_state.qvapor,
+      parent_state.qvapor,
+      new_state.qvapor,
+      plan.mass,
+      exposed_width,
+      true,
+      "QVAPOR");
+  expect_i_strip_parent_fill_3d(
+      old_state.qcloud,
+      parent_state.qcloud,
+      new_state.qcloud,
+      plan.mass,
+      exposed_width,
+      true,
+      "QCLOUD");
+  expect_i_strip_parent_fill_3d(
+      old_state.qrain,
+      parent_state.qrain,
+      new_state.qrain,
+      plan.mass,
+      exposed_width,
+      true,
+      "QRAIN");
+  expect_i_strip_parent_fill_3d(
+      old_state.qice,
+      parent_state.qice,
+      new_state.qice,
+      plan.mass,
+      exposed_width,
+      true,
+      "QICE");
+  expect_i_strip_parent_fill_3d(
+      old_state.qsnow,
+      parent_state.qsnow,
+      new_state.qsnow,
+      plan.mass,
+      exposed_width,
+      true,
+      "QSNOW");
+  expect_i_strip_parent_fill_3d(
+      old_state.qgraup,
+      parent_state.qgraup,
+      new_state.qgraup,
+      plan.mass,
+      exposed_width,
+      true,
+      "QGRAUP");
+  expect_i_strip_parent_fill_3d(
+      old_state.qnice,
+      parent_state.qnice,
+      new_state.qnice,
+      plan.mass,
+      exposed_width,
+      true,
+      "QNICE");
+  expect_i_strip_parent_fill_3d(
+      old_state.qnrain,
+      parent_state.qnrain,
+      new_state.qnrain,
+      plan.mass,
+      exposed_width,
+      true,
+      "QNRAIN");
+  expect_i_strip_parent_fill_2d(
+      old_state.mu, parent_state.mu, new_state.mu, plan.surface, exposed_width, true, "MU");
+  expect_i_strip_parent_fill_2d(
+      old_state.mub, parent_state.mub, new_state.mub, plan.surface, exposed_width, true, "MUB");
+  expect_i_strip_parent_fill_2d(
+      old_state.psfc,
+      parent_state.psfc,
+      new_state.psfc,
+      plan.surface,
+      exposed_width,
+      true,
+      "PSFC");
+  expect_i_strip_parent_fill_2d(
+      old_state.u10, parent_state.u10, new_state.u10, plan.surface, exposed_width, true, "U10");
+  expect_i_strip_parent_fill_2d(
+      old_state.v10, parent_state.v10, new_state.v10, plan.surface, exposed_width, true, "V10");
+  expect_i_strip_parent_fill_2d(
+      old_state.t2, parent_state.t2, new_state.t2, plan.surface, exposed_width, true, "T2");
+  expect_i_strip_parent_fill_2d(
+      old_state.q2, parent_state.q2, new_state.q2, plan.surface, exposed_width, true, "Q2");
+  expect_i_strip_parent_fill_2d(
+      old_state.rainc,
+      parent_state.rainc,
+      new_state.rainc,
+      plan.surface,
+      exposed_width,
+      true,
+      "RAINC");
+  expect_i_strip_parent_fill_2d(
+      old_state.rainnc,
+      parent_state.rainnc,
+      new_state.rainnc,
+      plan.surface,
+      exposed_width,
+      true,
+      "RAINNC");
+}
+
 }  // namespace
 
 int main() {
@@ -395,7 +693,7 @@ int main() {
       u_exposed * static_cast<std::uint64_t>(grid.u_shape().nz) +
       v_exposed * static_cast<std::uint64_t>(grid.v_shape().nz) +
       3U * w_exposed * static_cast<std::uint64_t>(grid.w_shape().nz) +
-      11U * mass_exposed * static_cast<std::uint64_t>(grid.mass_shape().nz) +
+      10U * mass_exposed * static_cast<std::uint64_t>(grid.mass_shape().nz) +
       9U * surface_exposed;
 
   const auto report =
@@ -407,6 +705,7 @@ int main() {
   assert(report.parent_fill_point_count == 0);
   assert(report.needs_parent_fill);
   assert(!report.filled_exposed_cells);
+  assert(!report.needs_derived_pressure_refresh);
   assert(!report.copied_halo_cells);
   expect_all_supported_fields(old_state, new_state, plan);
   expect_representative_halos(new_state);
@@ -418,10 +717,11 @@ int main() {
   assert(fill_report.ok());
   assert(fill_report.copied_field_count == 25);
   assert(fill_report.copied_point_count == expected_copied_points(plan, grid));
-  assert(fill_report.parent_fill_field_count == 25);
+  assert(fill_report.parent_fill_field_count == 24);
   assert(fill_report.parent_fill_point_count == expected_parent_fill_points);
   assert(!fill_report.needs_parent_fill);
   assert(fill_report.filled_exposed_cells);
+  assert(fill_report.needs_derived_pressure_refresh);
   assert(!fill_report.copied_halo_cells);
   expect_representative_parent_fill_fields(
       old_state, parent_filled_state, filled_new_state, plan);
@@ -440,6 +740,7 @@ int main() {
   assert(full_report.parent_fill_point_count == 0);
   assert(!full_report.needs_parent_fill);
   assert(!full_report.filled_exposed_cells);
+  assert(!full_report.needs_derived_pressure_refresh);
   assert(!full_report.copied_halo_cells);
   expect_all_supported_fields(old_state, full_new_state, full_plan);
   expect_representative_halos(full_new_state);
@@ -457,9 +758,97 @@ int main() {
   assert(full_fill_report.parent_fill_point_count == 0);
   assert(!full_fill_report.needs_parent_fill);
   assert(!full_fill_report.filled_exposed_cells);
+  assert(!full_fill_report.needs_derived_pressure_refresh);
   assert(!full_fill_report.copied_halo_cells);
   expect_all_supported_fields(old_state, full_filled_new_state, full_plan);
   expect_representative_halos(full_filled_new_state);
+
+  const auto ratio5_grid = make_ratio5_child_grid();
+  tywrf::State<float> ratio5_old_state(ratio5_grid);
+  tywrf::State<float> ratio5_parent_state(ratio5_grid);
+  tywrf::State<float> ratio5_new_state(ratio5_grid);
+  fill_state(ratio5_old_state, kSentinel);
+  fill_state(ratio5_parent_state, kSentinel);
+  fill_state(ratio5_new_state, kSentinel);
+  fill_indexed_state(ratio5_old_state);
+  fill_indexed_state(ratio5_parent_state);
+
+  const auto ratio5_descriptor = make_ratio5_descriptor();
+  const auto ratio5_from_pose = tywrf::nest::make_domain_pose(
+      ratio5_descriptor, {1, 1, tywrf::nest::IndexBase::one_based});
+  const auto ratio5_to_pose = tywrf::nest::make_domain_pose(
+      ratio5_descriptor, {2, 1, tywrf::nest::IndexBase::one_based});
+  assert(ratio5_from_pose.result.ok());
+  assert(ratio5_to_pose.result.ok());
+
+  const auto ratio5_plan =
+      tywrf::nest::build_remap_plan(ratio5_from_pose, ratio5_to_pose);
+  assert(ratio5_plan.ok());
+  assert(ratio5_plan.delta.parent_di == 1);
+  assert(ratio5_plan.delta.parent_dj == 0);
+  assert(ratio5_plan.delta.child_di == 5);
+  assert(ratio5_plan.delta.child_dj == 0);
+  assert(ratio5_plan.mass.extent_i == 5);
+  assert(ratio5_plan.mass.extent_j == 5);
+  assert(ratio5_plan.u.extent_i == 6);
+  assert(ratio5_plan.u.extent_j == 5);
+  assert(ratio5_plan.v.extent_i == 5);
+  assert(ratio5_plan.v.extent_j == 6);
+  assert(ratio5_plan.w_full.extent_i == 5);
+  assert(ratio5_plan.w_full.extent_j == 5);
+  assert(ratio5_plan.surface.extent_i == 5);
+  assert(ratio5_plan.surface.extent_j == 5);
+
+  const auto ratio5_mass_exposed = exposed_horizontal_cells(
+      ratio5_plan.mass,
+      ratio5_grid.mass_shape().nx,
+      ratio5_grid.mass_shape().ny);
+  const auto ratio5_u_exposed = exposed_horizontal_cells(
+      ratio5_plan.u,
+      ratio5_grid.u_shape().nx,
+      ratio5_grid.u_shape().ny);
+  const auto ratio5_v_exposed = exposed_horizontal_cells(
+      ratio5_plan.v,
+      ratio5_grid.v_shape().nx,
+      ratio5_grid.v_shape().ny);
+  const auto ratio5_w_exposed = exposed_horizontal_cells(
+      ratio5_plan.w_full,
+      ratio5_grid.w_shape().nx,
+      ratio5_grid.w_shape().ny);
+  const auto ratio5_surface_exposed = exposed_horizontal_cells(
+      ratio5_plan.surface,
+      ratio5_grid.surface_shape().nx,
+      ratio5_grid.surface_shape().ny);
+  assert(ratio5_mass_exposed == 25);
+  assert(ratio5_u_exposed == 25);
+  assert(ratio5_v_exposed == 30);
+  assert(ratio5_w_exposed == 25);
+  assert(ratio5_surface_exposed == 25);
+  const auto ratio5_expected_parent_fill_points =
+      ratio5_u_exposed * static_cast<std::uint64_t>(ratio5_grid.u_shape().nz) +
+      ratio5_v_exposed * static_cast<std::uint64_t>(ratio5_grid.v_shape().nz) +
+      3U * ratio5_w_exposed * static_cast<std::uint64_t>(ratio5_grid.w_shape().nz) +
+      10U * ratio5_mass_exposed *
+          static_cast<std::uint64_t>(ratio5_grid.mass_shape().nz) +
+      9U * ratio5_surface_exposed;
+
+  const auto ratio5_fill_report =
+      tywrf::nest::remap_child_state_overlap_with_parent_fill(
+          ratio5_plan, ratio5_old_state, ratio5_parent_state, ratio5_new_state);
+  assert(ratio5_fill_report.ok());
+  assert(ratio5_fill_report.copied_field_count == 25);
+  assert(ratio5_fill_report.copied_point_count ==
+         expected_copied_points(ratio5_plan, ratio5_grid));
+  assert(ratio5_fill_report.parent_fill_field_count == 24);
+  assert(ratio5_fill_report.parent_fill_point_count ==
+         ratio5_expected_parent_fill_points);
+  assert(!ratio5_fill_report.needs_parent_fill);
+  assert(ratio5_fill_report.filled_exposed_cells);
+  assert(ratio5_fill_report.needs_derived_pressure_refresh);
+  assert(!ratio5_fill_report.copied_halo_cells);
+  expect_wrf_direct_parent_fill_i_strip(
+      ratio5_old_state, ratio5_parent_state, ratio5_new_state, ratio5_plan, 5);
+  expect_all_halos(ratio5_new_state);
 
   return 0;
 }
