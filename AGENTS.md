@@ -37,6 +37,8 @@ Responsibilities:
 - Keep reporting current integrated progress to the user while work is ongoing.
 - Keep `PROGRESS.md` updated in near real time when subagents start, finish,
   report risks, or when integration/test/Git status changes.
+- Write `PROGRESS.md` in Chinese. It is a local progress log, should remain in
+  `.gitignore`, and should not be committed.
 - Commit Git changes at verified integration milestones. Do not commit raw
   subagent intermediate work before main-agent review and unified validation.
 - Prefer small, coherent commits that match completed phases or reviewed
@@ -62,15 +64,19 @@ Primary reference case:
 
 - Storm: `2025WP12 KROSA`
 - Initial time: `2025-07-26 00 UTC`
-- Forecast length: `168 h`
-- Output frequency: `6 h`
+- Primary validation length: `1 h`
+- Primary validation output frequency: `10 min`
+- Full reference length: `168 h`
+- Full reference output frequency: `6 h`
 - Model: PGWRF / WRF v4.6.1
 - Forcing: GFS analysis as lateral boundary and spectral nudging source.
 
 Important reference paths:
 
 - PGWRF root: `/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF`
-- WRF output directory:
+- Primary 1 h / 10 min WRF validation output directory:
+  `/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF_1h_10min_20260527_172838`
+- Full 168 h / 6 h WRF reference output directory:
   `/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF`
 - Logs:
   `/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/logs`
@@ -86,8 +92,9 @@ Reference input files:
 
 Reference output files:
 
-- `wrfout_d01_YYYY-MM-DD_HH:00:00`
-- `wrfout_d02_YYYY-MM-DD_HH:00:00`
+- Primary validation files: `wrfout_d01_YYYY-MM-DD_HH:MM:00`, `wrfout_d02_YYYY-MM-DD_HH:MM:00`
+- Required validation times: `00:00`, `00:10`, `00:20`, `00:30`, `00:40`, `00:50`, `01:00`
+- Full reference files: `wrfout_d01_YYYY-MM-DD_HH:00:00`, `wrfout_d02_YYYY-MM-DD_HH:00:00`
 
 Current namelist highlights:
 
@@ -146,7 +153,7 @@ First-stage goal:
 - Reuse WPS and `real.exe`; do not reimplement geogrid/ungrib/metgrid/real in v1.
 - Read WRF standard inputs.
 - Write WRF-compatible core `wrfout`.
-- Achieve small RMSE against WRF over 6 h cycle tests.
+- Achieve small RMSE against WRF through progressive 10 min validation gates.
 - Only after compatibility is established, optimize CPU performance and migrate hot kernels to CUDA.
 
 This project does not require bitwise identity with WRF.
@@ -162,7 +169,8 @@ Required v1 inputs:
 
 Required v1 outputs:
 
-- WRF-compatible NetCDF files for d01 and d02 at 6 h intervals.
+- WRF-compatible NetCDF files for d01 and d02 at 10 min validation checkpoints.
+- Later full-run output can use 6 h intervals, but v1 validation must support 10 min output.
 - The files do not need all 220 WRF variables.
 - They must contain the core fields needed for validation and existing diagnostics.
 
@@ -274,14 +282,23 @@ Loop rules:
 
 ## Validation Standard
 
-Validation is based on 6 h cycle tests, not on requiring 168 h free forecasts to remain field-close.
+Validation is based on progressive 10 min gates using the 1 h WRF reference run. Do not start with a 6 h validation gate; it is too slow for early debugging.
+
+Primary reference directory:
+
+```text
+/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF_1h_10min_20260527_172838
+```
 
 Procedure:
 
-1. Start TyWRF-Core from the same WRF reference initial state.
-2. Integrate a 6 h segment.
-3. Compare TyWRF-Core output to WRF reference output for the same segment end time.
-4. Repeat for multiple 6 h windows.
+1. Start TyWRF-Core from the same WRF reference initial state at `2025-07-26_00:00:00`.
+2. Integrate to `00:10`.
+3. Compare TyWRF-Core output to WRF reference output at `00:10`.
+4. If the `00:10` RMSE gate fails, stop immediately and fix the first failing field or kernel. Do not continue to `00:20`.
+5. If `00:10` passes, continue to `00:20` and compare again.
+6. Continue the same gated sequence through `00:30`, `00:40`, `00:50`, and `01:00`.
+7. Only after all 10 min gates pass should longer 3 h or 6 h cycle tests be attempted.
 
 Default field thresholds:
 
@@ -300,7 +317,8 @@ Validation tools should report:
 - RMSE and normalized RMSE per variable/domain/time.
 - Max absolute error per variable.
 - TC center, MSLP, Vmax, and accumulated rainfall summary.
-- Timing per kernel and per 6 h segment.
+- Timing per kernel and per 10 min segment.
+- The first failed gate and first failed variable.
 
 ## Suggested Implementation Phases
 
@@ -332,10 +350,12 @@ Phase 5: Physics Bridge
 - Define staging buffers.
 - Call current physics suite through wrappers.
 
-Phase 6: First 6 h Cycle
+Phase 6: Progressive 10 min Validation
 
-- Run a 6 h segment.
-- Compare to WRF reference.
+- Run the first 10 min segment.
+- Compare to WRF reference at `00:10`.
+- Stop and fix immediately if the 10 min gate fails.
+- Advance to 20, 30, 40, 50, and 60 min only after the previous gate passes.
 - Record RMSE, TC diagnostics, and timing.
 
 Phase 7: Optimization Preparation
@@ -373,7 +393,13 @@ Current PGWRF reference root:
 cd /home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF
 ```
 
-Reference WRF output directory:
+Primary 1 h / 10 min WRF validation output directory:
+
+```bash
+cd /home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF_1h_10min_20260527_172838
+```
+
+Full 168 h / 6 h WRF reference output directory:
 
 ```bash
 cd /home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF
