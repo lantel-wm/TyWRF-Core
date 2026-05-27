@@ -42,6 +42,7 @@ struct TimeStepDescriptor {
   std::int32_t history_interval_seconds = 0;
   std::int32_t boundary_refresh_interval_seconds = 0;
   std::int32_t spectral_nudging_input_interval_seconds = 0;
+  std::int32_t moving_nest_interval_seconds = 0;
 };
 
 struct DynamicsLoopConfig {
@@ -98,6 +99,7 @@ class DynamicsLoopRunner {
 };
 
 [[nodiscard]] DynamicsLoopConfig make_krosa_phase4_loop_config() noexcept;
+[[nodiscard]] DynamicsLoopConfig make_krosa_10min_validation_loop_config() noexcept;
 
 [[nodiscard]] std::string_view domain_name(DomainId domain) noexcept;
 [[nodiscard]] std::string_view loop_event_name(LoopEventKind kind) noexcept;

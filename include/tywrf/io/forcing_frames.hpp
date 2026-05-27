@@ -50,6 +50,8 @@ class ForcingFrameSelector {
 
   [[nodiscard]] ForcingFrame frame_for_cycle_index(std::size_t cycle_index) const;
   [[nodiscard]] ForcingFrame frame_for_start_seconds(std::int64_t start_seconds) const;
+  [[nodiscard]] ForcingFrame frame_containing_model_seconds(
+      std::int64_t model_seconds) const;
   [[nodiscard]] ForcingFrameWeights weights_for(
       const ForcingFrame& frame,
       std::int64_t model_seconds) const;

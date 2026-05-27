@@ -58,6 +58,8 @@ def test_skeleton_driver_generates_d02_cycle_end_candidate(tmp_path: Path) -> No
     assert report.domain == "d02"
     assert report.start == "2025-07-26_00:00:00"
     assert report.end == "2025-07-26_06:00:00"
+    assert report.hours == 6
+    assert report.minutes == 360
     assert report.source.endswith("wrfout_d02_2025-07-26_00:00:00")
     assert report.candidate.endswith("wrfout_d02_2025-07-26_06:00:00")
     assert "tools/cycle_gate.py" in report.suggested_next_step["command"]
@@ -100,13 +102,67 @@ def test_identity_mode_is_explicitly_reported_as_skeleton_identity(tmp_path: Pat
         assert dataset.getncattr("TYWRF_BASELINE_MODE") == "persistence"
 
 
-def test_skeleton_driver_rejects_non_6h_cycle(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="exactly one 6 h cycle"):
+def test_skeleton_driver_generates_10min_cycle_end_candidate(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _make_d02_wrfout(
+        reference_dir / "wrfout_d02_2025-07-26_00:00:00",
+        "2025-07-26_00:00:00",
+        100000.0,
+    )
+
+    report = build_skeleton_cycle_candidate(
+        reference_dir,
+        candidate_dir,
+        start="2025-07-26_00:00:00",
+        end="2025-07-26_00:10:00",
+        variables=("Times", "PSFC"),
+    )
+
+    assert report.end == "2025-07-26_00:10:00"
+    assert report.hours == 0
+    assert report.minutes == 10
+    assert report.candidate.endswith("wrfout_d02_2025-07-26_00:10:00")
+    assert "--end 2025-07-26_00:10:00" in report.suggested_next_step["command"]
+    assert "--interval-minutes 10" in report.suggested_next_step["command"]
+
+    with netCDF4.Dataset(candidate_dir / "wrfout_d02_2025-07-26_00:10:00") as dataset:
+        assert _read_time(dataset) == "2025-07-26_00:10:00"
+        assert dataset.getncattr("TYWRF_CYCLE_HOURS") == 0
+        assert dataset.getncattr("TYWRF_CYCLE_MINUTES") == 10
+        assert dataset.getncattr("TYWRF_NOT_PHYSICAL") == "true"
+        assert dataset.getncattr("TYWRF_INTEGRATOR_OUTPUT") == "false"
+
+
+def test_skeleton_driver_minutes_option_resolves_cycle_end(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _make_d02_wrfout(
+        reference_dir / "wrfout_d02_2025-07-26_00:00:00",
+        "2025-07-26_00:00:00",
+        100000.0,
+    )
+
+    report = build_skeleton_cycle_candidate(
+        reference_dir,
+        candidate_dir,
+        start="2025-07-26_00:00:00",
+        hours=None,
+        minutes=10,
+        variables=("Times", "PSFC"),
+    )
+
+    assert report.end == "2025-07-26_00:10:00"
+    assert report.minutes == 10
+
+
+def test_skeleton_driver_rejects_non_positive_cycle_length(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="positive"):
         build_skeleton_cycle_candidate(
             tmp_path / "reference",
             tmp_path / "candidate",
             start="2025-07-26_00:00:00",
-            end="2025-07-26_12:00:00",
+            end="2025-07-26_00:00:00",
             variables=("Times", "PSFC"),
         )
 
@@ -156,6 +212,8 @@ def test_skeleton_driver_cli_writes_report_json(tmp_path: Path) -> None:
             "2025-07-26_00:00:00",
             "--mode",
             "identity",
+            "--minutes",
+            "10",
             "--variables",
             "Times",
             "PSFC",
@@ -171,4 +229,6 @@ def test_skeleton_driver_cli_writes_report_json(tmp_path: Path) -> None:
     assert '"skeleton": true' in text
     assert '"integrator_output": false' in text
     assert '"mode": "identity"' in text
+    assert '"end": "2025-07-26_00:10:00"' in text
+    assert '"minutes": 10' in text
     assert "tools/cycle_gate.py" in text

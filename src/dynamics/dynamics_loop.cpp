@@ -52,21 +52,24 @@ void validate_config(const DynamicsLoopConfig& config) {
           "boundary refresh interval must be positive");
   require(timing.spectral_nudging_input_interval_seconds > 0,
           "spectral nudging input interval must be positive");
+  require(timing.moving_nest_interval_seconds > 0,
+          "moving nest interval must be positive");
 }
 
 [[nodiscard]] CycleScheduleConfig make_cycle_schedule_config(
-    const DynamicsLoopConfig& config) noexcept {
+    const DynamicsLoopConfig& config) {
+  const auto& timing = config.timing;
   return CycleScheduleConfig{
       config.parent.grid_spacing_m,
       config.child.grid_spacing_m,
-      config.timing.parent_time_step_seconds,
-      config.timing.child_time_step_seconds,
-      config.timing.parent_time_step_ratio,
-      config.timing.segment_seconds,
-      config.timing.boundary_refresh_interval_seconds,
-      config.timing.spectral_nudging_input_interval_seconds,
-      900,
-      config.timing.history_interval_seconds,
+      timing.parent_time_step_seconds,
+      timing.child_time_step_seconds,
+      timing.parent_time_step_ratio,
+      timing.segment_seconds,
+      timing.boundary_refresh_interval_seconds,
+      timing.spectral_nudging_input_interval_seconds,
+      timing.moving_nest_interval_seconds,
+      timing.history_interval_seconds,
       SegmentEndpointPolicy::bracket_start_and_end,
       MovingNestTimingPolicy::snap_to_next_parent_step,
   };
@@ -233,7 +236,15 @@ DynamicsLoopConfig make_krosa_phase4_loop_config() noexcept {
   return {
       DomainDescriptor{DomainId::d01, 10'000, 40, true, true, false},
       DomainDescriptor{DomainId::d02, 2'000, 8, false, false, true},
-      TimeStepDescriptor{40, 8, 5, 21'600, 21'600, 21'600, 21'600},
+      TimeStepDescriptor{40, 8, 5, 21'600, 21'600, 21'600, 21'600, 900},
+  };
+}
+
+DynamicsLoopConfig make_krosa_10min_validation_loop_config() noexcept {
+  return {
+      DomainDescriptor{DomainId::d01, 10'000, 40, true, true, false},
+      DomainDescriptor{DomainId::d02, 2'000, 8, false, false, true},
+      TimeStepDescriptor{40, 8, 5, 600, 600, 21'600, 21'600, 900},
   };
 }
 

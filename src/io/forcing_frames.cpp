@@ -186,6 +186,26 @@ ForcingFrame ForcingFrameSelector::frame_for_start_seconds(
       checked_record_index(start_seconds, config_.interval_seconds, config_.time_count));
 }
 
+ForcingFrame ForcingFrameSelector::frame_containing_model_seconds(
+    const std::int64_t model_seconds) const {
+  if (model_seconds < 0) {
+    throw ForcingFrameError("model_seconds must be non-negative");
+  }
+
+  const auto final_end_seconds =
+      static_cast<std::int64_t>(config_.time_count) * config_.interval_seconds;
+  if (model_seconds > final_end_seconds) {
+    throw ForcingFrameError("model_seconds is outside available forcing frames");
+  }
+
+  std::size_t cycle_index = 0;
+  if (model_seconds > 0) {
+    cycle_index = static_cast<std::size_t>(
+        (model_seconds - 1) / config_.interval_seconds);
+  }
+  return frame_for_cycle_index(cycle_index);
+}
+
 ForcingFrameWeights ForcingFrameSelector::weights_for(
     const ForcingFrame& frame,
     const std::int64_t model_seconds) const {

@@ -112,20 +112,22 @@ copies the cycle-end reference file and marks JSON/file metadata as
 a TyWRF-Core integrator result. Its metadata marks `minimum_slp_gate_ready`
 only when a real SLP/MSLP diagnostic was copied.
 
-`tools/skeleton_cycle_driver.py` is the current d02 6 h skeleton candidate
+`tools/skeleton_cycle_driver.py` is the current d02 skeleton candidate
 entry point. It copies the cycle-start reference state to the cycle-end
 candidate file in `persistence` or `identity` mode, then marks both JSON and
 NetCDF metadata with `skeleton=true`, `not_physical=true`, and
 `integrator_output=false`; it also marks `validation_gate_only=true`. The report
-includes the suggested `cycle_gate.py` command to run next; this output is
+includes the suggested `cycle_gate.py` command to run next. It defaults to a
+6 h end time for existing cycle tests, but also accepts explicit `--end` times
+or `--minutes 10` for progressive 10 min validation wiring; this output is
 wiring infrastructure, not a physical TyWRF-Core result.
 
 `tools/run_skeleton_cycle.py` is the dual-domain wrapper for the same skeleton
-path. It generates d01 and d02 6 h candidate files, keeps d02 on the existing
+path. It generates d01 and d02 candidate files, keeps d02 on the existing
 `DX/DY=2000m` check, does not require d01 to be 2 km, and writes a
 machine-readable report with per-domain source, candidate, reference-end,
-copied/missing variables, and suggested `cycle_gate.py` commands. Its JSON and
-NetCDF metadata also mark `skeleton=true`, `not_physical=true`, and
+copied/missing variables, cycle minutes, and suggested `cycle_gate.py` commands.
+Its JSON and NetCDF metadata also mark `skeleton=true`, `not_physical=true`, and
 `integrator_output=false`; this is a shell for later C++ executable wiring, not
 an integrator result.
 

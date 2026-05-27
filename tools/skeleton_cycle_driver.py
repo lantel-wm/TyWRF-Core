@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generate explicitly marked d02 6 h skeleton cycle candidates."""
+"""Generate explicitly marked d02 skeleton cycle candidates."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ except ModuleNotFoundError:
 
 SKELETON_MODES = ("persistence", "identity")
 SUPPORTED_DOMAIN = "d02"
-SUPPORTED_HOURS = 6
+DEFAULT_CYCLE_HOURS = 6
+SUPPORTED_HOURS = DEFAULT_CYCLE_HOURS
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class SkeletonCycleReport:
     start: str
     end: str
     hours: int
+    minutes: int
     source: str
     candidate: str
     reference_end: str
@@ -65,25 +67,34 @@ def _resolve_cycle_times(
     start: str | datetime,
     *,
     end: str | datetime | None,
-    hours: int,
+    hours: int | None,
+    minutes: int | None = None,
 ) -> tuple[datetime, datetime]:
-    if hours != SUPPORTED_HOURS:
-        raise ValueError("skeleton cycle driver currently supports only 6 h d02 cycles")
-
     start_time = parse_wrf_time(start) if isinstance(start, str) else start
-    end_time = (
-        parse_wrf_time(end)
-        if isinstance(end, str)
-        else end
-        if isinstance(end, datetime)
-        else start_time + timedelta(hours=SUPPORTED_HOURS)
-    )
-    cycle_hours = int((end_time - start_time).total_seconds() // 3600)
-    if end_time <= start_time or (end_time - start_time) != timedelta(hours=SUPPORTED_HOURS):
-        raise ValueError("skeleton cycle driver currently supports exactly one 6 h cycle")
-    if cycle_hours != SUPPORTED_HOURS:
-        raise ValueError("skeleton cycle driver currently supports exactly one 6 h cycle")
+    if isinstance(end, str):
+        end_time = parse_wrf_time(end)
+    elif isinstance(end, datetime):
+        end_time = end
+    else:
+        end_time = start_time + timedelta(
+            minutes=_resolve_duration_minutes(hours=hours, minutes=minutes)
+        )
+    duration_seconds = int((end_time - start_time).total_seconds())
+    if duration_seconds <= 0:
+        raise ValueError("skeleton cycle length must be positive")
+    if duration_seconds % 60 != 0:
+        raise ValueError("skeleton cycle length must align to whole minutes")
     return start_time, end_time
+
+
+def _resolve_duration_minutes(*, hours: int | None, minutes: int | None) -> int:
+    if minutes is not None:
+        if minutes <= 0:
+            raise ValueError("cycle length minutes must be positive")
+        return minutes
+    if hours is None or hours <= 0:
+        raise ValueError("cycle length must be positive")
+    return hours * 60
 
 
 def _cycle_gate_command(
@@ -93,12 +104,16 @@ def _cycle_gate_command(
     start_time: str,
     end_time: str,
     domain: str,
+    interval_minutes: int,
 ) -> str:
-    return (
+    command = (
         "UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python "
         f"tools/cycle_gate.py --reference-dir {reference_dir} --candidate-dir {candidate_dir} "
         f"--start {start_time} --end {end_time} --domain {domain} --pretty"
     )
+    if interval_minutes != DEFAULT_CYCLE_HOURS * 60:
+        command += f" --interval-minutes {interval_minutes}"
+    return command
 
 
 def _set_skeleton_attrs(path: Path, report: SkeletonCycleReport) -> None:
@@ -113,6 +128,8 @@ def _set_skeleton_attrs(path: Path, report: SkeletonCycleReport) -> None:
         "TYWRF_EXPECTED_TO_MEET_THRESHOLDS": "false",
         "TYWRF_CYCLE_START": report.start,
         "TYWRF_CYCLE_END": report.end,
+        "TYWRF_CYCLE_HOURS": report.hours,
+        "TYWRF_CYCLE_MINUTES": report.minutes,
         "TYWRF_CANDIDATE_SOURCE": report.source,
         "TYWRF_CANDIDATE_MESSAGE": report.message,
     }
@@ -127,7 +144,8 @@ def build_skeleton_cycle_candidate(
     *,
     start: str | datetime,
     end: str | datetime | None = None,
-    hours: int = SUPPORTED_HOURS,
+    hours: int | None = SUPPORTED_HOURS,
+    minutes: int | None = None,
     domain: str = SUPPORTED_DOMAIN,
     mode: str = "persistence",
     variables: Iterable[str] = CORE_WRFOUT_VARIABLES,
@@ -137,9 +155,15 @@ def build_skeleton_cycle_candidate(
         raise ValueError("skeleton cycle driver currently supports d02 only")
 
     normalized_mode = normalize_skeleton_mode(mode)
-    start_time, end_time = _resolve_cycle_times(start, end=end, hours=hours)
+    start_time, end_time = _resolve_cycle_times(
+        start,
+        end=end,
+        hours=hours,
+        minutes=minutes,
+    )
     start_text = format_wrf_time(start_time)
     end_text = format_wrf_time(end_time)
+    duration_minutes = int((end_time - start_time).total_seconds() // 60)
 
     source = Path(reference_dir) / wrfout_filename(domain, start_time)
     reference_end = Path(reference_dir) / wrfout_filename(domain, end_time)
@@ -160,7 +184,7 @@ def build_skeleton_cycle_candidate(
     message = (
         "Skeleton candidate generated from the cycle-start reference state. "
         "It is not physical, not a TyWRF-Core integrator result, and should be "
-        "used only to wire the d02 6 h candidate path into the cycle gate."
+        "used only to wire the d02 candidate path into the cycle gate."
     )
     report = SkeletonCycleReport(
         status="skeleton_candidate_generated",
@@ -172,7 +196,8 @@ def build_skeleton_cycle_candidate(
         domain=domain,
         start=start_text,
         end=end_text,
-        hours=SUPPORTED_HOURS,
+        hours=duration_minutes // 60,
+        minutes=duration_minutes,
         source=str(source),
         candidate=str(candidate),
         reference_end=str(reference_end),
@@ -192,6 +217,7 @@ def build_skeleton_cycle_candidate(
                 start_time=start_text,
                 end_time=end_text,
                 domain=domain,
+                interval_minutes=duration_minutes,
             ),
         },
         message=message,
@@ -209,8 +235,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reference-dir", required=True, type=Path, help="Directory with WRF reference files")
     parser.add_argument("--candidate-dir", required=True, type=Path, help="Directory for skeleton candidates")
     parser.add_argument("--start", required=True, help="Cycle start time, for example 2025-07-26_00:00:00")
-    parser.add_argument("--end", help="Cycle end time; defaults to start + 6 h")
-    parser.add_argument("--hours", type=int, default=SUPPORTED_HOURS, help="Cycle length; only 6 is supported")
+    parser.add_argument("--end", help="Cycle end time; defaults to start + 6 h unless --minutes is set")
+    parser.add_argument("--hours", type=int, default=SUPPORTED_HOURS, help="Cycle length in hours when --end/--minutes are omitted")
+    parser.add_argument("--minutes", type=int, help="Cycle length in minutes when --end is omitted")
     parser.add_argument("--domain", default=SUPPORTED_DOMAIN, choices=(SUPPORTED_DOMAIN,), help="Only d02 is supported")
     parser.add_argument("--mode", default="persistence", choices=SKELETON_MODES, help="Skeleton generation mode")
     parser.add_argument("--variables", nargs="+", default=list(CORE_WRFOUT_VARIABLES))
@@ -230,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
             start=args.start,
             end=args.end,
             hours=args.hours,
+            minutes=args.minutes,
             domain=args.domain,
             mode=args.mode,
             variables=args.variables,

@@ -25,15 +25,6 @@ void require(const bool condition, const char* message) {
   return snapped;
 }
 
-[[nodiscard]] std::int64_t instant_parent_step_index(
-    const std::int64_t time_seconds,
-    const std::int32_t parent_time_step_seconds) noexcept {
-  if (time_seconds == 0) {
-    return 0;
-  }
-  return (time_seconds / parent_time_step_seconds) - 1;
-}
-
 void validate_config(const CycleScheduleConfig& config) {
   require(config.parent_grid_spacing_m == 10'000,
           "KROSA schedule expects d01 horizontal spacing to be 10 km");
@@ -48,16 +39,14 @@ void validate_config(const CycleScheduleConfig& config) {
   require(config.segment_seconds > 0, "segment length must be positive");
   require(config.segment_seconds % config.parent_time_step_seconds == 0,
           "segment length must be divisible by parent time step");
-  require(config.boundary_refresh_interval_seconds == config.segment_seconds,
-          "single-cycle schedule brackets boundary input at the 6 h segment endpoints");
-  require(config.spectral_nudging_input_interval_seconds == config.segment_seconds,
-          "single-cycle schedule brackets nudging input at the 6 h segment endpoints");
-  require(config.history_interval_seconds == config.segment_seconds,
-          "KROSA 6 h cycle schedule expects one history output at segment end");
+  require(config.boundary_refresh_interval_seconds > 0,
+          "boundary refresh interval must be positive");
+  require(config.spectral_nudging_input_interval_seconds > 0,
+          "spectral nudging input interval must be positive");
+  require(config.history_interval_seconds > 0,
+          "history interval must be positive");
   require(config.moving_nest_interval_seconds > 0,
           "moving nest interval must be positive");
-  require(config.segment_seconds % config.moving_nest_interval_seconds == 0,
-          "segment length must be divisible by moving nest interval");
 }
 
 void count_call(const CycleScheduleCallKind kind, CycleScheduleSummary& summary) noexcept {
@@ -132,10 +121,33 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
       static_cast<std::int64_t>(config.segment_seconds / config.parent_time_step_seconds);
   const auto child_substeps =
       parent_steps * static_cast<std::int64_t>(config.parent_time_step_ratio);
-  const auto vortex_center_recomputes =
-      static_cast<std::int64_t>(config.segment_seconds / config.moving_nest_interval_seconds) + 1;
+  std::int64_t vortex_center_recomputes = 0;
+  for (std::int64_t nominal = 0;
+       nominal <= config.segment_seconds;
+       nominal += config.moving_nest_interval_seconds) {
+    const auto scheduled =
+        snap_to_next_parent_step_end(nominal, config.parent_time_step_seconds);
+    if (scheduled <= config.segment_seconds) {
+      ++vortex_center_recomputes;
+    }
+  }
+  const auto boundary_input_refreshes =
+      static_cast<std::int64_t>(config.segment_seconds /
+                                config.boundary_refresh_interval_seconds) +
+      1;
+  const auto spectral_nudging_input_refreshes =
+      static_cast<std::int64_t>(
+          config.segment_seconds /
+          config.spectral_nudging_input_interval_seconds) +
+      1;
+  const auto history_outputs =
+      static_cast<std::int64_t>(config.segment_seconds /
+                                config.history_interval_seconds) *
+      2;
   const auto expected_calls =
-      2 + parent_steps * 4 + child_substeps + vortex_center_recomputes + 2 + 2;
+      boundary_input_refreshes + spectral_nudging_input_refreshes +
+      parent_steps * 4 + child_substeps + vortex_center_recomputes +
+      history_outputs;
   calls.reserve(static_cast<std::size_t>(expected_calls));
   summary.parent_steps = parent_steps;
   summary.child_substeps = child_substeps;
@@ -181,7 +193,7 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
          nominal += config.moving_nest_interval_seconds) {
       const auto scheduled =
           snap_to_next_parent_step_end(nominal, config.parent_time_step_seconds);
-      if (scheduled == parent_end) {
+      if (scheduled == parent_end && scheduled <= config.segment_seconds) {
         emit_call(
             calls, summary, CycleScheduleCallKind::vortex_center_recompute,
             DomainId::d02, parent_step, -1, scheduled, scheduled, nominal);
@@ -196,17 +208,18 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
           calls, summary, CycleScheduleCallKind::history_output, DomainId::d02,
           parent_step, -1, parent_end, parent_end, parent_end);
     }
-  }
 
-  emit_call(
-      calls, summary, CycleScheduleCallKind::boundary_input_refresh, DomainId::d01,
-      instant_parent_step_index(config.segment_seconds, config.parent_time_step_seconds), -1,
-      config.segment_seconds, config.segment_seconds, config.segment_seconds);
-  emit_call(
-      calls, summary, CycleScheduleCallKind::spectral_nudging_input_refresh,
-      DomainId::d01,
-      instant_parent_step_index(config.segment_seconds, config.parent_time_step_seconds), -1,
-      config.segment_seconds, config.segment_seconds, config.segment_seconds);
+    if (parent_end % config.boundary_refresh_interval_seconds == 0) {
+      emit_call(
+          calls, summary, CycleScheduleCallKind::boundary_input_refresh,
+          DomainId::d01, parent_step, -1, parent_end, parent_end, parent_end);
+    }
+    if (parent_end % config.spectral_nudging_input_interval_seconds == 0) {
+      emit_call(
+          calls, summary, CycleScheduleCallKind::spectral_nudging_input_refresh,
+          DomainId::d01, parent_step, -1, parent_end, parent_end, parent_end);
+    }
+  }
 
   return CycleSchedule(std::move(config), summary, std::move(calls));
 }

@@ -79,6 +79,33 @@ int run_selector_test() {
   expect(ordinary.end_time == "2025-07-26_18:00:00",
          "ordinary start_seconds end timestamp");
 
+  const auto containing_start = selector.frame_containing_model_seconds(0);
+  expect(containing_start.record_index == 0,
+         "model time 0 s is contained by record 0");
+  expect(containing_start.start_seconds == 0 &&
+             containing_start.end_seconds == 21'600,
+         "model time 0 s is contained by [0, 21600]");
+
+  const auto containing_600 = selector.frame_containing_model_seconds(600);
+  expect(containing_600.record_index == 0,
+         "model time 600 s is contained by record 0");
+  expect(containing_600.start_seconds == 0 &&
+             containing_600.end_seconds == 21'600,
+         "model time 600 s is contained by [0, 21600]");
+  const auto krosa_0010_weights = selector.weights_for(containing_600, 600);
+  expect_close(krosa_0010_weights.old_weight, 35.0 / 36.0,
+               "KROSA 00:10 containing-frame old weight");
+  expect_close(krosa_0010_weights.new_weight, 1.0 / 36.0,
+               "KROSA 00:10 containing-frame new weight");
+
+  const auto containing_endpoint =
+      selector.frame_containing_model_seconds(21'600);
+  expect(containing_endpoint.record_index == 0,
+         "model time 21600 s is contained by record 0 endpoint");
+  expect(containing_endpoint.start_seconds == 0 &&
+             containing_endpoint.end_seconds == 21'600,
+         "model time 21600 s is contained by [0, 21600]");
+
   const auto final = selector.frame_for_cycle_index(27);
   expect(final.record_index == 27, "final cycle selects record 27");
   expect(final.start_seconds == 27 * 21'600, "final cycle start seconds");
@@ -98,6 +125,8 @@ int run_selector_test() {
   expect_close(end_weights.new_weight, 1.0, "endpoint new weight");
   expect(selector.frame_for_start_seconds(first.end_seconds).record_index == 1,
          "endpoint record transition is explicit, not guessed by weights_for");
+  expect(selector.frame_containing_model_seconds(first.end_seconds).record_index == 0,
+         "endpoint containing frame remains the closing frame");
 
   expect_frame_error(
       [&] { (void)selector.frame_for_cycle_index(28); },
@@ -108,6 +137,12 @@ int run_selector_test() {
   expect_frame_error(
       [&] { (void)selector.frame_for_start_seconds(1); },
       "unaligned start_seconds should be rejected");
+  expect_frame_error(
+      [&] { (void)selector.frame_containing_model_seconds(-1); },
+      "negative model_seconds should be rejected");
+  expect_frame_error(
+      [&] { (void)selector.frame_containing_model_seconds(28 * 21'600 + 1); },
+      "model_seconds after final inferred endpoint should be rejected");
   expect_frame_error(
       [&] { (void)selector.weights_for(first, -1); },
       "weights before frame should be rejected");

@@ -75,6 +75,19 @@ const LoopEvent* find_event(
   return nullptr;
 }
 
+std::int64_t count_events(
+    const std::vector<LoopEvent>& events,
+    const LoopEventKind kind,
+    const std::int64_t nominal_seconds) {
+  std::int64_t count = 0;
+  for (const auto& event : events) {
+    if (event.kind == kind && event.nominal_seconds == nominal_seconds) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 }  // namespace
 
 int main() {
@@ -85,6 +98,14 @@ int main() {
   expect(config.timing.child_time_step_seconds == 8, "d02 dt is 8 s");
   expect(config.timing.parent_time_step_ratio == 5, "d02 subcycles five times per d01 step");
   expect(config.timing.segment_seconds == 21'600, "segment length is 6 h");
+  expect(config.timing.boundary_refresh_interval_seconds == 21'600,
+         "default boundary input interval is 6 h");
+  expect(config.timing.spectral_nudging_input_interval_seconds == 21'600,
+         "default FDDA input interval is 6 h");
+  expect(config.timing.history_interval_seconds == 21'600,
+         "default history interval is 6 h");
+  expect(config.timing.moving_nest_interval_seconds == 900,
+         "default moving nest interval is 15 min");
 
   std::vector<LoopEvent> events;
   const tywrf::dynamics::DynamicsLoopRunner runner(config);
@@ -236,10 +257,82 @@ int main() {
              "vortex_center_recompute",
          "vortex center recompute loop event name");
 
+  const auto validation_config =
+      tywrf::dynamics::make_krosa_10min_validation_loop_config();
+  expect(validation_config.timing.segment_seconds == 600,
+         "validation segment length is 10 min");
+  expect(validation_config.timing.boundary_refresh_interval_seconds == 21'600,
+         "validation boundary input interval remains 6 h");
+  expect(validation_config.timing.spectral_nudging_input_interval_seconds == 21'600,
+         "validation FDDA input interval remains 6 h");
+  expect(validation_config.timing.history_interval_seconds == 600,
+         "validation history interval is 10 min");
+  expect(validation_config.timing.moving_nest_interval_seconds == 900,
+         "validation moving nest interval remains 15 min");
+
+  std::vector<LoopEvent> validation_events;
+  const tywrf::dynamics::DynamicsLoopRunner validation_runner(validation_config);
+  const auto validation_summary =
+      validation_runner.run({&validation_events, record_event});
+
+  constexpr std::int64_t expected_validation_parent_steps = 15;
+  constexpr std::int64_t expected_validation_child_steps = 75;
+
+  expect(validation_summary.parent_steps == expected_validation_parent_steps,
+         "10 min segment has 15 d01 steps");
+  expect(validation_summary.child_steps == expected_validation_child_steps,
+         "10 min segment has 75 d02 steps");
+  expect(validation_summary.boundary_input_refreshes == 1,
+         "10 min segment only refreshes boundary input at segment start");
+  expect(validation_summary.spectral_nudging_input_refreshes == 1,
+         "10 min segment only refreshes FDDA input at segment start");
+  expect(validation_summary.boundary_updates == expected_validation_parent_steps,
+         "10 min segment d01 boundary update count");
+  expect(validation_summary.spectral_nudging_calls ==
+             expected_validation_parent_steps,
+         "10 min segment d01 spectral nudging count");
+  expect(validation_summary.moving_nest_move_checks ==
+             expected_validation_parent_steps,
+         "10 min segment moving nest move check count");
+  expect(validation_summary.vortex_center_recomputes == 1,
+         "10 min segment has only the initial vortex recompute");
+  expect(validation_summary.dynamics_tendency_calls ==
+             expected_validation_parent_steps + expected_validation_child_steps,
+         "10 min segment zero dynamics tendency count");
+  expect(validation_summary.physics_calls ==
+             expected_validation_parent_steps + expected_validation_child_steps,
+         "10 min segment physics count");
+  expect(validation_summary.nest_interpolations == expected_validation_child_steps,
+         "10 min segment d02 nest interpolation count");
+  expect(validation_summary.nest_feedbacks == expected_validation_parent_steps,
+         "10 min segment d01 nest feedback count");
+  expect(validation_summary.history_outputs == 2,
+         "10 min segment writes one history output per domain");
+
+  expect(count_events(validation_events, LoopEventKind::boundary_input_refresh, 600) == 0,
+         "10 min segment has no boundary input refresh at 600 s");
+  expect(count_events(validation_events,
+                      LoopEventKind::spectral_nudging_input_refresh, 600) == 0,
+         "10 min segment has no FDDA input refresh at 600 s");
+  expect(count_events(validation_events, LoopEventKind::history_output, 600) == 2,
+         "10 min segment has d01 and d02 history output at 600 s");
+  expect(count_events(validation_events, LoopEventKind::vortex_center_recompute, 600) == 0,
+         "10 min segment has no off-interval vortex recompute at 600 s");
+
+  const auto* validation_initial_recompute =
+      find_event(validation_events, LoopEventKind::vortex_center_recompute, 0);
+  expect(validation_initial_recompute != nullptr,
+         "10 min segment initial vortex recompute event exists");
+  if (validation_initial_recompute != nullptr) {
+    expect_event(*validation_initial_recompute,
+                 LoopEventKind::vortex_center_recompute, DomainId::d02, 0,
+                 -1, 40, 40, "10 min initial vortex recompute event", -1, 0);
+  }
+
   if (failures != 0) {
     return 1;
   }
 
-  std::cout << "Validated schedule-driven dynamics skeleton for a 6 h KROSA segment\n";
+  std::cout << "Validated schedule-driven dynamics skeleton for 6 h and 10 min KROSA segments\n";
   return 0;
 }

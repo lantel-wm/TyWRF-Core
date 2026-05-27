@@ -62,6 +62,8 @@ def test_run_skeleton_cycle_generates_d01_and_d02_candidates(tmp_path: Path) -> 
     assert report.integrator_output is False
     assert report.validation_gate_only is True
     assert report.integrator["status"] == "not_run"
+    assert report.hours == 6
+    assert report.minutes == 360
     assert [domain.domain for domain in report.domains] == ["d01", "d02"]
     assert set(report.suggested_gate_commands) == {"d01", "d02"}
 
@@ -89,6 +91,55 @@ def test_run_skeleton_cycle_generates_d01_and_d02_candidates(tmp_path: Path) -> 
             assert dataset.getncattr("TYWRF_VALIDATION_GATE_ONLY") == "true"
             assert dataset.getncattr("TYWRF_CANDIDATE_DOMAIN") == domain
             assert dataset.getncattr("TYWRF_SKELETON_ORCHESTRATOR") == "tools/run_skeleton_cycle.py"
+
+
+def test_run_skeleton_cycle_generates_10min_candidates(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _make_dual_domain_start(reference_dir)
+
+    report = build_skeleton_cycle_run(
+        reference_dir,
+        candidate_dir,
+        start="2025-07-26_00:00:00",
+        end="2025-07-26_00:10:00",
+        variables=("Times", "PSFC"),
+    )
+
+    assert report.end == "2025-07-26_00:10:00"
+    assert report.hours == 0
+    assert report.minutes == 10
+    assert report.integrator["integrator_output"] is False
+
+    for domain_report in report.domains:
+        domain = domain_report.domain
+        assert domain_report.candidate.endswith(f"wrfout_{domain}_2025-07-26_00:10:00")
+        assert domain_report.reference_end.endswith(f"wrfout_{domain}_2025-07-26_00:10:00")
+        assert f"--end 2025-07-26_00:10:00" in domain_report.suggested_gate_command
+        assert "--interval-minutes 10" in domain_report.suggested_gate_command
+        with netCDF4.Dataset(candidate_dir / f"wrfout_{domain}_2025-07-26_00:10:00") as dataset:
+            assert _read_time(dataset) == "2025-07-26_00:10:00"
+            assert dataset.getncattr("TYWRF_NOT_PHYSICAL") == "true"
+            assert dataset.getncattr("TYWRF_INTEGRATOR_OUTPUT") == "false"
+            assert dataset.getncattr("TYWRF_CYCLE_HOURS") == 0
+            assert dataset.getncattr("TYWRF_CYCLE_MINUTES") == 10
+
+
+def test_run_skeleton_cycle_minutes_option_resolves_cycle_end(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    _make_dual_domain_start(reference_dir)
+
+    report = build_skeleton_cycle_run(
+        reference_dir,
+        tmp_path / "candidate",
+        start="2025-07-26_00:00:00",
+        hours=None,
+        minutes=10,
+        variables=("Times", "PSFC"),
+    )
+
+    assert report.end == "2025-07-26_00:10:00"
+    assert report.minutes == 10
 
 
 def test_run_skeleton_cycle_d01_only_does_not_require_2km(tmp_path: Path) -> None:
@@ -170,6 +221,8 @@ def test_run_skeleton_cycle_cli_writes_machine_readable_report(tmp_path: Path) -
             "2025-07-26_00:00:00",
             "--mode",
             "identity",
+            "--minutes",
+            "10",
             "--variables",
             "Times",
             "PSFC",
@@ -187,6 +240,9 @@ def test_run_skeleton_cycle_cli_writes_machine_readable_report(tmp_path: Path) -
     assert report["not_physical"] is True
     assert report["integrator_output"] is False
     assert report["integrator"]["integrator_output"] is False
+    assert report["end"] == "2025-07-26_00:10:00"
+    assert report["hours"] == 0
+    assert report["minutes"] == 10
     assert {domain["domain"] for domain in report["domains"]} == {"d01", "d02"}
     assert "d01" in report["suggested_gate_commands"]
     assert "d02" in report["suggested_gate_commands"]

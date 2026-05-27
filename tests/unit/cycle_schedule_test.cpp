@@ -311,6 +311,72 @@ int main() {
           "snap_to_next_parent_step",
       "moving nest policy name");
 
+  auto validation_config = tywrf::dynamics::make_krosa_6h_cycle_schedule_config();
+  validation_config.segment_seconds = 600;
+  validation_config.history_interval_seconds = 600;
+  const auto validation_schedule =
+      tywrf::dynamics::CycleSchedule::build(validation_config);
+  const auto validation_summary = validation_schedule.summary();
+  const std::vector<CycleScheduleCall> validation_calls{
+      validation_schedule.calls().begin(), validation_schedule.calls().end()};
+
+  expect(validation_summary.parent_steps == 15,
+         "10 min validation segment has 15 d01 steps");
+  expect(validation_summary.child_substeps == 75,
+         "10 min validation segment has 75 d02 substeps");
+  expect(validation_summary.boundary_input_refreshes == 1,
+         "10 min validation segment does not refresh boundary input at 600 s");
+  expect(validation_summary.spectral_nudging_input_refreshes == 1,
+         "10 min validation segment does not refresh FDDA input at 600 s");
+  expect(validation_summary.history_outputs == 2,
+         "10 min validation segment writes history output at 600 s for both domains");
+  expect(validation_summary.moving_nest_move_checks == 15,
+         "10 min validation segment has one moving nest check per parent step");
+  expect(validation_summary.vortex_center_recomputes == 1,
+         "10 min validation segment has only the snapped initial vortex recompute");
+
+  const auto validation_boundary_refreshes = find_calls_by_kind(
+      validation_calls, CycleScheduleCallKind::boundary_input_refresh);
+  const auto validation_nudging_refreshes = find_calls_by_kind(
+      validation_calls, CycleScheduleCallKind::spectral_nudging_input_refresh);
+  const auto validation_history_outputs =
+      find_calls_by_kind(validation_calls, CycleScheduleCallKind::history_output);
+  const auto validation_vortex_recomputes = find_calls_by_kind(
+      validation_calls, CycleScheduleCallKind::vortex_center_recompute);
+  expect(validation_boundary_refreshes.size() == 1,
+         "10 min validation segment emits only the initial boundary refresh");
+  expect(validation_nudging_refreshes.size() == 1,
+         "10 min validation segment emits only the initial FDDA refresh");
+  expect(validation_history_outputs.size() == 2,
+         "10 min validation segment emits d01 and d02 history outputs");
+  expect(validation_vortex_recomputes.size() == 1,
+         "10 min validation segment emits one vortex recompute call");
+  if (!validation_boundary_refreshes.empty()) {
+    expect_call(
+        *validation_boundary_refreshes.front(),
+        CycleScheduleCallKind::boundary_input_refresh, DomainId::d01, 0, -1,
+        0, 0, 0, "10 min initial boundary refresh");
+  }
+  if (!validation_nudging_refreshes.empty()) {
+    expect_call(
+        *validation_nudging_refreshes.front(),
+        CycleScheduleCallKind::spectral_nudging_input_refresh, DomainId::d01,
+        0, -1, 0, 0, 0, "10 min initial nudging refresh");
+  }
+  for (const auto* history_output : validation_history_outputs) {
+    expect(history_output->end_seconds == 600,
+           "10 min history output is emitted at 600 s");
+  }
+  if (!validation_vortex_recomputes.empty()) {
+    expect_call(
+        *validation_vortex_recomputes.front(),
+        CycleScheduleCallKind::vortex_center_recompute, DomainId::d02, 0, -1,
+        40, 40, 0, "10 min nominal 0 s vortex recompute");
+  }
+  expect(find_call(validation_calls, CycleScheduleCallKind::vortex_center_recompute,
+                   900) == nullptr,
+         "10 min validation segment does not emit the nominal 900 s recompute");
+
   expect_invalid(
       [] {
         auto invalid = tywrf::dynamics::make_krosa_6h_cycle_schedule_config();
@@ -328,10 +394,10 @@ int main() {
   expect_invalid(
       [] {
         auto invalid = tywrf::dynamics::make_krosa_6h_cycle_schedule_config();
-        invalid.boundary_refresh_interval_seconds = 10'800;
+        invalid.boundary_refresh_interval_seconds = 0;
         (void)tywrf::dynamics::CycleSchedule::build(invalid);
       },
-      "endpoint bracketing guard");
+      "boundary refresh interval guard");
 
   if (failures != 0) {
     return 1;

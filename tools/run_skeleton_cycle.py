@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Generate d01+d02 6 h skeleton cycle candidates and a machine-readable report."""
+"""Generate d01+d02 skeleton cycle candidates and a machine-readable report."""
 
 from __future__ import annotations
 
@@ -68,6 +68,7 @@ class SkeletonCycleRunReport:
     start: str
     end: str
     hours: int
+    minutes: int
     reference_dir: str
     candidate_dir: str
     domains: list[SkeletonDomainReport]
@@ -80,22 +81,34 @@ def _resolve_cycle_times(
     start: str | datetime,
     *,
     end: str | datetime | None,
-    hours: int,
+    hours: int | None,
+    minutes: int | None = None,
 ) -> tuple[datetime, datetime]:
-    if hours != SUPPORTED_HOURS:
-        raise ValueError("skeleton cycle runner currently supports only 6 h cycles")
-
     start_time = parse_wrf_time(start) if isinstance(start, str) else start
-    end_time = (
-        parse_wrf_time(end)
-        if isinstance(end, str)
-        else end
-        if isinstance(end, datetime)
-        else start_time + timedelta(hours=SUPPORTED_HOURS)
-    )
-    if end_time <= start_time or (end_time - start_time) != timedelta(hours=SUPPORTED_HOURS):
-        raise ValueError("skeleton cycle runner currently supports exactly one 6 h cycle")
+    if isinstance(end, str):
+        end_time = parse_wrf_time(end)
+    elif isinstance(end, datetime):
+        end_time = end
+    else:
+        end_time = start_time + timedelta(
+            minutes=_resolve_duration_minutes(hours=hours, minutes=minutes)
+        )
+    duration_seconds = int((end_time - start_time).total_seconds())
+    if duration_seconds <= 0:
+        raise ValueError("skeleton cycle length must be positive")
+    if duration_seconds % 60 != 0:
+        raise ValueError("skeleton cycle length must align to whole minutes")
     return start_time, end_time
+
+
+def _resolve_duration_minutes(*, hours: int | None, minutes: int | None) -> int:
+    if minutes is not None:
+        if minutes <= 0:
+            raise ValueError("cycle length minutes must be positive")
+        return minutes
+    if hours is None or hours <= 0:
+        raise ValueError("cycle length must be positive")
+    return hours * 60
 
 
 def _validate_domains(domains: Iterable[str]) -> list[str]:
@@ -115,12 +128,16 @@ def _cycle_gate_command(
     start: str,
     end: str,
     domain: str,
+    interval_minutes: int,
 ) -> str:
-    return (
+    command = (
         "UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python "
         f"tools/cycle_gate.py --reference-dir {reference_dir} --candidate-dir {candidate_dir} "
         f"--start {start} --end {end} --domain {domain} --pretty"
     )
+    if interval_minutes != SUPPORTED_HOURS * 60:
+        command += f" --interval-minutes {interval_minutes}"
+    return command
 
 
 def _set_orchestrator_attrs(
@@ -130,6 +147,8 @@ def _set_orchestrator_attrs(
     mode: str,
     start: str,
     end: str,
+    hours: int,
+    minutes: int,
     source: str,
     message: str,
 ) -> None:
@@ -146,6 +165,8 @@ def _set_orchestrator_attrs(
         "TYWRF_CANDIDATE_DOMAIN": domain,
         "TYWRF_CYCLE_START": start,
         "TYWRF_CYCLE_END": end,
+        "TYWRF_CYCLE_HOURS": hours,
+        "TYWRF_CYCLE_MINUTES": minutes,
         "TYWRF_CANDIDATE_SOURCE": source,
         "TYWRF_CANDIDATE_MESSAGE": message,
     }
@@ -158,7 +179,7 @@ def _domain_message(domain: str) -> str:
     return (
         f"{domain} skeleton candidate generated from the cycle-start reference state. "
         "It is not physical, not a TyWRF-Core integrator result, and should be "
-        "used only to wire the dual-domain 6 h cycle path into validation tools."
+        "used only to wire the dual-domain candidate path into validation tools."
     )
 
 
@@ -171,6 +192,7 @@ def _build_d01_report(
     mode: str,
     variables: Iterable[str],
     allow_missing: bool,
+    duration_minutes: int,
 ) -> SkeletonDomainReport:
     start_text = format_wrf_time(start_time)
     end_text = format_wrf_time(end_time)
@@ -196,6 +218,8 @@ def _build_d01_report(
         mode=mode,
         start=start_text,
         end=end_text,
+        hours=duration_minutes // 60,
+        minutes=duration_minutes,
         source=str(source),
         message=message,
     )
@@ -224,6 +248,7 @@ def _build_d01_report(
             start=start_text,
             end=end_text,
             domain="d01",
+            interval_minutes=duration_minutes,
         ),
         message=message,
     )
@@ -238,6 +263,7 @@ def _build_d02_report(
     mode: str,
     variables: Iterable[str],
     allow_missing: bool,
+    duration_minutes: int,
 ) -> SkeletonDomainReport:
     report = build_skeleton_cycle_candidate(
         reference_dir,
@@ -255,6 +281,8 @@ def _build_d02_report(
         mode=mode,
         start=report.start,
         end=report.end,
+        hours=duration_minutes // 60,
+        minutes=duration_minutes,
         source=report.source,
         message=message,
     )
@@ -283,6 +311,7 @@ def _build_d02_report(
             start=report.start,
             end=report.end,
             domain="d02",
+            interval_minutes=duration_minutes,
         ),
         message=message,
     )
@@ -294,7 +323,8 @@ def build_skeleton_cycle_run(
     *,
     start: str | datetime,
     end: str | datetime | None = None,
-    hours: int = SUPPORTED_HOURS,
+    hours: int | None = SUPPORTED_HOURS,
+    minutes: int | None = None,
     domains: Iterable[str] = DEFAULT_DOMAINS,
     mode: str = "persistence",
     variables: Iterable[str] = CORE_WRFOUT_VARIABLES,
@@ -303,9 +333,15 @@ def build_skeleton_cycle_run(
     normalized_mode = normalize_skeleton_mode(mode)
     requested_domains = _validate_domains(domains)
     requested_variables = tuple(variables)
-    start_time, end_time = _resolve_cycle_times(start, end=end, hours=hours)
+    start_time, end_time = _resolve_cycle_times(
+        start,
+        end=end,
+        hours=hours,
+        minutes=minutes,
+    )
     start_text = format_wrf_time(start_time)
     end_text = format_wrf_time(end_time)
+    duration_minutes = int((end_time - start_time).total_seconds() // 60)
 
     domain_reports: list[SkeletonDomainReport] = []
     for domain in requested_domains:
@@ -319,6 +355,7 @@ def build_skeleton_cycle_run(
                     mode=normalized_mode,
                     variables=requested_variables,
                     allow_missing=allow_missing,
+                    duration_minutes=duration_minutes,
                 )
             )
         elif domain == "d02":
@@ -331,6 +368,7 @@ def build_skeleton_cycle_run(
                     mode=normalized_mode,
                     variables=requested_variables,
                     allow_missing=allow_missing,
+                    duration_minutes=duration_minutes,
                 )
             )
 
@@ -343,7 +381,8 @@ def build_skeleton_cycle_run(
         validation_gate_only=True,
         start=start_text,
         end=end_text,
-        hours=SUPPORTED_HOURS,
+        hours=duration_minutes // 60,
+        minutes=duration_minutes,
         reference_dir=str(reference_dir),
         candidate_dir=str(candidate_dir),
         domains=domain_reports,
@@ -373,8 +412,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reference-dir", required=True, type=Path, help="Directory with WRF reference files")
     parser.add_argument("--candidate-dir", required=True, type=Path, help="Directory for skeleton candidates")
     parser.add_argument("--start", required=True, help="Cycle start time, for example 2025-07-26_00:00:00")
-    parser.add_argument("--end", help="Cycle end time; defaults to start + 6 h")
-    parser.add_argument("--hours", type=int, default=SUPPORTED_HOURS, help="Cycle length; only 6 is supported")
+    parser.add_argument("--end", help="Cycle end time; defaults to start + 6 h unless --minutes is set")
+    parser.add_argument("--hours", type=int, default=SUPPORTED_HOURS, help="Cycle length in hours when --end/--minutes are omitted")
+    parser.add_argument("--minutes", type=int, help="Cycle length in minutes when --end is omitted")
     parser.add_argument(
         "--domain",
         choices=DEFAULT_DOMAINS,
@@ -400,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
             start=args.start,
             end=args.end,
             hours=args.hours,
+            minutes=args.minutes,
             domains=args.domains if args.domains else DEFAULT_DOMAINS,
             mode=args.mode,
             variables=args.variables,
