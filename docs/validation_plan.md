@@ -801,6 +801,31 @@ or replace `cycle_gate.py` evidence. The hidden
 `--experimental-pressure-refresh-apply` seam remains diagnostic-only,
 non-gate, and non-integrator output.
 
+Round D55 validation direction follows the D54 audit split. The pressure
+failure is dominated by the refreshed target region: global `P` normalized RMSE
+is `6.334952`, target-region `P` normalized RMSE is `10.33536`, non-target
+`P` normalized RMSE is `0.338162`, and the target error fraction is
+`0.998219`. `PB`, `MUB`, and `PHB` pass or remain close in the same audit, so
+the next validation diagnostics should inspect pressure-refresh
+formula/source/vertical/region semantics before treating base-state fields as
+failed producers.
+
+The same D54 audit found derived SLP can pass with normalized RMSE `0.003248`.
+That does not alter strict-gate status. The `2025-07-26_00:10:00` gate remains
+failed on `U`, `V`, `MU`, `P`, and storm-center distance, and validation must
+not advance to `00:20`. A passing derived-SLP audit may be reported only as a
+diagnostic consistency result; it cannot satisfy the `P` field threshold,
+repair storm-center distance, or replace the normal d02 strict gate.
+
+D55 audit reports should add two diagnostic-only views: a pressure-refresh
+`P` formula/source/vertical/region audit, and a selected-field `U`/`V`/`MU`
+state-error split across remapped overlap, refreshed/exposed target cells, and
+non-target cells. These reports may use WRF reference output only as the
+comparison target for errors, masks, and attribution. They must not write
+candidate fields, copy reference values into a candidate, tune candidate
+generation from reference-end truth, or mark hidden-seam output as gate
+evidence.
+
 Example:
 
 ```bash

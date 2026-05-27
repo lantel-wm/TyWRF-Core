@@ -988,6 +988,41 @@ substitute for strict-gate evidence. The hidden
 `--experimental-pressure-refresh-apply` seam remains diagnostic-only,
 non-gate, and non-integrator output.
 
+## Round D55 Diagnostic Direction
+
+D54 audit of the pressure-refresh candidate shows that the `P` failure is
+concentrated in the refreshed target region, not in the untouched field
+background. Global `P` normalized RMSE is `6.334952`; target-region `P`
+normalized RMSE is `10.33536`; non-target `P` normalized RMSE is `0.338162`;
+and the target region accounts for `0.998219` of total `P` squared error.
+`PB`, `MUB`, and `PHB` are close enough to pass their audit checks, so D55
+should treat the pressure problem as a perturbation-pressure refresh semantics
+issue before changing base-state ownership.
+
+The D54 derived-SLP audit can pass with normalized RMSE `0.003248` while the
+strict gate still fails `U`, `V`, `MU`, `P`, and storm-center distance. This is
+not contradictory: derived SLP is an additional diagnostic field, not a
+replacement for the strict `P` field comparison or the TC center requirement.
+A passing derived-SLP audit must not be documented or reported as overriding
+the failed `P` gate, the failed storm-center diagnostic, or the stop-at-`00:10`
+rule.
+
+D55 compatibility work should therefore remain diagnostic-only and focus on two
+audits:
+
+- pressure-refresh `P` formula/source/vertical/region semantics, including the
+  exact fields and constants used to refresh the target region;
+- selected-field `U`, `V`, and `MU` state-error splitting, separating remapped
+  overlap, newly exposed target cells, and untouched/non-target cells.
+
+These audits may read WRF reference output only to compute diagnostic
+differences, regional masks, and formula/source attribution. Reference output
+must not be used to generate candidate values, choose a candidate correction,
+tune a refresh formula into the output, move the storm, or promote a diagnostic
+artifact into a gate candidate. The hidden pressure-refresh seam remains
+diagnostic-only, non-gate, and non-integrator output, and audit tools remain
+observation-only rather than candidate producers.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

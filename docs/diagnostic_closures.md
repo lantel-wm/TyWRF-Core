@@ -635,6 +635,26 @@ Round D54 records the post-D53 failure boundary:
   metadata cannot be converted into closure evidence, candidate evidence, or a
   `00:10` gate pass.
 
+Round D55 keeps the D54 audit conclusions outside closure scope:
+
+- The `P` error is concentrated in the refreshed target region. Global `P`
+  normalized RMSE is `6.334952`, target-region `P` normalized RMSE is
+  `10.33536`, non-target `P` normalized RMSE is `0.338162`, and the target
+  error fraction is `0.998219`.
+- `PB`, `MUB`, and `PHB` pass or remain close in the audit, so a closure must
+  not rewrite those base-state fields to hide a perturbation-pressure refresh
+  semantics problem.
+- Derived SLP can pass with normalized RMSE `0.003248`, but this does not
+  override the failed strict `P` field, the failed `U`/`V`/`MU` fields, or the
+  failed storm-center diagnostic.
+- D55 diagnostics may audit pressure-refresh formula/source/vertical/region
+  semantics and may split selected-field `U`, `V`, and `MU` errors by
+  remapped-overlap, target/exposed, and non-target regions.
+- Those audits are observation-only. They may compare against WRF reference
+  output to explain errors, but they must not produce candidate fields, patch a
+  candidate, tune a formula using reference-end truth, or convert hidden-seam
+  output into gate evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
