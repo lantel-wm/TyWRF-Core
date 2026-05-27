@@ -310,6 +310,35 @@ performed for selected fields, but they must not claim a gate pass, a physical
 10 min forecast acceptance, or full moving-nest compatibility. d02 resolution
 must remain `2 km`, and best-track nudging remains out of scope.
 
+Round D35 introduces the intended `selected_field_cycle` boundary for the first
+non-oracle selected-field candidate. The path may use only d01/d02
+cycle-start inputs, same-time KROSA constants, moving-nest remap,
+`StateExchangePlan`, and `parent_child_interpolation`. It must not use WRF
+reference-end files, later restart truth, end-state deltas, or any field
+derived from a reference-end state. It must write all strict d02 gate fields so
+the normal gate can fail on numerical error rather than metadata, missing
+variables, or non-finite sentinels.
+
+The expected first outcome is a gate-eligible candidate that fails strict
+thresholds numerically, not a claimed pass. Gate tooling may consider
+`selected_field_cycle` eligible only when the output carries:
+
+```text
+TYWRF_GATE_CANDIDATE = true
+TYWRF_INTEGRATOR_OUTPUT = true
+TYWRF_VALIDATION_GATE_ONLY = false
+TYWRF_CANDIDATE_KIND = selected_field_integrator_v0
+```
+
+Those values are allowed only if no end-state/reference-end inputs were used,
+d02 `DX/DY` remains `2000 m`, every strict field is finite, and selected fields
+changed from the start-state through the remap / exchange / interpolation path.
+If any condition is missing, the artifact must be reported as not gate-eligible
+before RMSE thresholds are interpreted. `tendency_cycle`, skeleton/persistence,
+diagnostic remap, diagnostic pressure-refresh, oracle, reference-copy, and
+diagnostic-closure paths remain non-gate even if they produce comparable
+fields or diagnostic reports.
+
 Example:
 
 ```bash

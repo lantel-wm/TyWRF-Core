@@ -3,6 +3,7 @@ from pathlib import Path
 
 import netCDF4
 import numpy as np
+import pytest
 
 from tools.cycle_gate import evaluate_cycles, main as gate_main, report_to_json
 
@@ -11,6 +12,7 @@ CORE_VARIABLES = ("U", "V", "T", "PH", "MU", "P", "QVAPOR")
 START = "2025-07-26_00:00:00"
 END = "2025-07-26_06:00:00"
 END_FILE = "wrfout_d02_2025-07-26_06:00:00"
+SELECTED_FIELD_INTEGRATOR_KIND = "selected_field_integrator_v0"
 PRODUCTION_CANDIDATE_ATTRS = {
     "TYWRF_GATE_CANDIDATE": "true",
     "TYWRF_INTEGRATOR_OUTPUT": "true",
@@ -107,6 +109,75 @@ def test_cycle_gate_fails_field_normalized_rmse_threshold(tmp_path: Path) -> Non
     assert fields["U"].status == "failed"
     assert fields["U"].source_status == "threshold_exceeded"
     assert fields["U"].normalized_rmse > 0.05
+
+
+def test_cycle_gate_selected_field_integrator_kind_reaches_numeric_checks(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        field_offset=1.0,
+        attrs={"TYWRF_CANDIDATE_KIND": SELECTED_FIELD_INTEGRATOR_KIND},
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    diagnostics = {metric.name: metric for metric in report.cycles[0].diagnostics}
+    fields = {field.variable: field for field in report.cycles[0].fields}
+
+    assert report.status == "failed"
+    assert diagnostics["candidate_metadata"].status == "passed"
+    assert fields["U"].status == "failed"
+    assert fields["U"].source_status == "threshold_exceeded"
+
+
+def test_cycle_gate_selected_field_integrator_kind_requires_positive_metadata(
+    tmp_path: Path,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(
+        candidate_dir / END_FILE,
+        attrs={"TYWRF_CANDIDATE_KIND": SELECTED_FIELD_INTEGRATOR_KIND},
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert "TYWRF_GATE_CANDIDATE is not true" in (metadata.message or "")
+    assert "TYWRF_INTEGRATOR_OUTPUT is not true" in (metadata.message or "")
+
+
+@pytest.mark.parametrize(
+    "candidate_kind",
+    (
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_oracle",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_diagnostic",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_remap",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_closure",
+    ),
+)
+def test_cycle_gate_selected_field_integrator_rejects_artifact_kind_tokens(
+    tmp_path: Path,
+    candidate_kind: str,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={"TYWRF_CANDIDATE_KIND": candidate_kind},
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert f"TYWRF_CANDIDATE_KIND={candidate_kind}" in (metadata.message or "")
 
 
 def test_cycle_gate_reports_first_failure_for_10_min_progressive_run(tmp_path: Path) -> None:

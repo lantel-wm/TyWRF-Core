@@ -207,6 +207,32 @@ the normal strict `00:10` validation gate passes with positive integrator
 metadata, any selected-field interpolation report is implementation evidence
 only and must not be labeled as a gate pass.
 
+Round D35 keeps `selected_field_cycle` outside diagnostic closures while
+allowing it to become the first non-oracle selected-field integrator candidate.
+It may use d01/d02 start-state inputs only, then apply moving-nest remap,
+`StateExchangePlan`, and `parent_child_interpolation` to produce all strict d02
+gate fields. It is not WRF-exact physics and is expected at first to fail
+strict thresholds numerically, not because a closure, oracle, metadata shortcut,
+missing field, or non-finite sentinel hid the real error.
+
+The following positive metadata belongs only to that non-oracle selected-field
+integrator path:
+
+```text
+TYWRF_GATE_CANDIDATE = true
+TYWRF_INTEGRATOR_OUTPUT = true
+TYWRF_VALIDATION_GATE_ONLY = false
+TYWRF_CANDIDATE_KIND = selected_field_integrator_v0
+```
+
+Diagnostic closures must not emit or retrofit those values. They are valid
+only when no end-state/reference-end input was used, d02 remains `2 km`, every
+strict field is finite, and selected fields changed from the cycle-start state
+through remap / exchange / interpolation. `tendency_cycle`, skeleton,
+diagnostic remap, diagnostic pressure-refresh, closure-modified, oracle, and
+reference-copy artifacts remain explicitly non-gate and cannot be described as
+selected-field gate candidates.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

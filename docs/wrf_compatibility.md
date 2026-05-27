@@ -391,7 +391,7 @@ constants `P_TOP`, `C3F`, `C4F`, `C3H`, and `C4H`). A narrowed variable list
 that omits required inputs must fail early rather than refreshing an
 uninitialized or partially staged state.
 
-## Round D33-D34 Compatibility Boundary
+## Round D33-D35 Compatibility Boundary
 
 Round D33 separates diagnostic accounting from WRF-compatible integrator output.
 Strict gate eligibility now requires positive candidate metadata, not merely the
@@ -433,6 +433,37 @@ refresh still remains pending. They must preserve d02 `DX/DY = 2000 m`, avoid
 best-track nudging, and avoid any gate-pass claim until the strict
 `2025-07-26_00:10:00` d02 gate passes with a positive-metadata integrator
 candidate.
+
+Round D35 defines `selected_field_cycle` as the first intended non-oracle
+selected-field candidate path. Its compatibility boundary is the cycle-start
+d01/d02 state only, followed by moving-nest remap,
+`StateExchangePlan`, and `parent_child_interpolation` for the selected fields.
+It must not read WRF reference-end files, later restart truth, end-state
+deltas, or any reference-end-derived correction. The output must include every
+strict d02 gate field required by the validation plan, and those fields must be
+finite so failures are numerical RMSE/diagnostic failures rather than
+metadata, missing-field, or sentinel-field failures.
+
+`selected_field_cycle` is not WRF-exact physics. Its first real outputs are
+expected to fail the strict `00:10` gate numerically while still exercising the
+non-oracle integrator path. It may set the positive candidate metadata only
+when all of the following are true:
+
+```text
+TYWRF_GATE_CANDIDATE = true
+TYWRF_INTEGRATOR_OUTPUT = true
+TYWRF_VALIDATION_GATE_ONLY = false
+TYWRF_CANDIDATE_KIND = selected_field_integrator_v0
+```
+
+Those attributes are valid only if no end-state/reference-end inputs were
+used, d02 remains `2 km`, all strict fields are finite, and at least one
+selected field changed from the cycle-start child state through the remap /
+exchange / interpolation path. If any condition is not met, the file must not
+claim positive gate-candidate metadata and the report should name the blocking
+condition. `tendency_cycle`, persistence/skeleton, diagnostic remap,
+diagnostic pressure-refresh, and diagnostic closure paths remain explicitly
+non-gate compatibility artifacts.
 
 ## Physics Bridge Compatibility Notes
 
