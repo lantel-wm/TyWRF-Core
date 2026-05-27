@@ -57,6 +57,13 @@ Kernels must not perform NetCDF I/O, logging, virtual dispatch, or hidden
 allocation. CPU scalar, OpenMP, and future CUDA kernels should share the same
 view shape and indexing contracts.
 
+`include/tywrf/dynamics/tendency.hpp` provides the first state tendency apply
+skeleton. It accepts only `FieldView2D/3D` or `StateView` POD bundles and
+applies `field += dt * tendency` across active cells. Halo cells are skipped
+explicitly, and the loop order is `j-k-i` for 3D and `j-i` for 2D so `i`
+remains the innermost contiguous dimension. The zero-tendency variant validates
+and counts the active region without writing field storage.
+
 ## Loop Rules
 
 - Make `i` the innermost loop.

@@ -130,8 +130,61 @@ Sampled on 2026-05-27 from:
   dimension order. `wrfbdy_d01` validation includes U/V/W/PH/T/MU plus
   QVAPOR, QCLOUD, QRAIN, QICE, QSNOW, QGRAUP, QNICE, and QNRAIN boundary
   values and tendencies.
+- C++ forcing-file reads live in `tywrf::io::KrosaForcingReader`. This is a
+  minimum KROSA-only interface for `wrfbdy_d01` and `wrffdda_d01`, not a
+  general WRF forcing abstraction. It reports the `Time` length, `Times`
+  strings, required-variable presence, variable dimensions/shapes, and reads a
+  selected float variable at one `Time` index into a contiguous
+  `std::vector<float>`.
+- The forcing reader keeps NetCDF I/O outside hot kernels. Boundary and
+  spectral-nudging kernels should receive staged POD views later; this
+  interface only provides metadata and staging buffers for the current
+  KROSA-compatible integrator path.
+- The current required KROSA forcing lists cover `Times`; `wrfbdy_d01` U/V/W/PH,
+  T, MU, QVAPOR, QCLOUD, QRAIN, QICE, QSNOW, QGRAUP, QNICE, and QNRAIN boundary
+  values/tendencies; and `wrffdda_d01` old/new U/V/T/Q/PH/MU nudging fields.
 - Reduced core `wrfout` files can be generated for compatibility smoke tests
   with `tools/write_core_wrfout.py`.
 - The reduced writer preserves the source NetCDF data model, all source
   dimensions, global attributes, selected variable attributes, and the minimum
   v1 core variables by default.
+
+## Physics Bridge Compatibility Notes
+
+P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
+primary KROSA WRF path is:
+
+```text
+/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/model/WRFV4.6.1
+```
+
+`main` and `phys` are symlinks into the shared WP11/WP12 bundle; the bundle
+contains the full `dyn_em`, `frame`, `Registry`, and `configure.wrf` tree used
+to confirm WRF call order and build settings.
+
+The compatible bridge should initially wrap WRF mediation-layer driver
+subroutines, not leaf physics kernels. The fixed KROSA suite maps to:
+
+- Thompson: `module_microphysics_driver::microphysics_driver`, selecting
+  `module_mp_thompson::mp_gt_driver`;
+- RRTMG: `module_radiation_driver::radiation_driver`, selecting
+  `rrtmg_lwrad` and `rrtmg_swrad`;
+- YSU: `module_pbl_driver::pbl_driver`, selecting `module_bl_ysu::ysu`;
+- MM5 surface layer, Noah LSM, slab ocean, and TC flux:
+  `module_surface_driver::surface_driver`, selecting `SFCLAY`, `lsm`, and
+  `OCEAN_DRIVER` for the KROSA options;
+- KF: `module_cumulus_driver::cumulus_driver` on d01 only. d02 uses
+  `cu_physics = 0` and should skip cumulus.
+
+The WRF source call order observed for `dyn_em` is radiation, surface, PBL,
+cumulus, then microphysics. TyWRF's schedule-driven skeleton can attach its
+physics call point to this sequence, but real calls require a wider staging
+contract than the current no-op `TywrfPhysicsStaging` v1.
+
+Additional real-physics staging must include WRF physics-grid derived fields
+(`u_phy`, `v_phy`, `th_phy`, `p_hyd`, `p_hyd_w`, `pi_phy`, `rho`, `dz8w`,
+`z`, `z_at_w`), static/surface fields (`XLAT`, `XLONG`, `XLAND`, `XICE`,
+`TSK`, `SST`, `ALBEDO`, `EMISS`, land-use and soil-category fields), physics
+tendencies, radiation accumulators, soil/snow state, and slab-ocean state. See
+`bindings/wrf_physics/README.md` for the detailed entrypoint manifest and the
+recommended minimal ABI spike.

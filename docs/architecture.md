@@ -139,3 +139,69 @@ strict about the canonical field layout: `i` contiguous, `stride_k = nx`,
 field shapes follow the existing state layout: U/V staggered horizontally,
 W/PH/PHB on full eta levels, mass fields on mass levels, and near-surface fields
 on the mass horizontal grid.
+
+### WRF Physics Entrypoint Strategy
+
+The current PGWRF tree exposes WRF v4.6.1 through symlinks under:
+
+```text
+/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/model/WRFV4.6.1
+```
+
+The physics entrypoint strategy is to wrap WRF mediation-layer driver
+subroutines first, not the individual scheme kernels. The drivers already
+encode WRF option constants, selected optional arguments, timing accumulators,
+and the call shape used by `dyn_em` for the fixed KROSA suite:
+
+- `module_radiation_driver::radiation_driver` selects RRTMG longwave and
+  shortwave for `ra_lw_physics = 4` and `ra_sw_physics = 4`.
+- `module_surface_driver::surface_driver` dispatches MM5 surface layer,
+  Noah LSM, and slab ocean through the selected KROSA surface options.
+- `module_pbl_driver::pbl_driver` selects YSU for `bl_pbl_physics = 1`.
+- `module_cumulus_driver::cumulus_driver` selects KF only on d01; d02 keeps
+  `cu_physics = 0` and returns immediately.
+- `module_microphysics_driver::microphysics_driver` selects Thompson for
+  `mp_physics = 8`.
+
+The WRF `dyn_em` call order observed in the source is:
+
+1. `module_first_rk_step_part1.F`: radiation;
+2. `module_first_rk_step_part1.F`: surface driver, including surface layer,
+   Noah LSM, and slab ocean;
+3. `module_first_rk_step_part1.F`: PBL;
+4. `module_first_rk_step_part1.F`: cumulus;
+5. `solve_em.F`: microphysics.
+
+The next bridge should therefore add a Fortran `ISO_C_BINDING` wrapper that
+exports the existing `tywrf_wrf_physics_step` symbol, reconstructs WRF-style
+Fortran arrays from C staging, and calls only these fixed-suite drivers. It
+should also add a one-time initialization boundary that mirrors the relevant
+parts of `module_physics_init::phy_init`, including RRTMG table initialization,
+`sfclayinit`, Noah table initialization, KF `kfinit`, and Thompson
+`thompson_init`.
+
+The current ABI v1 is enough for the validated no-op bridge, but not enough for
+real WRF physics. Real calls need an ABI v2 sidecar or extension for:
+
+- static and surface fields: `XLAT`, `XLONG`, `XLAND`, `XICE`, `HGT`, `TSK`,
+  `SST`, `ALBEDO`, `EMISS`, `VEGFRA`, `IVGTYP`, `ISLTYP`;
+- derived dynamics fields on WRF physics grids: `u_phy`, `v_phy`, `th_phy`,
+  `t_phy`, `p_hyd`, `p_hyd_w`, `pi_phy`, `rho`, `dz8w`, `z`, `z_at_w`;
+- physics tendencies and accumulators: `rth*ten`, `rq*ten`, `ru*ten`,
+  `rv*ten`, `RAINCV`, `SNOWNC`, `GRAUPELNC`, `STEPRA`, `STEPBL`, `STEPCU`,
+  `NCA`, `W0AVG`;
+- radiation state: `GLW`, `GSW`, `SWDOWN`, `CLDFRA`, cloud fractions, RRTMG
+  flux arrays, effective radii, ozone/aerosol placeholders for the disabled
+  KROSA options;
+- surface and soil state: `SMOIS`, `SH2O`, `TSLB`, `SNOW`, `SNOWH`, `CANWAT`,
+  `TMN`, `ZNT`, `UST`, `PBLH`, `HFX`, `QFX`, `LH`;
+- slab-ocean state: `TML`, `T0ML`, `HML`, `H0ML`, `HUML`, `HVML`, `TMOML`
+  and KROSA ocean timing scalars.
+
+Fortran should not directly consume arbitrary strided C views for the first
+real bridge. The safer first implementation is an explicit staging copy:
+TyWRF canonical buffers are packed into WRF-order arrays
+`real :: field(ims:ime,kms:kme,jms:jme)` and `real :: field2d(ims:ime,jms:jme)`,
+the WRF driver mutates those arrays, and changed fields are unpacked back to
+TyWRF state. That preserves CUDA-ready core layout while avoiding fragile
+Fortran pointer remapping across halo offsets.

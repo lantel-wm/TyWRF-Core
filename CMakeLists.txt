@@ -13,6 +13,8 @@ add_library(tywrf_core STATIC
   src/core/version.cpp
   src/dynamics/cycle_schedule.cpp
   src/dynamics/dynamics_loop.cpp
+  src/dynamics/tendency.cpp
+  src/io/forcing_io.cpp
   src/io/netcdf_schema.cpp
   src/io/wrf_state_io.cpp
   src/nest/nest_interface.cpp
@@ -51,6 +53,14 @@ set_target_properties(tywrf_core PROPERTIES
   CXX_EXTENSIONS OFF
 )
 
+add_executable(tywrf_skeleton_cycle src/tools/skeleton_cycle.cpp)
+target_link_libraries(tywrf_skeleton_cycle PRIVATE TyWRF::Core)
+set_target_properties(tywrf_skeleton_cycle PROPERTIES
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
+
 if(BUILD_TESTING)
   add_executable(tywrf_smoke tests/unit/smoke_test.cpp)
   target_link_libraries(tywrf_smoke PRIVATE TyWRF::Core)
@@ -68,6 +78,10 @@ if(BUILD_TESTING)
   target_link_libraries(tywrf_cycle_schedule_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_cycle_schedule_test COMMAND tywrf_cycle_schedule_test)
 
+  add_executable(tywrf_tendency_test tests/unit/tendency_test.cpp)
+  target_link_libraries(tywrf_tendency_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_tendency_test COMMAND tywrf_tendency_test)
+
   add_executable(tywrf_field_layout_test tests/unit/field_layout_test.cpp)
   target_link_libraries(tywrf_field_layout_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_field_layout_test COMMAND tywrf_field_layout_test)
@@ -80,7 +94,18 @@ if(BUILD_TESTING)
   target_link_libraries(tywrf_wrf_state_io_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_wrf_state_io_test COMMAND tywrf_wrf_state_io_test)
 
+  add_executable(tywrf_forcing_io_test tests/unit/forcing_io_test.cpp)
+  target_link_libraries(tywrf_forcing_io_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_forcing_io_test COMMAND tywrf_forcing_io_test)
+
   add_executable(tywrf_physics_bridge_test tests/unit/physics_bridge_test.cpp)
   target_link_libraries(tywrf_physics_bridge_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_physics_bridge_test COMMAND tywrf_physics_bridge_test)
+
+  add_executable(tywrf_skeleton_cycle_tool_test tests/unit/skeleton_cycle_tool_test.cpp)
+  target_link_libraries(tywrf_skeleton_cycle_tool_test PRIVATE PkgConfig::NETCDF)
+  add_test(
+    NAME tywrf_skeleton_cycle_tool_test
+    COMMAND tywrf_skeleton_cycle_tool_test $<TARGET_FILE:tywrf_skeleton_cycle>
+  )
 endif()

@@ -26,6 +26,24 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
+## C++ Tools
+
+`tywrf_skeleton_cycle` is the current C++ executable shell for a d02 6 h
+candidate. It reads a cycle-start WRF state, copies `Times/XLAT/XLONG/HGT` from
+the cycle-end template, writes selected core fields, and marks the result as
+`skeleton=true`, `not_physical=true`, and `integrator_output=false`. It enforces
+d02 `DX/DY=2000m`; it does not run dynamics or physics.
+
+```bash
+./build/tywrf_skeleton_cycle \
+  --state /path/to/wrfout_d02_2025-07-26_00:00:00 \
+  --template /path/to/wrfout_d02_2025-07-26_06:00:00 \
+  --output /path/to/candidate/wrfout_d02_2025-07-26_06:00:00 \
+  --cycle-start 2025-07-26_00:00:00 \
+  --cycle-end 2025-07-26_06:00:00 \
+  --pretty
+```
+
 ## Python Tools
 
 Use the project-local uv environment:
