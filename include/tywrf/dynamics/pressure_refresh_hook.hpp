@@ -14,6 +14,7 @@ namespace tywrf::dynamics {
 struct KrosaPressureRefreshHookOptions {
   KrosaMassBaseStateReconstructionOptions base_state{};
   KrosaPressureRefreshOptions pressure_refresh{};
+  const KrosaBaseStateProviderTerrainOverride* terrain_override = nullptr;
 };
 
 struct KrosaPressureRefreshHookReport {

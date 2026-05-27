@@ -71,6 +71,43 @@ tywrf::io::KrosaPressureRefreshMetadata make_metadata() {
   return metadata;
 }
 
+tywrf::FieldStorage2D<float> make_override_terrain(const float offset_m) {
+  tywrf::FieldStorage2D<float> terrain(
+      {4, 3},
+      tywrf::horizontal_halo(make_grid().config().halo));
+  auto view = terrain.view();
+  for (std::int32_t j = 0; j < 3; ++j) {
+    for (std::int32_t i = 0; i < 4; ++i) {
+      view(view.halo.i_lower + i, view.halo.j_lower + j) =
+          20.0F + offset_m + 5.0F * static_cast<float>(j) +
+          static_cast<float>(i);
+    }
+  }
+  return terrain;
+}
+
+tywrf::FieldStorage2D<float> make_bad_override_terrain() {
+  tywrf::FieldStorage2D<float> terrain(
+      {5, 3},
+      tywrf::horizontal_halo(make_grid().config().halo));
+  auto view = terrain.view();
+  for (std::int32_t j = 0; j < 3; ++j) {
+    for (std::int32_t i = 0; i < 5; ++i) {
+      view(view.halo.i_lower + i, view.halo.j_lower + j) =
+          20.0F + 5.0F * static_cast<float>(j) + static_cast<float>(i);
+    }
+  }
+  return terrain;
+}
+
+tywrf::dynamics::KrosaBaseStateProviderTerrainOverride moved_terrain_override(
+    const tywrf::FieldStorage2D<float>& terrain) {
+  return {
+      terrain.view(),
+      "moved_candidate_HGT",
+      "override:moved_candidate_HGT"};
+}
+
 template <typename Storage>
 void fill_storage(Storage& storage, const float value) {
   std::fill(storage.data(), storage.data() + storage.size(), value);
@@ -182,6 +219,18 @@ void assert_state_subset_unchanged(
   assert_unchanged(state.mub, before.mub, "MUB");
 }
 
+template <typename Storage>
+float max_abs_difference(const Storage& lhs, const Storage& rhs) {
+  assert(lhs.size() == rhs.size());
+  float max_diff = 0.0F;
+  for (std::size_t index = 0; index < lhs.size(); ++index) {
+    const auto diff = std::fabs(lhs.data()[index] - rhs.data()[index]);
+    assert(std::isfinite(diff));
+    max_diff = std::max(max_diff, diff);
+  }
+  return max_diff;
+}
+
 void assert_halo_unchanged(const tywrf::FieldStorage3D<float>& field) {
   const auto layout = field.layout();
   const auto view = field.view();
@@ -252,6 +301,9 @@ void test_success_syncs_provider_base_state_and_refreshes_exposed_pressure() {
   assert(report.staging_ok);
   assert(report.pressure_refresh_applied);
   assert(report.calls_pressure_refresh_compute);
+  assert(!report.provider_report.terrain_override_used);
+  assert(report.provider_report.terrain_source_name == "HGT");
+  assert(report.provider_report.terrain_provenance == "metadata:HGT");
   assert(report.synced_pb_point_count == 20);
   assert(report.synced_mub_point_count == 10);
   assert(report.synced_phb_point_count == 30);
@@ -333,6 +385,57 @@ void test_success_syncs_provider_base_state_and_refreshes_exposed_pressure() {
   }
 }
 
+void test_override_terrain_reconstructs_provider_and_changes_pressure_fields() {
+  const auto metadata = make_metadata();
+  const auto plan = make_plan();
+
+  tywrf::State<float> default_state(make_grid());
+  fill_state(default_state);
+  const auto default_report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          default_state,
+          metadata);
+  assert(default_report.ok());
+  assert(default_report.provider_ok);
+  assert(default_report.staging_ok);
+  assert(default_report.pressure_refresh_applied);
+  assert(!default_report.provider_report.terrain_override_used);
+
+  auto moved_terrain = make_override_terrain(250.0F);
+  const auto override = moved_terrain_override(moved_terrain);
+  tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+  options.terrain_override = &override;
+
+  tywrf::State<float> override_state(make_grid());
+  fill_state(override_state);
+  const auto override_report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          override_state,
+          metadata,
+          options);
+
+  assert(override_report.ok());
+  assert(override_report.provider_ok);
+  assert(override_report.staging_ok);
+  assert(override_report.pressure_refresh_applied);
+  assert(override_report.calls_pressure_refresh_compute);
+  assert(override_report.provider_report.terrain_override_used);
+  assert(override_report.provider_report.terrain_source_name == "moved_candidate_HGT");
+  assert(
+      override_report.provider_report.terrain_provenance ==
+      "override:moved_candidate_HGT");
+  assert_provider_reports_are_non_gate(override_report);
+  assert(!override_report.touched_overlap_cells);
+  assert(!override_report.touched_halo_cells);
+
+  assert(max_abs_difference(default_state.pb, override_state.pb) > 1.0F);
+  assert(max_abs_difference(default_state.mub, override_state.mub) > 1.0F);
+  assert(max_abs_difference(default_state.phb, override_state.phb) > 100.0F);
+  assert(max_abs_difference(default_state.p, override_state.p) > 1.0F);
+}
+
 void test_missing_metadata_fails_without_compute_or_partial_sync() {
   const auto grid = make_grid();
   const auto plan = make_plan();
@@ -373,6 +476,42 @@ void test_missing_metadata_fails_without_compute_or_partial_sync() {
   }
 }
 
+void test_bad_override_fails_before_staging_compute_or_partial_sync() {
+  const auto grid = make_grid();
+  const auto plan = make_plan();
+  const auto bad_terrain = make_bad_override_terrain();
+  const auto override = moved_terrain_override(bad_terrain);
+  tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+  options.terrain_override = &override;
+
+  tywrf::State<float> state(grid);
+  fill_state(state);
+  const auto before = snapshot_state(state);
+
+  const auto report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          state,
+          make_metadata(),
+          options);
+
+  assert(!report.ok());
+  assert(!report.provider_ok);
+  assert(!report.staging_ok);
+  assert(!report.pressure_refresh_applied);
+  assert(!report.calls_pressure_refresh_compute);
+  assert(report.synced_pb_point_count == 0);
+  assert(report.synced_mub_point_count == 0);
+  assert(report.synced_phb_point_count == 0);
+  assert(report.provider_report.terrain_override_used);
+  assert(report.provider_report.terrain_source_name == "moved_candidate_HGT");
+  assert(
+      report.provider_report.terrain_provenance ==
+      "override:moved_candidate_HGT");
+  assert_provider_reports_are_non_gate(report);
+  assert_state_subset_unchanged(state, before);
+}
+
 void test_zero_halo_grid_path_is_supported() {
   const auto grid = make_zero_halo_grid();
   auto state = tywrf::State<float>(grid);
@@ -398,7 +537,9 @@ void test_zero_halo_grid_path_is_supported() {
 
 int main() {
   test_success_syncs_provider_base_state_and_refreshes_exposed_pressure();
+  test_override_terrain_reconstructs_provider_and_changes_pressure_fields();
   test_missing_metadata_fails_without_compute_or_partial_sync();
+  test_bad_override_fails_before_staging_compute_or_partial_sync();
   test_zero_halo_grid_path_is_supported();
 
   std::cout << "Validated KROSA pressure refresh hook helper\n";

@@ -676,6 +676,27 @@ diagnostic pressure-refresh artifacts as compatibility evidence or gate passes.
 The current `00:10` gate is still failed on `U`, `V`, `MU`, `P`, and
 storm-center distance.
 
+## Round D43 Hook Terrain-Override Boundary
+
+D43 may extend the pressure-refresh hook/API so the hook can ask the
+base-state provider to use a moved-terrain override. This is diagnostic hook
+capability only. It does not make the default selected-field candidate a
+pressure producer, and it does not change the D42 opt-in readiness guard.
+
+A hook-level unit test may exercise the terrain override and refresh exposed
+`P` through the diagnostic pressure-refresh hook. That proves the hook can pass
+override terrain into provider-backed staging for an exposed-cell smoke path; it
+does not prove that `selected_field_cycle --pressure-refresh` is ready, and it
+must not be reported as a real `00:10` gate pass.
+
+The default selected-field candidate and the D42 opt-in guard still keep
+`thermodynamic_base_state_consistency_ready=false`. The opt-in path must fail
+closed, produce no output file, and avoid writing `P`, `PB`, `PHB`, or `MUB` to
+the candidate. `P` remains forbidden from parent interpolation. D43 also must
+not use `00:10` reference-end truth, restart `PHB`/`ALB` as a provider
+substitute, or probe/diagnostic artifacts as gate evidence. The current real
+`00:10` gate remains failed on `U`, `V`, `MU`, `P`, and storm-center distance.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

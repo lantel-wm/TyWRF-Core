@@ -393,6 +393,25 @@ Round D41/D42 keeps moved-terrain provider work outside closure scope:
   `MU`, `P`, and storm-center distance; probe or diagnostic pressure-refresh
   artifacts must not be reported as gate passes.
 
+Round D43 keeps pressure-refresh hook terrain overrides outside closure scope:
+
+- The pressure-refresh hook/API may let the provider consume a moved-terrain
+  override. This is diagnostic hook capability only, not the default
+  selected-field pressure producer and not a closure input.
+- A hook unit test may call the terrain-override path and refresh exposed `P`;
+  that demonstrates hook wiring only. It does not make
+  `selected_field_cycle --pressure-refresh` readiness pass, and it does not
+  count as a real `00:10` gate pass.
+- The default selected-field candidate and D42 opt-in guard still require
+  `thermodynamic_base_state_consistency_ready=false`, fail closed, no output
+  file, and no writes to `P`, `PB`, `PHB`, or `MUB`. A closure must not fill in
+  that missing output or reinterpret the hook smoke as candidate production.
+- `P` remains forbidden from parent interpolation. Closures must still reject
+  `00:10` reference-end truth, restart `PHB`/`ALB` as a provider substitute,
+  and probe or diagnostic pressure-refresh artifacts as gate evidence. The
+  current `00:10` gate remains failed on `U`, `V`, `MU`, `P`, and storm-center
+  distance.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

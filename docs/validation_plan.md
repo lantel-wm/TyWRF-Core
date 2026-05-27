@@ -537,6 +537,25 @@ pressure-refresh artifacts as gate evidence. The strict `00:10` endpoint has
 not passed; current failures remain `U`, `V`, `MU`, `P`, and storm-center
 distance.
 
+Round D43 validation scope is limited to pressure-refresh hook/API terrain
+override support. The hook may accept a moved-terrain override and use it when
+reconstructing provider-backed pressure-refresh staging, but that is a
+diagnostic hook capability, not the default selected-field producer.
+
+A D43 hook unit test that refreshes exposed `P` with override terrain is only a
+hook smoke. It must be reported separately from
+`selected_field_cycle --pressure-refresh`, and it must not be used to claim
+that the selected-field readiness guard passed or that the real
+`2025-07-26_00:10:00` d02 gate passed.
+
+The default selected-field candidate and D42 opt-in guard remain unchanged:
+`thermodynamic_base_state_consistency_ready=false`, fail closed, no output file,
+and no writes to `P`, `PB`, `PHB`, or `MUB`. `P` is still excluded from parent
+interpolation. Validation must continue rejecting `00:10` reference-end truth,
+restart `PHB`/`ALB` provider substitutes, and probe or diagnostic
+pressure-refresh artifacts as gate evidence. The current strict `00:10` gate is
+still failed on `U`, `V`, `MU`, `P`, and storm-center distance.
+
 Example:
 
 ```bash

@@ -229,8 +229,16 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
   report.integrator_output = false;
 
   KrosaBaseStateProvider provider;
-  report.provider_report =
-      provider.reconstruct(new_child.grid, metadata, options.base_state);
+  if (options.terrain_override == nullptr) {
+    report.provider_report =
+        provider.reconstruct(new_child.grid, metadata, options.base_state);
+  } else {
+    report.provider_report = provider.reconstruct(
+        new_child.grid,
+        metadata,
+        *options.terrain_override,
+        options.base_state);
+  }
   report.provider_ok = report.provider_report.ok();
   if (!report.provider_ok) {
     report.result = report.provider_report.result;
