@@ -35,19 +35,23 @@ applied pressure refresh remain diagnostic only; they must not hide sentinel
 `P`, rename `PSFC` as pressure, patch validation metrics, or satisfy a normal
 gate.
 
-The pressure-refresh source set is `P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`, and
-`ALB`. `wrfinput_d01` has all six, but the clean d02 start-time `ALB` source is
-not resolved: d02 history has the coefficients and `P_TOP` without `ALB`, while
-later d02 restart samples include `ALB`. That missing clean start-time `ALB`
-source is a wiring blocker, not a diagnostic-closure permission.
+The pressure-refresh consumer needs `P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`, and
+`ALB`. `ALB` here is WRF Registry `alb`, the inverse base density on `ikj`,
+not the surface albedo variable `ALBEDO`; this constraint is retained. Registry
+flags give it input/restart/interp/smooth behavior (`irdus`) but no history
+output, so missing `ALB` in `wrfout` is expected.
 
-`ALB` here is WRF Registry `alb`, the inverse base density on `ikj`, not the
-surface albedo variable `ALBEDO`. Registry flags give it input/restart/interp/
-smooth behavior (`irdus`) but no history output, so missing `ALB` in `wrfout`
-is expected. For a non-restart `start_domain`, WRF reconstructs base-state
-`T_INIT`, `PB`, `ALB`, and `PHB`; TyWRF must model that with an explicit
-base-state reconstruction provider. Later restart-file `ALB` can only support
-probe/smoke checks and must not be promoted to d02 start-time validation truth.
+The narrow `PB + T_INIT -> ALB` helper is valid only when same-domain,
+same-time `PB` and `T_INIT` are already available. It is a helper, not the
+KROSA d02 start-time provider. The KROSA provider must reconstruct `PB`,
+`T_INIT`, and `MUB` from `HT`/`HGT`, `P_TOP`, `C3F`/`C4F`, `C3H`/`C4H`, and
+WRF constants, then derive `ALB` from that reconstructed base state. Later
+restart-file `ALB` can only support probe/smoke checks and must not be promoted
+to d02 start-time validation truth.
+
+`PHB` for `hypsometric_opt=2` remains a later log-linear full-level
+reconstruction contract. It must not be described as already completed pressure
+refresh, and it does not make parent-fill or closure output gate-eligible.
 
 ## Hard Prohibitions
 

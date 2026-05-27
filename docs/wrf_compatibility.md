@@ -237,23 +237,25 @@ and not applied, but the compute path is not invoked from the skeleton/remap
 sequence yet. Until that connection exists, pressure-refresh metadata is a
 blocker marker, not evidence that exposed-cell `P` was produced.
 
-The required KROSA pressure-refresh inputs are `P_TOP`, `C3F`, `C4F`, `C3H`,
-`C4H`, and `ALB`. `wrfinput_d01` contains the complete six-item source set.
-Current clean d02 start-time sources are incomplete: d02 history files provide
-the coefficients and `P_TOP` but not `ALB`, while later d02 restart samples do
-contain `ALB`. A clean source for d02 start-time `ALB` has not been found, so
-this is the current real wiring blocker for applying pressure refresh on d02.
+The pressure-refresh consumer still needs `P_TOP`, `C3F`, `C4F`, `C3H`,
+`C4H`, and `ALB`. `ALB` is WRF Registry state variable `alb`: inverse base
+density on `ikj`, not the surface albedo field `ALBEDO`; this naming constraint
+is retained. Its flags include input/restart/interp/smooth handling (`irdus`)
+but no history-output flag, so `wrfout` files normally omitting `ALB` is
+expected.
 
-WRF Registry defines `ALB` as state variable `alb`: inverse base density on
-`ikj`, not the surface albedo field `ALBEDO`. Its flags include
-input/restart/interp/smooth handling (`irdus`) but no history-output flag, so
-`wrfout` files normally omitting `ALB` is expected. Non-restart
-`start_domain` rebuilds the base state rather than sourcing it from history
-output; the relevant reconstructed fields are `T_INIT`, `PB`, `ALB`, and
-`PHB`. TyWRF should therefore add a base-state reconstruction provider for
-these fields before treating d02 pressure refresh as physically wired. Later
-restart-file `ALB` may be used only as a probe or smoke reference for shape and
-range checks; it is not d02 start-time validation truth.
+The narrow `PB + T_INIT -> ALB` helper is safe only when `PB` and `T_INIT`
+already exist for the same domain and valid time. It is not the d02 start-time
+source of truth and must not read later restart-file `ALB` as validation truth.
+Later restart-file `ALB` may be used only as a probe or smoke reference for
+shape and range checks.
+
+The KROSA non-restart `start_domain` provider contract is broader: reconstruct
+`PB`, `T_INIT`, and `MUB` from `HT`/`HGT`, `P_TOP`, `C3F`/`C4F`,
+`C3H`/`C4H`, and WRF constants, then derive `ALB` from the reconstructed
+same-domain base state. `PHB` reconstruction for `hypsometric_opt=2` remains a
+future log-linear full-level contract; it must not be documented or treated as
+an already completed pressure-refresh compute path.
 
 Diagnostic parent-fill candidates remain marked `not_physical`,
 `diagnostic_only`, and `gate_candidate = false`. They are non-physical,

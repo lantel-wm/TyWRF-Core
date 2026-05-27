@@ -13,8 +13,18 @@ import netCDF4
 
 
 REQUIRED_NAMES = ("P_TOP", "C3F", "C4F", "C3H", "C4H", "ALB")
+BASE_STATE_RECONSTRUCTION_REQUIRED_INPUTS = (
+    "HT/HGT",
+    "P_TOP",
+    "C3F",
+    "C4F",
+    "C3H",
+    "C4H",
+)
 FULL_LEVEL_NAMES = ("C3F", "C4F")
 MASS_LEVEL_NAMES = ("C3H", "C4H")
+TERRAIN_NAMES = ("HT", "HGT")
+DIRECT_BASE_STATE_NAMES = ("PB", "T_INIT")
 ALB_NAME = "ALB"
 P_TOP_NAME = "P_TOP"
 
@@ -43,6 +53,12 @@ class SourceAuditEntry:
     p_top_source: str | None
     alb_available: bool
     direct_alb_source: bool
+    base_state_reconstruction_input_presence: dict[str, bool]
+    base_state_reconstruction_inputs_complete: bool
+    missing_base_state_reconstruction_inputs: list[str]
+    base_state_terrain_source: str | None
+    direct_pb_t_init_path_available: bool
+    missing_direct_pb_t_init_inputs: list[str]
     base_state_reconstruction_required: bool
     recommended_next_source: str | None
     diagnostic_only: bool
@@ -151,6 +167,58 @@ def _check_alb_shape(dataset: netCDF4.Dataset, entry: SourceEntry) -> str | None
     return None
 
 
+def _check_terrain_source(
+    dataset: netCDF4.Dataset,
+    entry: SourceEntry,
+) -> tuple[str | None, list[str]]:
+    errors = []
+    expected = (entry.mass_ny, entry.mass_nx)
+    for name in TERRAIN_NAMES:
+        variable = dataset.variables.get(name)
+        if variable is None:
+            continue
+        shape = _non_time_shape(variable, entry.time_index)
+        if shape == expected:
+            return name, []
+        errors.append(f"{name} has shape {shape}, expected {expected}")
+    return None, errors
+
+
+def _check_mass_3d_shape(
+    dataset: netCDF4.Dataset,
+    name: str,
+    entry: SourceEntry,
+) -> str | None:
+    variable = dataset.variables.get(name)
+    if variable is None:
+        return None
+    shape = _non_time_shape(variable, entry.time_index)
+    expected = (entry.mass_nz, entry.mass_ny, entry.mass_nx)
+    if shape != expected:
+        return f"{name} has shape {shape}, expected {expected}"
+    return None
+
+
+def _default_reconstruction_presence() -> dict[str, bool]:
+    return {
+        "HT": False,
+        "HGT": False,
+        "HT/HGT": False,
+        "P_TOP": False,
+        "C3F": False,
+        "C4F": False,
+        "C3H": False,
+        "C4H": False,
+        "PB": False,
+        "T_INIT": False,
+        "direct_PB_T_INIT": False,
+    }
+
+
+def _unavailable_reconstruction_inputs() -> list[str]:
+    return list(BASE_STATE_RECONSTRUCTION_REQUIRED_INPUTS)
+
+
 def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
     path = Path(entry.path)
     if not path.exists():
@@ -164,6 +232,12 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
             p_top_source=None,
             alb_available=False,
             direct_alb_source=False,
+            base_state_reconstruction_input_presence=_default_reconstruction_presence(),
+            base_state_reconstruction_inputs_complete=False,
+            missing_base_state_reconstruction_inputs=_unavailable_reconstruction_inputs(),
+            base_state_terrain_source=None,
+            direct_pb_t_init_path_available=False,
+            missing_direct_pb_t_init_inputs=list(DIRECT_BASE_STATE_NAMES),
             base_state_reconstruction_required=False,
             recommended_next_source=None,
             diagnostic_only=True,
@@ -186,17 +260,56 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
             alb_available = ALB_NAME in dataset.variables
 
             shape_errors = []
+            vector_inputs_valid: dict[str, bool] = {}
             for name in FULL_LEVEL_NAMES:
                 message = _check_vector_shape(dataset, name, entry.full_nz, entry.time_index)
                 if message is not None:
                     shape_errors.append(message)
+                vector_inputs_valid[name] = name in dataset.variables and message is None
             for name in MASS_LEVEL_NAMES:
                 message = _check_vector_shape(dataset, name, entry.mass_nz, entry.time_index)
                 if message is not None:
                     shape_errors.append(message)
+                vector_inputs_valid[name] = name in dataset.variables and message is None
             alb_shape_error = _check_alb_shape(dataset, entry)
             if alb_shape_error is not None:
                 shape_errors.append(alb_shape_error)
+
+            terrain_source, _terrain_shape_errors = _check_terrain_source(dataset, entry)
+            direct_input_shape_errors = {
+                name: _check_mass_3d_shape(dataset, name, entry)
+                for name in DIRECT_BASE_STATE_NAMES
+            }
+            direct_input_valid = {
+                name: name in dataset.variables and message is None
+                for name, message in direct_input_shape_errors.items()
+            }
+            direct_pb_t_init_path_available = all(
+                direct_input_valid[name] for name in DIRECT_BASE_STATE_NAMES
+            )
+            reconstruction_input_presence = {
+                "HT": terrain_source == "HT",
+                "HGT": terrain_source == "HGT",
+                "HT/HGT": terrain_source is not None,
+                "P_TOP": p_top_present,
+                **vector_inputs_valid,
+                **direct_input_valid,
+                "direct_PB_T_INIT": direct_pb_t_init_path_available,
+            }
+            missing_base_state_reconstruction_inputs = []
+            if terrain_source is None:
+                missing_base_state_reconstruction_inputs.append("HT/HGT")
+            if not p_top_present:
+                missing_base_state_reconstruction_inputs.append(P_TOP_NAME)
+            for name in (*FULL_LEVEL_NAMES, *MASS_LEVEL_NAMES):
+                if not vector_inputs_valid[name]:
+                    missing_base_state_reconstruction_inputs.append(name)
+            missing_direct_pb_t_init_inputs = [
+                name for name in DIRECT_BASE_STATE_NAMES if not direct_input_valid[name]
+            ]
+            base_state_reconstruction_inputs_complete = (
+                not missing_base_state_reconstruction_inputs
+            )
     except (OSError, RuntimeError, ValueError) as exc:
         return SourceAuditEntry(
             name=entry.name,
@@ -208,6 +321,12 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
             p_top_source=None,
             alb_available=False,
             direct_alb_source=False,
+            base_state_reconstruction_input_presence=_default_reconstruction_presence(),
+            base_state_reconstruction_inputs_complete=False,
+            missing_base_state_reconstruction_inputs=_unavailable_reconstruction_inputs(),
+            base_state_terrain_source=None,
+            direct_pb_t_init_path_available=False,
+            missing_direct_pb_t_init_inputs=list(DIRECT_BASE_STATE_NAMES),
             base_state_reconstruction_required=False,
             recommended_next_source=None,
             diagnostic_only=True,
@@ -227,6 +346,12 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
             p_top_source=p_top_source,
             alb_available=alb_available,
             direct_alb_source=False,
+            base_state_reconstruction_input_presence=reconstruction_input_presence,
+            base_state_reconstruction_inputs_complete=False,
+            missing_base_state_reconstruction_inputs=missing_base_state_reconstruction_inputs,
+            base_state_terrain_source=terrain_source,
+            direct_pb_t_init_path_available=direct_pb_t_init_path_available,
+            missing_direct_pb_t_init_inputs=missing_direct_pb_t_init_inputs,
             base_state_reconstruction_required=False,
             recommended_next_source=None,
             diagnostic_only=True,
@@ -239,8 +364,7 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
     can_seed = status == "ok"
     base_state_reconstruction_required = (
         not alb_available
-        and p_top_present
-        and all(name not in missing_names for name in (*FULL_LEVEL_NAMES, *MASS_LEVEL_NAMES))
+        and base_state_reconstruction_inputs_complete
     )
     recommended_next_source = (
         "wrf_start_domain_base_state_reconstruction"
@@ -257,6 +381,12 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
         p_top_source=p_top_source,
         alb_available=alb_available,
         direct_alb_source=alb_available,
+        base_state_reconstruction_input_presence=reconstruction_input_presence,
+        base_state_reconstruction_inputs_complete=base_state_reconstruction_inputs_complete,
+        missing_base_state_reconstruction_inputs=missing_base_state_reconstruction_inputs,
+        base_state_terrain_source=terrain_source,
+        direct_pb_t_init_path_available=direct_pb_t_init_path_available,
+        missing_direct_pb_t_init_inputs=missing_direct_pb_t_init_inputs,
         base_state_reconstruction_required=base_state_reconstruction_required,
         recommended_next_source=recommended_next_source,
         diagnostic_only=True,
@@ -281,6 +411,19 @@ def audit_pressure_refresh_sources(entries: Iterable[SourceEntry]) -> PressureRe
     base_state_reconstruction_entries = [
         entry.name for entry in audited_entries if entry.base_state_reconstruction_required
     ]
+    base_state_reconstruction_inputs_complete_entries = [
+        entry.name
+        for entry in audited_entries
+        if entry.base_state_reconstruction_inputs_complete
+    ]
+    base_state_reconstruction_missing_inputs_by_entry = {
+        entry.name: entry.missing_base_state_reconstruction_inputs
+        for entry in audited_entries
+        if entry.missing_base_state_reconstruction_inputs
+    }
+    direct_pb_t_init_path_entries = [
+        entry.name for entry in audited_entries if entry.direct_pb_t_init_path_available
+    ]
     d02_base_state_reconstruction_entries = [
         entry.name
         for entry in audited_entries
@@ -296,6 +439,20 @@ def audit_pressure_refresh_sources(entries: Iterable[SourceEntry]) -> PressureRe
             **counts,
             "d02_alb_blocker": bool(d02_alb_blockers),
             "d02_alb_blocker_entries": d02_alb_blockers,
+            "base_state_reconstruction_required_inputs": list(
+                BASE_STATE_RECONSTRUCTION_REQUIRED_INPUTS
+            ),
+            "base_state_reconstruction_inputs_complete_count": len(
+                base_state_reconstruction_inputs_complete_entries
+            ),
+            "base_state_reconstruction_inputs_complete_entries": (
+                base_state_reconstruction_inputs_complete_entries
+            ),
+            "base_state_reconstruction_missing_inputs_by_entry": (
+                base_state_reconstruction_missing_inputs_by_entry
+            ),
+            "direct_pb_t_init_path_available_count": len(direct_pb_t_init_path_entries),
+            "direct_pb_t_init_path_available_entries": direct_pb_t_init_path_entries,
             "base_state_reconstruction_required": bool(base_state_reconstruction_entries),
             "base_state_reconstruction_entries": base_state_reconstruction_entries,
             "d02_base_state_reconstruction_required": bool(

@@ -20,6 +20,8 @@ def _write_source(
     path: Path,
     *,
     include_alb: bool = True,
+    include_terrain: bool = True,
+    include_direct_pb_t_init: bool = False,
     bad_alb_shape: bool = False,
     p_top_as_attr: bool = False,
 ) -> None:
@@ -45,6 +47,24 @@ def _write_source(
         _write_vector(dataset, "C4F", 3)
         _write_vector(dataset, "C3H", 2)
         _write_vector(dataset, "C4H", 2)
+
+        if include_terrain:
+            hgt = dataset.createVariable("HGT", "f4", ("Time", "south_north", "west_east"))
+            hgt[0, :, :] = 100.0
+
+        if include_direct_pb_t_init:
+            pb = dataset.createVariable(
+                "PB",
+                "f4",
+                ("Time", "bottom_top", "south_north", "west_east"),
+            )
+            pb[0, :, :, :] = 95000.0
+            t_init = dataset.createVariable(
+                "T_INIT",
+                "f4",
+                ("Time", "bottom_top", "south_north", "west_east"),
+            )
+            t_init[0, :, :, :] = 0.0
 
         if include_alb:
             west_east_dim = "west_east_bad" if bad_alb_shape else "west_east"
@@ -91,6 +111,24 @@ def test_audit_reports_complete_source_as_seedable_and_clean_only_when_marked(
     assert entry["p_top_source"] == "time_variable"
     assert entry["alb_available"] is True
     assert entry["direct_alb_source"] is True
+    assert entry["base_state_reconstruction_inputs_complete"] is True
+    assert entry["missing_base_state_reconstruction_inputs"] == []
+    assert entry["base_state_terrain_source"] == "HGT"
+    assert entry["base_state_reconstruction_input_presence"] == {
+        "HT": False,
+        "HGT": True,
+        "HT/HGT": True,
+        "P_TOP": True,
+        "C3F": True,
+        "C4F": True,
+        "C3H": True,
+        "C4H": True,
+        "PB": False,
+        "T_INIT": False,
+        "direct_PB_T_INIT": False,
+    }
+    assert entry["direct_pb_t_init_path_available"] is False
+    assert entry["missing_direct_pb_t_init_inputs"] == ["PB", "T_INIT"]
     assert entry["base_state_reconstruction_required"] is False
     assert entry["recommended_next_source"] is None
     assert entry["diagnostic_only"] is True
@@ -109,6 +147,21 @@ def test_audit_reports_d02_start_time_missing_alb_as_blocker(tmp_path: Path) -> 
     assert payload["summary"]["missing_count"] == 1
     assert payload["summary"]["d02_alb_blocker"] is True
     assert payload["summary"]["d02_alb_blocker_entries"] == ["d02_start_wrfout"]
+    assert payload["summary"]["base_state_reconstruction_required_inputs"] == [
+        "HT/HGT",
+        "P_TOP",
+        "C3F",
+        "C4F",
+        "C3H",
+        "C4H",
+    ]
+    assert payload["summary"]["base_state_reconstruction_inputs_complete_count"] == 1
+    assert payload["summary"]["base_state_reconstruction_inputs_complete_entries"] == [
+        "d02_start_wrfout"
+    ]
+    assert payload["summary"]["base_state_reconstruction_missing_inputs_by_entry"] == {}
+    assert payload["summary"]["direct_pb_t_init_path_available_count"] == 0
+    assert payload["summary"]["direct_pb_t_init_path_available_entries"] == []
     assert payload["summary"]["base_state_reconstruction_required"] is True
     assert payload["summary"]["base_state_reconstruction_entries"] == ["d02_start_wrfout"]
     assert payload["summary"]["d02_base_state_reconstruction_required"] is True
@@ -126,10 +179,61 @@ def test_audit_reports_d02_start_time_missing_alb_as_blocker(tmp_path: Path) -> 
     assert entry["p_top_source"] == "global_attribute"
     assert entry["alb_available"] is False
     assert entry["direct_alb_source"] is False
+    assert entry["base_state_reconstruction_inputs_complete"] is True
+    assert entry["missing_base_state_reconstruction_inputs"] == []
+    assert entry["base_state_terrain_source"] == "HGT"
     assert entry["base_state_reconstruction_required"] is True
     assert entry["recommended_next_source"] == "wrf_start_domain_base_state_reconstruction"
     assert entry["can_seed_pressure_refresh"] is False
     assert entry["suitable_for_start_time_truth"] is False
+
+
+def test_audit_reports_missing_reconstruction_inputs_for_d02_start_time(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "wrfout_d02_2025-07-26_00:00:00"
+    _write_source(source, include_alb=False, include_terrain=False, p_top_as_attr=True)
+
+    payload = json.loads(
+        report_to_json(audit_pressure_refresh_sources([_entry("d02_start_wrfout", "d02", source)]))
+    )
+
+    assert payload["status"] == "failed"
+    assert payload["summary"]["d02_alb_blocker"] is True
+    assert payload["summary"]["base_state_reconstruction_required"] is False
+    assert payload["summary"]["d02_base_state_reconstruction_required"] is False
+    assert payload["summary"]["recommended_next_source"] is None
+    assert payload["summary"]["base_state_reconstruction_missing_inputs_by_entry"] == {
+        "d02_start_wrfout": ["HT/HGT"]
+    }
+    entry = payload["entries"][0]
+    assert entry["missing_names"] == ["ALB"]
+    assert entry["base_state_reconstruction_inputs_complete"] is False
+    assert entry["missing_base_state_reconstruction_inputs"] == ["HT/HGT"]
+    assert entry["base_state_terrain_source"] is None
+    assert entry["base_state_reconstruction_input_presence"]["HT/HGT"] is False
+    assert entry["base_state_reconstruction_required"] is False
+    assert entry["recommended_next_source"] is None
+
+
+def test_audit_reports_optional_direct_pb_t_init_path(tmp_path: Path) -> None:
+    source = tmp_path / "wrfinput_d01"
+    _write_source(source, include_direct_pb_t_init=True)
+
+    payload = json.loads(
+        report_to_json(audit_pressure_refresh_sources([_entry("d01_wrfinput", "d01", source)]))
+    )
+
+    assert payload["summary"]["direct_pb_t_init_path_available_count"] == 1
+    assert payload["summary"]["direct_pb_t_init_path_available_entries"] == [
+        "d01_wrfinput"
+    ]
+    entry = payload["entries"][0]
+    assert entry["direct_pb_t_init_path_available"] is True
+    assert entry["missing_direct_pb_t_init_inputs"] == []
+    assert entry["base_state_reconstruction_input_presence"]["PB"] is True
+    assert entry["base_state_reconstruction_input_presence"]["T_INIT"] is True
+    assert entry["base_state_reconstruction_input_presence"]["direct_PB_T_INIT"] is True
 
 
 def test_audit_reports_nonexistent_candidate(tmp_path: Path) -> None:

@@ -119,19 +119,25 @@ hide sentinel or pending exposed-cell `P`. A parent-fill candidate with pending
 pressure refresh should fail derivation or gate checks until the pressure
 producer is fixed. The KROSA pressure-refresh helper and I/O staging exist, and
 skeleton metadata reports the refresh as required/not applied, but the compute
-path is not invoked from skeleton/remap yet. Its required source fields are
-`P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`, and `ALB`; d02 start-time `ALB` still has
-no clean source, because d02 history has the coefficients and `P_TOP` without
-`ALB`, while later d02 restart samples include `ALB`. Output missing applied
-pressure refresh must not be counted as a gate pass.
+path is not invoked from skeleton/remap yet. Reconstructed staging fields,
+diagnostic parent-fill, and oracle/reference-copy outputs must not be counted
+as gate passes until pressure-refresh compute is truly wired and the 10 min gate
+passes.
 
-The `ALB` in that source set is WRF Registry `alb`, the inverse base density,
-not surface `ALBEDO`. It is input/restart/interp/smooth state without history
-output, so `wrfout` missing `ALB` is expected. For non-restart startup WRF
-reconstructs base-state `T_INIT`, `PB`, `ALB`, and `PHB`; TyWRF needs the same
-kind of base-state reconstruction provider before d02 pressure-refresh output
-can be gate-eligible. Later restart `ALB` may be used only as a probe/smoke
-sample and must not serve as d02 start-time validation truth.
+The pressure-refresh consumer requires `P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`,
+and `ALB`. The `ALB` in that source set is WRF Registry `alb`, the inverse base
+density, not surface `ALBEDO`; this constraint is retained. It is
+input/restart/interp/smooth state without history output, so `wrfout` missing
+`ALB` is expected.
+
+The narrow `PB + T_INIT -> ALB` helper is safe only for same-domain, same-time
+inputs that already contain `PB` and `T_INIT`. The KROSA start-domain provider
+must instead reconstruct `PB`, `T_INIT`, and `MUB` from `HT`/`HGT`, `P_TOP`,
+`C3F`/`C4F`, `C3H`/`C4H`, and WRF constants, then derive `ALB` from the
+reconstructed base state. Later restart `ALB` may be used only as a
+probe/smoke sample and must not serve as d02 start-time validation truth.
+`PHB` reconstruction for `hypsometric_opt=2` remains a later log-linear
+full-level contract, not evidence that pressure refresh is complete.
 
 Example:
 
