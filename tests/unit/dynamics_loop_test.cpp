@@ -88,6 +88,107 @@ std::int64_t count_events(
   return count;
 }
 
+std::size_t find_event_index(
+    const std::vector<LoopEvent>& events,
+    const LoopEventKind kind,
+    const DomainId domain,
+    const std::int64_t parent_step,
+    const std::int32_t child_substep) {
+  for (std::size_t index = 0; index < events.size(); ++index) {
+    const auto& event = events[index];
+    if (event.kind == kind && event.domain == domain &&
+        event.parent_step_index == parent_step &&
+        event.child_substep_index == child_substep) {
+      return index;
+    }
+  }
+  return events.size();
+}
+
+void expect_10min_parent_step_event_order(
+    const std::vector<LoopEvent>& events,
+    const std::int64_t parent_steps,
+    const std::int32_t child_substeps_per_parent,
+    const std::int32_t parent_time_step_seconds,
+    const std::int32_t child_time_step_seconds) {
+  for (std::int64_t parent_step = 0; parent_step < parent_steps; ++parent_step) {
+    const auto parent_start =
+        parent_step * static_cast<std::int64_t>(parent_time_step_seconds);
+    const auto parent_end = parent_start + parent_time_step_seconds;
+    const auto feedback_index =
+        find_event_index(events, LoopEventKind::nest_feedback, DomainId::d01,
+                         parent_step, -1);
+    const auto move_check_index =
+        find_event_index(events, LoopEventKind::moving_nest_move_check,
+                         DomainId::d02, parent_step, -1);
+    const auto parent_step_label =
+        std::string("10 min parent step ") + std::to_string(parent_step);
+
+    expect(feedback_index != events.size(), parent_step_label + " feedback exists");
+    expect(move_check_index != events.size(), parent_step_label + " move check exists");
+    if (feedback_index == events.size() || move_check_index == events.size()) {
+      continue;
+    }
+
+    expect_event(events[feedback_index], LoopEventKind::nest_feedback,
+                 DomainId::d01, parent_step, -1, parent_start, parent_end,
+                 parent_step_label + " feedback event", -1, parent_end);
+    expect_event(events[move_check_index], LoopEventKind::moving_nest_move_check,
+                 DomainId::d02, parent_step, -1, parent_end, parent_end,
+                 parent_step_label + " move check event", -1, parent_end);
+
+    for (std::int32_t child_substep = 0;
+         child_substep < child_substeps_per_parent;
+         ++child_substep) {
+      const auto child_start =
+          parent_start + child_substep *
+                             static_cast<std::int64_t>(child_time_step_seconds);
+      const auto child_end = child_start + child_time_step_seconds;
+      const auto interpolation_index =
+          find_event_index(events, LoopEventKind::nest_interpolation,
+                           DomainId::d02, parent_step, child_substep);
+      const auto tendency_index =
+          find_event_index(events, LoopEventKind::zero_dynamics_tendency,
+                           DomainId::d02, parent_step, child_substep);
+      const auto physics_index =
+          find_event_index(events, LoopEventKind::physics, DomainId::d02,
+                           parent_step, child_substep);
+      const auto child_label = parent_step_label + " child substep " +
+                               std::to_string(child_substep);
+
+      expect(interpolation_index != events.size(),
+             child_label + " interpolation exists");
+      expect(tendency_index != events.size(), child_label + " tendency exists");
+      expect(physics_index != events.size(), child_label + " physics exists");
+      if (interpolation_index == events.size() ||
+          tendency_index == events.size() ||
+          physics_index == events.size()) {
+        continue;
+      }
+      expect_event(events[interpolation_index], LoopEventKind::nest_interpolation,
+                   DomainId::d02, parent_step, child_substep, child_start,
+                   child_end, child_label + " interpolation event", -1,
+                   child_start);
+      expect_event(events[tendency_index],
+                   LoopEventKind::zero_dynamics_tendency, DomainId::d02,
+                   parent_step, child_substep, child_start, child_end,
+                   child_label + " tendency event", -1, child_start);
+      expect_event(events[physics_index], LoopEventKind::physics, DomainId::d02,
+                   parent_step, child_substep, child_start, child_end,
+                   child_label + " physics event", -1, child_start);
+      expect(interpolation_index < tendency_index,
+             child_label + " interpolation precedes tendency placeholder");
+      expect(tendency_index < physics_index,
+             child_label + " tendency precedes physics placeholder");
+      expect(physics_index < feedback_index,
+             child_label + " physics completes before feedback");
+    }
+
+    expect(feedback_index < move_check_index,
+           parent_step_label + " feedback precedes move check");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -259,6 +360,10 @@ int main() {
 
   const auto validation_config =
       tywrf::dynamics::make_krosa_10min_validation_loop_config();
+  expect(validation_config.parent.grid_spacing_m == 10'000,
+         "validation d01 grid spacing remains 10 km");
+  expect(validation_config.child.grid_spacing_m == 2'000,
+         "validation d02 grid spacing remains 2 km");
   expect(validation_config.timing.segment_seconds == 600,
          "validation segment length is 10 min");
   expect(validation_config.timing.boundary_refresh_interval_seconds == 21'600,
@@ -327,6 +432,33 @@ int main() {
     expect_event(*validation_initial_recompute,
                  LoopEventKind::vortex_center_recompute, DomainId::d02, 0,
                  -1, 40, 40, "10 min initial vortex recompute event", -1, 0);
+  }
+  expect_10min_parent_step_event_order(
+      validation_events, expected_validation_parent_steps,
+      validation_config.timing.parent_time_step_ratio,
+      validation_config.timing.parent_time_step_seconds,
+      validation_config.timing.child_time_step_seconds);
+
+  const auto final_validation_move_check = find_event_index(
+      validation_events, LoopEventKind::moving_nest_move_check, DomainId::d02,
+      14, -1);
+  const auto final_validation_d01_history = find_event_index(
+      validation_events, LoopEventKind::history_output, DomainId::d01, 14, -1);
+  const auto final_validation_d02_history = find_event_index(
+      validation_events, LoopEventKind::history_output, DomainId::d02, 14, -1);
+  expect(final_validation_move_check != validation_events.size(),
+         "10 min final move check event exists");
+  expect(final_validation_d01_history != validation_events.size(),
+         "10 min final d01 history event exists");
+  expect(final_validation_d02_history != validation_events.size(),
+         "10 min final d02 history event exists");
+  if (final_validation_move_check != validation_events.size() &&
+      final_validation_d01_history != validation_events.size() &&
+      final_validation_d02_history != validation_events.size()) {
+    expect(final_validation_move_check < final_validation_d01_history,
+           "10 min d01 history output remains after final move check");
+    expect(final_validation_move_check < final_validation_d02_history,
+           "10 min d02 history output remains after final move check");
   }
 
   if (failures != 0) {

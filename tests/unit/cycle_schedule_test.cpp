@@ -65,6 +65,23 @@ std::vector<const CycleScheduleCall*> find_calls_by_kind(
   return matches;
 }
 
+std::size_t find_call_index(
+    const std::vector<CycleScheduleCall>& calls,
+    const CycleScheduleCallKind kind,
+    const DomainId domain,
+    const std::int64_t parent_step,
+    const std::int32_t child_substep) {
+  for (std::size_t index = 0; index < calls.size(); ++index) {
+    const auto& call = calls[index];
+    if (call.kind == kind && call.domain == domain &&
+        call.parent_step_index == parent_step &&
+        call.child_substep_index == child_substep) {
+      return index;
+    }
+  }
+  return calls.size();
+}
+
 const CycleScheduleCall* find_parent_step_call(
     const std::vector<CycleScheduleCall>& calls,
     const CycleScheduleCallKind kind,
@@ -85,6 +102,70 @@ void expect_invalid(Fn&& fn, const std::string_view label) {
     return;
   }
   expect(false, std::string(label) + " should reject invalid config");
+}
+
+void expect_10min_parent_step_order(
+    const std::vector<CycleScheduleCall>& calls,
+    const std::int64_t parent_steps,
+    const std::int32_t child_substeps_per_parent,
+    const std::int32_t parent_time_step_seconds,
+    const std::int32_t child_time_step_seconds) {
+  for (std::int64_t parent_step = 0; parent_step < parent_steps; ++parent_step) {
+    const auto parent_start =
+        parent_step * static_cast<std::int64_t>(parent_time_step_seconds);
+    const auto parent_end = parent_start + parent_time_step_seconds;
+    const auto feedback_index =
+        find_call_index(calls, CycleScheduleCallKind::two_way_feedback,
+                        DomainId::d01, parent_step, -1);
+    const auto move_check_index =
+        find_call_index(calls, CycleScheduleCallKind::moving_nest_move_check,
+                        DomainId::d02, parent_step, -1);
+    const auto parent_step_label =
+        std::string("10 min parent step ") + std::to_string(parent_step);
+
+    expect(feedback_index != calls.size(), parent_step_label + " feedback exists");
+    expect(move_check_index != calls.size(), parent_step_label + " move check exists");
+    if (feedback_index == calls.size() || move_check_index == calls.size()) {
+      continue;
+    }
+
+    expect_call(calls[feedback_index], CycleScheduleCallKind::two_way_feedback,
+                DomainId::d01, parent_step, -1, parent_start, parent_end,
+                parent_end, parent_step_label + " feedback call");
+    expect_call(calls[move_check_index],
+                CycleScheduleCallKind::moving_nest_move_check, DomainId::d02,
+                parent_step, -1, parent_end, parent_end, parent_end,
+                parent_step_label + " move check call");
+
+    for (std::int32_t child_substep = 0;
+         child_substep < child_substeps_per_parent;
+         ++child_substep) {
+      const auto child_start =
+          parent_start + child_substep *
+                             static_cast<std::int64_t>(child_time_step_seconds);
+      const auto child_end = child_start + child_time_step_seconds;
+      const auto interpolation_index = find_call_index(
+          calls, CycleScheduleCallKind::parent_child_interpolation,
+          DomainId::d02, parent_step, child_substep);
+      const auto child_label = parent_step_label + " child substep " +
+                               std::to_string(child_substep);
+
+      expect(interpolation_index != calls.size(),
+             child_label + " interpolation exists");
+      if (interpolation_index == calls.size()) {
+        continue;
+      }
+      expect_call(calls[interpolation_index],
+                  CycleScheduleCallKind::parent_child_interpolation,
+                  DomainId::d02, parent_step, child_substep, child_start,
+                  child_end, child_start, child_label + " interpolation call");
+      expect(interpolation_index < feedback_index,
+             child_label + " interpolation precedes feedback");
+    }
+
+    expect(feedback_index < move_check_index,
+           parent_step_label + " feedback precedes move check");
+  }
 }
 
 }  // namespace
@@ -376,6 +457,31 @@ int main() {
   expect(find_call(validation_calls, CycleScheduleCallKind::vortex_center_recompute,
                    900) == nullptr,
          "10 min validation segment does not emit the nominal 900 s recompute");
+  expect_10min_parent_step_order(validation_calls, 15, 5, 40, 8);
+
+  const auto final_validation_move_check = find_call_index(
+      validation_calls, CycleScheduleCallKind::moving_nest_move_check,
+      DomainId::d02, 14, -1);
+  const auto final_validation_d01_history = find_call_index(
+      validation_calls, CycleScheduleCallKind::history_output, DomainId::d01,
+      14, -1);
+  const auto final_validation_d02_history = find_call_index(
+      validation_calls, CycleScheduleCallKind::history_output, DomainId::d02,
+      14, -1);
+  expect(final_validation_move_check != validation_calls.size(),
+         "10 min final move check exists");
+  expect(final_validation_d01_history != validation_calls.size(),
+         "10 min final d01 history output exists");
+  expect(final_validation_d02_history != validation_calls.size(),
+         "10 min final d02 history output exists");
+  if (final_validation_move_check != validation_calls.size() &&
+      final_validation_d01_history != validation_calls.size() &&
+      final_validation_d02_history != validation_calls.size()) {
+    expect(final_validation_move_check < final_validation_d01_history,
+           "10 min d01 history output remains after final move check");
+    expect(final_validation_move_check < final_validation_d02_history,
+           "10 min d02 history output remains after final move check");
+  }
 
   expect_invalid(
       [] {

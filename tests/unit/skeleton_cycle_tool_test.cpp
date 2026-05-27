@@ -111,7 +111,10 @@ void create_synthetic_wrfout(
     const int mass_nx = 4,
     const int mass_ny = 3,
     const int mass_nz = 2,
-    const int full_nz = 3) {
+    const int full_nz = 3,
+    const float u_offset = 10000.0F,
+    const float t_offset = 20000.0F,
+    const float mu_offset = 30000.0F) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create synthetic wrfout");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
@@ -168,9 +171,9 @@ void create_synthetic_wrfout(
   put_2d(file_id, xlong_var, mass_ny, mass_nx, xlong_offset);
   put_2d(file_id, hgt_var, mass_ny, mass_nx, hgt_offset);
   if (state_fields) {
-    put_3d(file_id, u_var, mass_nz, mass_ny, mass_nx + 1, 10000.0F);
-    put_3d(file_id, t_var, mass_nz, mass_ny, mass_nx, 20000.0F);
-    put_2d(file_id, mu_var, mass_ny, mass_nx, 30000.0F);
+    put_3d(file_id, u_var, mass_nz, mass_ny, mass_nx + 1, u_offset);
+    put_3d(file_id, t_var, mass_nz, mass_ny, mass_nx, t_offset);
+    put_2d(file_id, mu_var, mass_ny, mass_nx, mu_offset);
   }
 
   check_nc(nc_close(file_id), "close synthetic wrfout");
@@ -344,6 +347,60 @@ void assert_remap_output(
   assert(report.find("\"remap_copied_point_count\":") != std::string::npos);
 }
 
+void assert_parent_fill_output(
+    const std::filesystem::path& output,
+    const std::filesystem::path& parent_fill_state,
+    const std::filesystem::path& report_path) {
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open parent-fill output");
+  assert(
+      read_text_attr(file_id, "TYWRF_CANDIDATE_KIND") ==
+      "cpp_skeleton_remap_parent_fill_diagnostic");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_OVERLAP") == "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ONLY") == "true");
+  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "false");
+  assert(read_text_attr(file_id, "TYWRF_EXPECTED_TO_MEET_THRESHOLDS") == "false");
+  assert(read_text_attr(file_id, "TYWRF_NOT_PHYSICAL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
+  assert(read_text_attr(file_id, "TYWRF_NEEDS_PARENT_FILL") == "false");
+  assert(read_text_attr(file_id, "TYWRF_REMAP_EXPOSED_CELLS_FILLED_BY_PARENT") == "true");
+  assert(read_text_attr(file_id, "TYWRF_UNFILLED_EXPOSED_CELLS") == "none_parent_fill_diagnostic");
+  assert(read_text_attr(file_id, "TYWRF_REMAP_FROM_PARENT_START") == "114,96");
+  assert(read_text_attr(file_id, "TYWRF_REMAP_TO_PARENT_START") == "115,96");
+  assert(read_text_attr(file_id, "TYWRF_PARENT_FILL_SOURCE") == parent_fill_state.string());
+  assert(read_double_attr(file_id, "TYWRF_PARENT_FILL_TIME_INDEX") == 0.0);
+  assert(read_double_attr(file_id, "TYWRF_REMAP_COPIED_FIELD_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_REMAP_COPIED_POINT_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_REMAP_PARENT_FILL_FIELD_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_REMAP_PARENT_FILL_POINT_COUNT") > 0.0);
+  assert(read_3d_value(file_id, "U", 0, 0, 0) == value_3d(0, 0, 0, 5, 10000.0F));
+  assert(read_3d_value(file_id, "U", 0, 0, 210) == value_3d(0, 0, 0, 210, 110000.0F));
+  assert(read_3d_value(file_id, "T", 0, 0, 0) == value_3d(0, 0, 0, 5, 20000.0F));
+  assert(read_3d_value(file_id, "T", 0, 0, 209) == value_3d(0, 0, 0, 209, 120000.0F));
+  assert(read_2d_value(file_id, "MU", 0, 0) == value_2d(0, 0, 5, 30000.0F));
+  assert(read_2d_value(file_id, "MU", 0, 209) == value_2d(0, 0, 209, 130000.0F));
+  assert(read_2d_value(file_id, "XLAT", 2, 3) == value_2d(0, 2, 3, 140000.0F));
+  assert(read_2d_value(file_id, "XLONG", 1, 2) == value_2d(0, 1, 2, 150000.0F));
+  assert(read_2d_value(file_id, "HGT", 0, 1) == value_2d(0, 0, 1, 160000.0F));
+  check_nc(nc_close(file_id), "close parent-fill output");
+
+  std::ifstream report_file(report_path);
+  std::ostringstream report_buffer;
+  report_buffer << report_file.rdbuf();
+  const auto report = report_buffer.str();
+  assert(report.find("\"diagnostic_remap_overlap\": false") != std::string::npos);
+  assert(report.find("\"diagnostic_remap_parent_fill\": true") != std::string::npos);
+  assert(report.find("\"needs_parent_fill\": false") != std::string::npos);
+  assert(report.find("\"exposed_cells_filled_by_parent\": true") != std::string::npos);
+  assert(report.find("\"gate_candidate\": false") != std::string::npos);
+  assert(report.find("\"integrator_output\": false") != std::string::npos);
+  assert(report.find("\"parent_fill_source\": \"" + parent_fill_state.string()) !=
+         std::string::npos);
+  assert(report.find("\"remap_parent_fill_point_count\":") != std::string::npos);
+}
+
 std::string base_command(
     const std::filesystem::path& executable,
     const std::filesystem::path& state,
@@ -411,6 +468,40 @@ void run_real_krosa_smoke_if_available(
   assert(report.find("\"first_failure\":") != std::string::npos);
   assert(report.find("\"end_time\": \"2025-07-26_00:10:00\"") != std::string::npos);
   assert(report.find("TYWRF_VALIDATION_GATE_ONLY=true") != std::string::npos);
+
+  const auto parent_fill_candidate_dir = root / "real_krosa_parent_fill_candidate";
+  const auto parent_fill_output =
+      parent_fill_candidate_dir / "wrfout_d02_2025-07-26_00:10:00_parent_fill";
+  const auto parent_fill_report = root / "real_krosa_parent_fill_report.json";
+  std::filesystem::create_directories(parent_fill_candidate_dir);
+  std::filesystem::remove(parent_fill_output);
+  std::filesystem::remove(parent_fill_report);
+
+  run_command(
+      base_command(executable, state, reference_end, parent_fill_output) +
+      " --diagnostic-remap-parent-fill --from-parent-start 114,96 --to-parent-start 126,103 "
+      "--parent-fill-state " +
+      shell_quote(reference_end) + " > " + shell_quote(parent_fill_report));
+
+  check_nc(
+      nc_open(parent_fill_output.string().c_str(), NC_NOWRITE, &file_id),
+      "open real KROSA parent-fill output");
+  assert(
+      read_text_attr(file_id, "TYWRF_CANDIDATE_KIND") ==
+      "cpp_skeleton_remap_parent_fill_diagnostic");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_OVERLAP") == "false");
+  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "false");
+  assert(read_text_attr(file_id, "TYWRF_NOT_PHYSICAL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
+  assert(read_text_attr(file_id, "TYWRF_PARENT_FILL_SOURCE") == reference_end.string());
+  assert(read_double_attr(file_id, "TYWRF_REMAP_PARENT_FILL_FIELD_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_REMAP_PARENT_FILL_POINT_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "DX") == 2000.0);
+  assert(read_double_attr(file_id, "DY") == 2000.0);
+  assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
+  check_nc(nc_close(file_id), "close real KROSA parent-fill output");
 }
 
 }  // namespace
@@ -431,12 +522,20 @@ int main(const int argc, char** argv) {
     const auto remap_state = root / "wrfout_d02_krosa_remap_state";
     const auto remap_output = root / "tywrf_cpp_skeleton_remap_wrfout_d02";
     const auto remap_report = root / "tywrf_cpp_skeleton_remap_report.json";
+    const auto parent_fill_state = root / "wrfout_d02_parent_fill_state";
+    const auto parent_fill_template = root / "wrfout_d02_parent_fill_template";
+    const auto parent_fill_output = root / "tywrf_cpp_skeleton_parent_fill_wrfout_d02";
+    const auto parent_fill_report = root / "tywrf_cpp_skeleton_parent_fill_report.json";
     std::filesystem::remove(state);
     std::filesystem::remove(end_template);
     std::filesystem::remove(output);
     std::filesystem::remove(remap_state);
     std::filesystem::remove(remap_output);
     std::filesystem::remove(remap_report);
+    std::filesystem::remove(parent_fill_state);
+    std::filesystem::remove(parent_fill_template);
+    std::filesystem::remove(parent_fill_output);
+    std::filesystem::remove(parent_fill_report);
     create_synthetic_wrfout(state, 2000.0, "2025-07-26_00:00:00", true);
     create_synthetic_wrfout(
         end_template,
@@ -467,6 +566,41 @@ int main(const int argc, char** argv) {
         " --diagnostic-remap-overlap --from-parent-start 114,96 --to-parent-start 115,96 > " +
         shell_quote(remap_report));
     assert_remap_output(remap_output, remap_report);
+
+    create_synthetic_wrfout(
+        parent_fill_state,
+        2000.0,
+        "2025-07-26_00:10:00",
+        true,
+        170000.0F,
+        180000.0F,
+        190000.0F,
+        210,
+        210,
+        2,
+        3,
+        110000.0F,
+        120000.0F,
+        130000.0F);
+    create_synthetic_wrfout(
+        parent_fill_template,
+        2000.0,
+        "2025-07-26_00:10:00",
+        false,
+        140000.0F,
+        150000.0F,
+        160000.0F,
+        210,
+        210,
+        2,
+        3);
+    run_command(
+        base_command(executable, remap_state, parent_fill_template, parent_fill_output) +
+        " --diagnostic-remap-parent-fill --from-parent-start 114,96 --to-parent-start 115,96 "
+        "--parent-fill-state " +
+        shell_quote(parent_fill_state) + " --parent-fill-time-index 0 > " +
+        shell_quote(parent_fill_report));
+    assert_parent_fill_output(parent_fill_output, parent_fill_state, parent_fill_report);
 
     const auto bad_state = root / "wrfout_d02_bad_dx";
     const auto bad_output = root / "tywrf_bad_dx_output";
