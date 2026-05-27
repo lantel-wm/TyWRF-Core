@@ -2,6 +2,7 @@
 #include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/io/pressure_refresh_io.hpp"
 #include "tywrf/nest/parent_child_interpolation.hpp"
+#include "tywrf/nest/static_fields.hpp"
 #include "tywrf/nest/state_exchange.hpp"
 #include "tywrf/nest/state_remap.hpp"
 #include "tywrf/state.hpp"
@@ -9,6 +10,7 @@
 #include <netcdf.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -78,14 +80,27 @@ struct Resolution {
 
 struct CandidateReport {
   std::uint64_t changed_selected_points = 0;
+  std::uint64_t changed_static_template_points = 0;
   tywrf::nest::ChildStateRemapReport remap;
   tywrf::nest::RemapPlan remap_plan;
   tywrf::nest::StateExchangePlan exchange;
   tywrf::nest::ParentChildInterpolationReport interpolation;
+  tywrf::nest::MovingNestStaticRefreshReport static_refresh;
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh;
   std::filesystem::path pressure_refresh_metadata_source;
   std::size_t pressure_refresh_metadata_time_index = 0;
   std::uint64_t pressure_refresh_changed_p_points = 0;
+  double cen_lat = 0.0;
+  double cen_lon = 0.0;
+};
+
+struct StaticFieldSet {
+  explicit StaticFieldSet(const tywrf::Grid& grid)
+      : xlat(grid.surface_layout()), xlong(grid.surface_layout()), hgt(grid.surface_layout()) {}
+
+  tywrf::FieldStorage2D<float> xlat;
+  tywrf::FieldStorage2D<float> xlong;
+  tywrf::FieldStorage2D<float> hgt;
 };
 
 class NetcdfHandle {
@@ -468,6 +483,90 @@ void require_path_exists(const std::filesystem::path& path, const std::string_vi
   }
 }
 
+void load_static_2d_variable(
+    const std::filesystem::path& path,
+    const std::string_view name,
+    tywrf::FieldStorage2D<float>& field,
+    const std::size_t time_index) {
+  const NetcdfHandle file(path, NetcdfHandle::Mode::read);
+  int variable_id = -1;
+  file.check(nc_inq_varid(file.id(), std::string(name).c_str(), &variable_id), "inquire static variable");
+  const auto layout = field.layout();
+  const std::array<std::size_t, 3> start = {time_index, 0, 0};
+  const std::array<std::size_t, 3> count = {
+      1,
+      static_cast<std::size_t>(layout.active_ny()),
+      static_cast<std::size_t>(layout.active_nx())};
+  std::vector<float> buffer(count[1] * count[2]);
+  file.check(
+      nc_get_vara_float(file.id(), variable_id, start.data(), count.data(), buffer.data()),
+      "read static variable");
+
+  auto view = field.view();
+  for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
+    for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
+      view(layout.i_begin() + i, layout.j_begin() + j) =
+          buffer[static_cast<std::size_t>(j) * count[2] + static_cast<std::size_t>(i)];
+    }
+  }
+}
+
+[[nodiscard]] StaticFieldSet load_static_fields(
+    const std::filesystem::path& path,
+    const tywrf::Grid& grid,
+    const std::size_t time_index) {
+  StaticFieldSet fields(grid);
+  load_static_2d_variable(path, "XLAT", fields.xlat, time_index);
+  load_static_2d_variable(path, "XLONG", fields.xlong, time_index);
+  load_static_2d_variable(path, "HGT", fields.hgt, time_index);
+  return fields;
+}
+
+[[nodiscard]] tywrf::FieldStorage2D<float> load_hgt_field(
+    const std::filesystem::path& path,
+    const tywrf::Grid& grid,
+    const std::size_t time_index) {
+  tywrf::FieldStorage2D<float> hgt(grid.surface_layout());
+  load_static_2d_variable(path, "HGT", hgt, time_index);
+  return hgt;
+}
+
+void write_static_2d_variable(
+    const NetcdfHandle& file,
+    const std::string_view name,
+    const tywrf::FieldStorage2D<float>& field,
+    const std::size_t time_index) {
+  int variable_id = -1;
+  file.check(nc_inq_varid(file.id(), std::string(name).c_str(), &variable_id), "inquire output static variable");
+  const auto layout = field.layout();
+  const std::array<std::size_t, 3> start = {time_index, 0, 0};
+  const std::array<std::size_t, 3> count = {
+      1,
+      static_cast<std::size_t>(layout.active_ny()),
+      static_cast<std::size_t>(layout.active_nx())};
+  std::vector<float> buffer(count[1] * count[2]);
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
+    for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
+      buffer[static_cast<std::size_t>(j) * count[2] + static_cast<std::size_t>(i)] =
+          view(layout.i_begin() + i, layout.j_begin() + j);
+    }
+  }
+  file.check(
+      nc_put_vara_float(file.id(), variable_id, start.data(), count.data(), buffer.data()),
+      "write output static variable");
+}
+
+void overwrite_output_static_fields(
+    const std::filesystem::path& output_path,
+    const StaticFieldSet& fields,
+    const std::size_t time_index) {
+  const NetcdfHandle file(output_path, NetcdfHandle::Mode::write);
+  write_static_2d_variable(file, "XLAT", fields.xlat, time_index);
+  write_static_2d_variable(file, "XLONG", fields.xlong, time_index);
+  write_static_2d_variable(file, "HGT", fields.hgt, time_index);
+}
+
 template <typename BeforeStorage, typename AfterStorage>
 [[nodiscard]] std::uint64_t changed_points(
     const BeforeStorage& before,
@@ -506,6 +605,19 @@ void require_finite_strict_fields(const tywrf::State<float>& state) {
   require_finite_storage("MU", state.mu);
   require_finite_storage("P", state.p);
   require_finite_storage("QVAPOR", state.qvapor);
+}
+
+void require_finite_static_fields(const StaticFieldSet& fields) {
+  require_finite_storage("XLAT", fields.xlat);
+  require_finite_storage("XLONG", fields.xlong);
+  require_finite_storage("HGT", fields.hgt);
+}
+
+[[nodiscard]] std::uint64_t changed_static_points(
+    const StaticFieldSet& before,
+    const StaticFieldSet& after) {
+  return changed_points(before.xlat, after.xlat) + changed_points(before.xlong, after.xlong) +
+         changed_points(before.hgt, after.hgt);
 }
 
 [[nodiscard]] std::string join_variables(const std::vector<std::string>& variables);
@@ -648,6 +760,43 @@ void apply_pressure_refresh(
   return report;
 }
 
+void refresh_static_fields(
+    const tywrf::nest::ParentChildDescriptor& descriptor,
+    const Options& options,
+    const StaticFieldSet& d02_start_static,
+    const StaticFieldSet& template_static,
+    const tywrf::FieldStorage2D<float>& d01_start_hgt,
+    StaticFieldSet& output_static,
+    CandidateReport& report) {
+  output_static = template_static;
+  report.static_refresh = tywrf::nest::refresh_moving_nest_static_fields(
+      descriptor,
+      options.to_parent_start,
+      report.remap_plan,
+      d02_start_static.xlat.view(),
+      d02_start_static.xlong.view(),
+      d02_start_static.hgt.view(),
+      d01_start_hgt.view(),
+      output_static.xlat.view(),
+      output_static.xlong.view(),
+      output_static.hgt.view());
+  if (!report.static_refresh.ok()) {
+    throw std::runtime_error(
+        "failed moving-nest static refresh: " +
+        std::string(report.static_refresh.result.message));
+  }
+  require_finite_static_fields(output_static);
+  report.changed_static_template_points = changed_static_points(template_static, output_static);
+
+  const auto layout = output_static.xlat.layout();
+  const auto center_i = layout.i_begin() + layout.active_nx() / 2;
+  const auto center_j = layout.j_begin() + layout.active_ny() / 2;
+  const auto xlat_view = output_static.xlat.view();
+  const auto xlong_view = output_static.xlong.view();
+  report.cen_lat = xlat_view(center_i, center_j);
+  report.cen_lon = xlong_view(center_i, center_j);
+}
+
 void write_text_attr(
     const NetcdfHandle& file,
     const std::string_view name,
@@ -666,6 +815,15 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
   file.check(
       nc_put_att_double(file.id(), NC_GLOBAL, std::string(name).c_str(), NC_DOUBLE, 1, &value),
       "write global numeric attribute");
+}
+
+void write_int_attr(
+    const NetcdfHandle& file,
+    const std::string_view name,
+    const std::int32_t value) {
+  file.check(
+      nc_put_att_int(file.id(), NC_GLOBAL, std::string(name).c_str(), NC_INT, 1, &value),
+      "write global integer attribute");
 }
 
 [[nodiscard]] std::string join_variables(const std::vector<std::string>& variables) {
@@ -703,11 +861,44 @@ void stamp_gate_metadata(
   write_text_attr(file, "TYWRF_STATE_VARIABLES", join_variables(options.variables));
   write_text_attr(file, "TYWRF_FROM_PARENT_START", std::to_string(options.from_parent_start.i_parent_start) + "," + std::to_string(options.from_parent_start.j_parent_start));
   write_text_attr(file, "TYWRF_TO_PARENT_START", std::to_string(options.to_parent_start.i_parent_start) + "," + std::to_string(options.to_parent_start.j_parent_start));
+  write_int_attr(file, "I_PARENT_START", options.to_parent_start.i_parent_start);
+  write_int_attr(file, "J_PARENT_START", options.to_parent_start.j_parent_start);
+  write_double_attr(file, "CEN_LAT", report.cen_lat);
+  write_double_attr(file, "CEN_LON", report.cen_lon);
   write_double_attr(file, "TYWRF_PARENT_GRID_RATIO", static_cast<double>(descriptor.parent_grid_ratio));
   write_double_attr(
       file,
       "TYWRF_SELECTED_FIELD_CHANGED_POINTS",
       static_cast<double>(report.changed_selected_points));
+  write_text_attr(file, "TYWRF_STATIC_REFRESH_APPLIED", "true");
+  write_text_attr(
+      file,
+      "TYWRF_STATIC_REFRESH_METHOD",
+      "overlap_shift_xlat_xlong_extrapolate_hgt_parent_bilinear_v0");
+  write_text_attr(file, "TYWRF_STATIC_REFRESH_USES_REFERENCE_END", "false");
+  write_text_attr(file, "TYWRF_STATIC_REFRESH_D02_START_SOURCE", options.d02_start_state_path.string());
+  write_text_attr(file, "TYWRF_STATIC_REFRESH_D01_HGT_SOURCE", options.d01_start_state_path.string());
+  write_text_attr(file, "TYWRF_STATIC_REFRESH_TEMPLATE_SOURCE", options.template_path.string());
+  write_double_attr(
+      file,
+      "TYWRF_STATIC_REFRESH_OVERLAP_CELLS",
+      static_cast<double>(report.static_refresh.overlap_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_STATIC_REFRESH_EXPOSED_CELLS",
+      static_cast<double>(report.static_refresh.exposed_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_STATIC_REFRESH_COORD_EXTRAPOLATED_CELLS",
+      static_cast<double>(report.static_refresh.coordinate_extrapolated_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_STATIC_REFRESH_HGT_PARENT_INTERPOLATED_CELLS",
+      static_cast<double>(report.static_refresh.parent_hgt_interpolated_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_STATIC_REFRESH_CHANGED_TEMPLATE_POINTS",
+      static_cast<double>(report.changed_static_template_points));
   write_double_attr(
       file,
       "TYWRF_EXPOSED_EXCHANGE_POINTS",
@@ -758,7 +949,8 @@ void stamp_gate_metadata(
       file,
       "TYWRF_CANDIDATE_MESSAGE",
       "Selected-field moving-nest candidate from start states only; U/V/MU/QVAPOR exposed "
-      "cells are parent interpolated, and T/PH/P are preserved from finite d02 start-state data.");
+      "cells are parent interpolated, XLAT/XLONG/HGT are refreshed from start-state pose data, "
+      "and T/PH/P are preserved from finite d02 start-state data.");
   file.check(nc_enddef(file.id()), "leave define mode");
 }
 
@@ -855,6 +1047,19 @@ void print_report(
       pretty);
   write_json_number(
       std::cout,
+      "static_refresh_changed_template_points",
+      static_cast<double>(report.changed_static_template_points),
+      true,
+      pretty);
+  write_json_bool(std::cout, "static_refresh_uses_reference_end", false, true, pretty);
+  write_json_number(
+      std::cout,
+      "static_refresh_exposed_cells",
+      static_cast<double>(report.static_refresh.exposed_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      std::cout,
       "exposed_exchange_points",
       static_cast<double>(report.exchange.report.exchange_point_count),
       true,
@@ -924,6 +1129,16 @@ int run(Options options) {
       options.d02_start_state_path, tywrf::uniform_halo_3d(0));
   const auto descriptor = make_descriptor(d01_resolution, d02_resolution, d01_grid, d02_grid);
 
+  const auto d01_start_hgt =
+      load_hgt_field(options.d01_start_state_path, d01_grid, options.d01_time_index);
+  const auto d02_start_static =
+      load_static_fields(options.d02_start_state_path, d02_grid, options.d02_time_index);
+  const auto template_static =
+      load_static_fields(options.template_path, d02_grid, options.template_time_index);
+  require_finite_storage("d01 HGT", d01_start_hgt);
+  require_finite_static_fields(d02_start_static);
+  require_finite_static_fields(template_static);
+
   tywrf::State<float> d01_start(d01_grid);
   tywrf::State<float> d02_start(d02_grid);
   tywrf::io::load_wrf_state(
@@ -939,6 +1154,15 @@ int run(Options options) {
 
   tywrf::State<float> candidate(d02_grid);
   auto report = build_candidate_state(descriptor, options, d01_start, d02_start, candidate);
+  StaticFieldSet output_static(d02_grid);
+  refresh_static_fields(
+      descriptor,
+      options,
+      d02_start_static,
+      template_static,
+      d01_start_hgt,
+      output_static,
+      report);
   if (options.pressure_refresh) {
     apply_pressure_refresh(options, candidate, report);
   }
@@ -953,6 +1177,7 @@ int run(Options options) {
           .template_time_index = options.template_time_index,
           .times_value = options.times_value,
       });
+  overwrite_output_static_fields(options.output_path, output_static, options.output_time_index);
   stamp_gate_metadata(options, template_resolution, descriptor, report);
   print_report(options, template_resolution, descriptor, report);
   return 0;

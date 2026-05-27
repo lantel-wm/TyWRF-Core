@@ -538,6 +538,46 @@ use `00:10` reference-end static or coordinate truth, best-track nudging, an
 SLP shortcut, or a `U10`/`V10` proxy shortcut to make those blockers appear
 closed.
 
+## Round D38 Compatibility Boundary
+
+D37 commit `aba2469` added selected-field `--pressure-refresh` opt-in plumbing.
+It is safe wiring, not a numerical improvement and not a default behavior. The
+real KROSA opt-in run reported provider, staging, and compute success and
+changed `1,053,150` `P` points, but the strict gate still failed: `P`
+normalized RMSE worsened from D36 `0.907405` to `5.806413`; `U` `0.117875`,
+`V` `0.134244`, and `MU` `0.133382` still failed; `T`, `PH`, and `QVAPOR`
+still passed; storm-center error remained `150.622 km`. Compatibility notes,
+CLI help, and reports must not describe `--pressure-refresh` as a gate pass or
+enable it by default.
+
+D38 work is split across three producer boundaries:
+
+- Static refresh: G37 found stale shifted-d02 static coordinates
+  (`XLAT` RMSE `0.6913 deg`, `XLONG` RMSE `1.2463 deg`, same-index
+  displacement `152.6 km`). The fix must derive shifted d02 `XLAT`, `XLONG`,
+  and `HGT` from the cycle-start moving-nest pose shift and parent/static
+  interpolation or reconstruction path. It must not copy `00:10` reference-end
+  `XLAT`, `XLONG`, `HGT`, or other shifted-domain truth into the candidate.
+- Pressure negative diagnosis: the D37 refresh changed `P` but made validation
+  worse, so the next pressure work is diagnosis of provider/static/vertical
+  coordinate consistency, exposed-vs-overlap cell handling, and
+  `PB`/`MUB`/`PHB`/`ALB` alignment. It remains opt-in until the same
+  non-oracle candidate path improves or passes the real `00:10` strict gate.
+- Surface ABI v2: preserved `U10`, `V10`, `T2`, `Q2`, `RAINC`, and `RAINNC`
+  keep output files complete, but preserved values are not real producers. The
+  compatible path must be a real ABI v2 surface/physics bridge, starting with
+  SFCLAY/physics-wrapper-owned diagnostics, not metadata relabeling or
+  start-state preservation.
+
+The first D38 static-refresh smoke confirms the static side of that boundary.
+The selected-field candidate no longer leaves d02 shifted-domain static fields
+as the `00:00` template copy: compared with the `00:10` KROSA d02 reference,
+`XLAT` RMSE is `0.000287 deg`, `XLONG` RMSE is `0.000195 deg`, and `HGT` RMSE
+is `0.541 m` with maximum absolute `HGT` error `20.789 m`. The strict gate
+still fails, but storm-center error drops from `150.622 km` to `43.483 km`.
+This validates the stale-coordinate fix while keeping the remaining state and
+pressure errors visible.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

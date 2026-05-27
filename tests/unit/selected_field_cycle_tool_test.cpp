@@ -369,6 +369,12 @@ void run_command(const std::string& command) {
   return value;
 }
 
+[[nodiscard]] int read_int_attr(const int file_id, const std::string_view name) {
+  int value = 0;
+  check_nc(nc_get_att_int(file_id, NC_GLOBAL, std::string(name).c_str(), &value), "read attr");
+  return value;
+}
+
 [[nodiscard]] bool has_text_attr(const int file_id, const std::string_view name) {
   return nc_inq_att(file_id, NC_GLOBAL, std::string(name).c_str(), nullptr, nullptr) == NC_NOERR;
 }
@@ -456,6 +462,19 @@ void assert_successful_candidate(
   assert(read_double_attr(file_id, "TYWRF_PARENT_GRID_RATIO") == 5.0);
   assert(read_double_attr(file_id, "TYWRF_SELECTED_FIELD_CHANGED_POINTS") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_INTERPOLATED_POINTS") > 0.0);
+  assert(read_int_attr(file_id, "I_PARENT_START") == 3);
+  assert(read_int_attr(file_id, "J_PARENT_START") == 2);
+  assert(std::isfinite(read_double_attr(file_id, "CEN_LAT")));
+  assert(std::isfinite(read_double_attr(file_id, "CEN_LON")));
+  assert(read_text_attr(file_id, "TYWRF_STATIC_REFRESH_APPLIED") == "true");
+  assert(read_text_attr(file_id, "TYWRF_STATIC_REFRESH_USES_REFERENCE_END") == "false");
+  assert(read_text_attr(file_id, "TYWRF_STATIC_REFRESH_D02_START_SOURCE").find("wrfout_d02") != std::string::npos);
+  assert(read_text_attr(file_id, "TYWRF_STATIC_REFRESH_D01_HGT_SOURCE").find("wrfout_d01") != std::string::npos);
+  assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_OVERLAP_CELLS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_EXPOSED_CELLS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_COORD_EXTRAPOLATED_CELLS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_HGT_PARENT_INTERPOLATED_CELLS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_CHANGED_TEMPLATE_POINTS") > 0.0);
   if (pressure_refresh) {
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN") == "true");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED") == "true");
@@ -482,6 +501,17 @@ void assert_successful_candidate(
   assert(contains_csv_value(state_variables, "RAINNC"));
   assert(!contains_csv_value(state_variables, "SLP"));
   assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
+
+  expect_close(read_2d_value(file_id, "XLAT", 2, 0), linear_2d(2, 5, 40'000.0F, 1.0F, 10.0F), "XLAT overlap");
+  expect_close(read_2d_value(file_id, "XLONG", 2, 0), linear_2d(2, 5, 50'000.0F, 1.0F, 10.0F), "XLONG overlap");
+  expect_close(read_2d_value(file_id, "HGT", 2, 0), linear_2d(2, 5, 60'000.0F, 1.0F, 10.0F), "HGT overlap");
+  const auto exposed_xlat = read_2d_value(file_id, "XLAT", 0, 9);
+  const auto stale_xlat = linear_2d(0, 9, 40'000.0F, 1.0F, 10.0F);
+  assert(std::isfinite(exposed_xlat));
+  assert(std::fabs(exposed_xlat - stale_xlat) > kTolerance);
+  expect_close(exposed_xlat, linear_2d(0, 14, 40'000.0F, 1.0F, 10.0F), "XLAT exposed");
+  expect_close(read_2d_value(file_id, "XLONG", 0, 9), linear_2d(0, 14, 50'000.0F, 1.0F, 10.0F), "XLONG exposed");
+  expect_close(read_2d_value(file_id, "HGT", 0, 9), 60'013.8F, "HGT parent exposed");
 
   expect_close(read_3d_value(file_id, "U", 1, 2, 0), linear_3d(1, 2, 5, 10'000.0F, 1.0F, 10.0F, 100.0F), "U overlap");
   expect_close(read_3d_value(file_id, "V", 1, 2, 0), linear_3d(1, 2, 5, 20'000.0F, 1.0F, 10.0F, 100.0F), "V overlap");

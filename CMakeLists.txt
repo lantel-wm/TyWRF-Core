@@ -28,6 +28,7 @@ add_library(tywrf_core STATIC
   src/io/wrf_state_io.cpp
   src/nest/nest_interface.cpp
   src/nest/parent_child_interpolation.cpp
+  src/nest/static_fields.cpp
   src/nest/state_exchange.cpp
   src/nest/state_remap.cpp
   src/nest/time_level_sync.cpp
@@ -153,6 +154,10 @@ if(BUILD_TESTING)
   add_test(
     NAME tywrf_parent_child_interpolation_test
     COMMAND tywrf_parent_child_interpolation_test)
+
+  add_executable(tywrf_static_fields_test tests/unit/static_fields_test.cpp)
+  target_link_libraries(tywrf_static_fields_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_static_fields_test COMMAND tywrf_static_fields_test)
 
   add_executable(tywrf_time_level_sync_test tests/unit/time_level_sync_test.cpp)
   target_link_libraries(tywrf_time_level_sync_test PRIVATE TyWRF::Core)

@@ -298,6 +298,30 @@ producer blockers, not closure opportunities. A closure must not copy
 into a candidate, must not use best-track nudging, and must not create SLP or
 `U10`/`V10` proxy shortcuts to satisfy storm-center, pressure, or Vmax gates.
 
+Round D38 keeps those blockers outside closure scope:
+
+- Static refresh is a moving-nest/static-field producer problem. A valid
+  implementation may use the cycle-start d02 pose, the computed nest shift, and
+  parent/static interpolation or reconstruction. It must not copy
+  reference-end `XLAT`, `XLONG`, `HGT`, or any other `00:10` static truth into
+  the candidate, even if that would reduce the G37 stale-coordinate errors.
+- Pressure negative diagnosis must treat D37 as failed numerical evidence, not
+  as a closure trigger. The opt-in path changed `1,053,150` `P` points and
+  worsened `P` normalized RMSE from `0.907405` to `5.806413`; a closure must
+  not patch that result, relabel helper telemetry as physical success, or make
+  `--pressure-refresh` default.
+- Surface ABI v2 must provide real diagnostics through SFCLAY or a physics
+  wrapper. Preserved `U10`, `V10`, `T2`, `Q2`, `RAINC`, and `RAINNC` values are
+  placeholders/provenance markers only. A closure must not treat them as
+  producers or use them to satisfy surface field or Vmax gates.
+
+The first D38 static-refresh result is deliberately not a closure. It improves
+candidate coordinates through start-state pose reconstruction: `XLAT` RMSE
+`0.000287 deg`, `XLONG` RMSE `0.000195 deg`, `HGT` RMSE `0.541 m`, and
+storm-center error `43.483 km`. It does not copy reference-end static truth and
+does not make the `00:10` gate pass; `U`, `V`, `MU`, `P`, and storm-center
+thresholds still fail.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
@@ -309,9 +333,13 @@ The following schemes are forbidden:
   applied pressure refresh as a validation-gate pass;
 - copying, blending, nudging toward, bias-correcting against, or otherwise
   patching metrics with WRF cycle-end reference output;
+- copying `00:10` reference-end `XLAT`, `XLONG`, `HGT`, or shifted-domain
+  static truth to implement moving-nest static refresh;
 - using reference output to move the TC center, adjust the minimum SLP, or tune
   pressure ranges;
 - silently replacing normal skeleton or integrator fields with closure fields;
+- treating preserved cycle-start `U10`, `V10`, `T2`, `Q2`, `RAINC`, or
+  `RAINNC` as a real surface-diagnostics producer;
 - allowing a closure-modified file to satisfy the normal validation gate
   without an explicit diagnostic-closure mode;
 - emitting closure fields without metadata that marks them as non-physical

@@ -417,6 +417,35 @@ explicit validation blockers. Validation must not use `00:10` reference-end
 the shifted d02 candidate, and must not use SLP or `U10` shortcuts to bypass
 the missing real producers.
 
+Round D38 validation must keep three boundaries separate:
+
+- Static refresh validation may compare candidate `XLAT`, `XLONG`, and `HGT`
+  against the `00:10` WRF reference to measure error, but the producer must use
+  the cycle-start moving-nest pose shift plus parent/static interpolation or
+  reconstruction. G37 measured stale-coordinate symptoms of `XLAT` RMSE
+  `0.6913 deg`, `XLONG` RMSE `1.2463 deg`, and same-index displacement
+  `152.6 km`; copying reference-end statics would hide that bug and is an
+  oracle/reference-end violation.
+- Pressure-refresh validation must report D37 as a negative opt-in result:
+  provider/staging/compute succeeded and changed `1,053,150` `P` points, but
+  `P` normalized RMSE worsened to `5.806413`. The default selected-field gate
+  must not enable `--pressure-refresh`, and a refreshed candidate cannot be
+  called improved or passing until the strict gate metrics improve through the
+  same non-oracle candidate path.
+- Surface diagnostics validation must track provenance. Preserved
+  cycle-start-backed `U10`, `V10`, `T2`, `Q2`, `RAINC`, and `RAINNC` are useful
+  output placeholders but they are not producers. A surface field comparison or
+  Vmax result closes only when the fields come from the ABI v2
+  SFCLAY/physics-wrapper path or another documented real surface producer.
+
+The first D38 real KROSA static-refresh smoke is a failed gate with improved
+coordinates. Static fields compare well against the `00:10` reference:
+`XLAT` RMSE `0.000287 deg`, `XLONG` RMSE `0.000195 deg`, and `HGT` RMSE
+`0.541 m` with maximum absolute `HGT` error `20.789 m`. The storm-center
+diagnostic improves from `150.622 km` to `43.483 km`, but remains above the
+`20 km` threshold. Strict field failures remain `U`, `V`, `MU`, and `P`; this
+is not a pass and should stop at the `00:10` gate.
+
 Example:
 
 ```bash
