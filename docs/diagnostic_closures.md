@@ -517,6 +517,33 @@ Round D49 keeps future apply-path terrain parity outside closure scope:
   gate evidence, and scratch or unreachable-apply telemetry presented as gate
   evidence.
 
+Round D50 keeps selected-field pressure-refresh apply readiness outside closure
+scope:
+
+- The current positive evidence is limited to the moved-`HGT` provider probe,
+  base-state sync dry-run, scratch pressure compute dry-run, and future apply
+  moved-`HGT` terrain parity.
+- Those signals are readiness evidence only. They do not produce a closure, do
+  not refresh candidate `P`, and do not make a selected-field candidate
+  gate-eligible.
+- D50 must not open `thermodynamic_base_state_consistency_ready`; while it is
+  `false`, `--pressure-refresh` must still fail closed with nonzero exit, no
+  output file, no candidate writes to `P`, `PB`, `PHB`, or `MUB`, and no
+  `pressure_refresh_applied=true`.
+- The default selected-field candidate numerical path remains unchanged and
+  must not be closure-patched.
+- Before a future apply path can be enabled, closure boundaries require a
+  candidate mutation audit, moved-`HGT` apply proof, overlap/halo no-write
+  proof, pre/post apply report consistency, and a real
+  `2025-07-26_00:10:00` validation plan that keeps closure artifacts out of the
+  gate.
+- Scratch telemetry and unreachable apply plumbing must not be treated as a
+  closure result or as gate evidence.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  provider substitutes, direct parent interpolation of `P`, diagnostic artifact
+  gate evidence, and scratch or unreachable-apply telemetry presented as gate
+  evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

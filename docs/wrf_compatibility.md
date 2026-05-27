@@ -823,6 +823,42 @@ reference-end truth, restart `PHB`/`ALB` as a provider substitute, direct
 parent interpolation of `P`, diagnostic artifact gate evidence, and treating
 scratch telemetry or unreachable apply plumbing as a gate pass.
 
+## Round D50 Pressure-Refresh Apply-Readiness Blockers
+
+D50 documents the remaining blocker list before selected-field pressure-refresh
+apply may become reachable. Current readiness evidence is limited to four
+pre-apply capabilities: the moved-`HGT` provider probe, the base-state sync
+dry-run contract, the scratch pressure compute dry-run, and D49 future apply
+moved-`HGT` terrain parity. Together these show that provider, dry-run, scratch
+compute, and future apply terrain sources can be inspected consistently; they
+do not show candidate mutation safety or validation success.
+
+D50 must not open `thermodynamic_base_state_consistency_ready`. While that flag
+remains `false`, `selected_field_cycle --pressure-refresh` must still fail
+closed with a nonzero exit, no output file, no candidate writes to `P`, `PB`,
+`PHB`, or `MUB`, and no `pressure_refresh_applied=true`. The default
+selected-field candidate numerical path remains unchanged and continues to
+preserve start-state-owned pressure and base-state fields.
+
+The minimum safety conditions before apply can be enabled are:
+
+- candidate mutation audit proving exactly which candidate fields may change;
+- moved-`HGT` apply proof showing the reachable apply path uses the same moved
+  candidate terrain override as the provider probe and dry-run path;
+- overlap/halo no-write proof showing pressure/base-state writes stay out of
+  remapped overlap cells that must be preserved and all halo cells;
+- pre/post apply report consistency showing requested, computed, applied, and
+  changed counts agree before any output is written;
+- a real `2025-07-26_00:10:00` validation plan that compares the produced d02
+  file against the 10 min WRF reference and stops at the first failing field.
+
+Scratch telemetry and an unreachable guarded apply path are not compatibility
+gate evidence, even when their reports are internally consistent. Shortcuts
+remain forbidden: `00:10` reference-end truth, restart `PHB`/`ALB` as a provider
+substitute, direct parent interpolation of `P`, diagnostic artifact gate
+evidence, and treating scratch telemetry or unreachable apply plumbing as a
+gate pass.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

@@ -651,6 +651,46 @@ real `2025-07-26_00:10:00` selected-field gate remains failed on `U`, `V`,
 parent interpolation of `P`, diagnostic artifact gate evidence, and scratch or
 unreachable-apply telemetry presented as gate evidence.
 
+Round D50 does not change selected-field validation status. The readiness
+evidence now available is the moved-`HGT` provider probe, the base-state sync
+dry-run contract, the scratch pressure compute dry-run, and future apply
+moved-`HGT` terrain parity. These are necessary apply-readiness signals, but
+they are not a gate pass and do not prove that candidate `P` can be refreshed
+safely.
+
+Validation must keep `thermodynamic_base_state_consistency_ready=false` for
+D50. With that guard closed, `selected_field_cycle --pressure-refresh` is still
+expected to exit nonzero, produce no output file, leave candidate `P`, `PB`,
+`PHB`, and `MUB` unchanged, and report no pressure refresh application. The
+default selected-field candidate numerical path remains the validation baseline
+for this slice.
+
+Before any later change opens apply, validation requires the following minimum
+safety proofs:
+
+- candidate mutation audit with an explicit allowlist of fields that may change
+  and a denylist check for fields that must remain untouched;
+- moved-`HGT` apply proof that provider probe, dry-run, scratch compute, and
+  reachable apply all use the same moved candidate terrain source/provenance;
+- overlap/halo no-write proof for remapped overlap cells and all halo cells;
+- pre/post apply report consistency for requested, would-refresh, applied,
+  invalid, changed, and written point counts;
+- a real `2025-07-26_00:10:00` validation run against the WRF 1 h / 10 min
+  reference, with RMSE, normalized RMSE, max error, TC diagnostics, and the
+  first failed field reported before any later time is attempted.
+
+The 00:10 validation sequence after apply is opened must start from the same
+cycle-start WRF state, generate a d02 selected-field `--pressure-refresh`
+candidate without reference-end inputs, run the normal comparison tools against
+the `00:10` WRF reference, and stop immediately if `U`, `V`, `T`, `PH`, `MU`,
+`P`, `QVAPOR`, surface diagnostics, hydrometeors, or TC diagnostics fail their
+thresholds. It must not continue to `00:20` until `00:10` passes.
+
+Validation must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+provider substitutes, direct parent interpolation of `P`, diagnostic artifact
+gate evidence, scratch telemetry, and unreachable guarded apply plumbing as
+gate evidence.
+
 Example:
 
 ```bash
