@@ -96,6 +96,8 @@ void test_exposed_strip_accounting() {
   const auto v_before = snapshot(child.v);
   const auto mu_before = snapshot(child.mu);
   const auto qvapor_before = snapshot(child.qvapor);
+  const auto t_before = snapshot(child.t);
+  const auto ph_before = snapshot(child.ph);
 
   const auto remap = make_remap_plan(
       {1, 1, tywrf::nest::IndexBase::one_based},
@@ -108,13 +110,13 @@ void test_exposed_strip_accounting() {
   assert(exchange.ok());
   assert(exchange.operation ==
          tywrf::nest::ExchangeOperation::parent_to_child_interpolation);
-  assert(exchange.field_count == 4);
+  assert(exchange.field_count == 6);
   assert(exchange.report.ok());
-  assert(exchange.report.planned_field_count == 4);
-  assert(exchange.report.active_field_count == 4);
-  assert(exchange.report.exposed_region_count == 4);
-  assert(exchange.report.exposed_horizontal_cell_count == 13);
-  assert(exchange.report.exchange_point_count == 23);
+  assert(exchange.report.planned_field_count == 6);
+  assert(exchange.report.active_field_count == 6);
+  assert(exchange.report.exposed_region_count == 6);
+  assert(exchange.report.exposed_horizontal_cell_count == 19);
+  assert(exchange.report.exchange_point_count == 38);
   assert(exchange.report.requires_parent_interpolation);
   assert(!exchange.report.performed_interpolation);
   assert(!exchange.report.modifies_overlap);
@@ -162,10 +164,32 @@ void test_exposed_strip_accounting() {
   assert(qvapor.exposed_horizontal_cell_count == 3);
   assert(qvapor.exchange_point_count == 6);
 
+  const auto& t = exchange.fields[4];
+  assert(t.field == tywrf::nest::StateExchangeField::t);
+  assert(t.stagger == tywrf::nest::HorizontalStagger::mass);
+  assert(t.three_dimensional);
+  assert(t.active_nx == 4);
+  assert(t.active_ny == 3);
+  assert(t.active_k_count == 2);
+  assert(t.exposed_horizontal_cell_count == 3);
+  assert(t.exchange_point_count == 6);
+
+  const auto& ph = exchange.fields[5];
+  assert(ph.field == tywrf::nest::StateExchangeField::ph);
+  assert(ph.stagger == tywrf::nest::HorizontalStagger::w_full);
+  assert(ph.three_dimensional);
+  assert(ph.active_nx == 4);
+  assert(ph.active_ny == 3);
+  assert(ph.active_k_count == 3);
+  assert(ph.exposed_horizontal_cell_count == 3);
+  assert(ph.exchange_point_count == 9);
+
   expect_unchanged(child.u, u_before, "U");
   expect_unchanged(child.v, v_before, "V");
   expect_unchanged(child.mu, mu_before, "MU");
   expect_unchanged(child.qvapor, qvapor_before, "QVAPOR");
+  expect_unchanged(child.t, t_before, "T");
+  expect_unchanged(child.ph, ph_before, "PH");
 }
 
 void test_full_overlap_has_no_exchange_work() {
@@ -181,8 +205,8 @@ void test_full_overlap_has_no_exchange_work() {
       tywrf::nest::build_exposed_child_state_exchange_plan(
           remap, static_cast<const tywrf::State<float>&>(child).view());
   assert(exchange.ok());
-  assert(exchange.field_count == 4);
-  assert(exchange.report.planned_field_count == 4);
+  assert(exchange.field_count == 6);
+  assert(exchange.report.planned_field_count == 6);
   assert(exchange.report.active_field_count == 0);
   assert(exchange.report.exposed_region_count == 0);
   assert(exchange.report.exposed_horizontal_cell_count == 0);
@@ -210,10 +234,10 @@ void test_diagonal_move_decomposes_exposed_cells_without_overlap_or_halo() {
       tywrf::nest::build_exposed_child_state_exchange_plan(
           remap, static_cast<const tywrf::State<float>&>(child).view());
   assert(exchange.ok());
-  assert(exchange.report.active_field_count == 4);
-  assert(exchange.report.exposed_region_count == 8);
-  assert(exchange.report.exposed_horizontal_cell_count == 26);
-  assert(exchange.report.exchange_point_count == 46);
+  assert(exchange.report.active_field_count == 6);
+  assert(exchange.report.exposed_region_count == 12);
+  assert(exchange.report.exposed_horizontal_cell_count == 38);
+  assert(exchange.report.exchange_point_count == 76);
 
   const auto& qvapor = exchange.fields[3];
   assert(qvapor.exposed_region_count == 2);
@@ -227,6 +251,17 @@ void test_diagonal_move_decomposes_exposed_cells_without_overlap_or_halo() {
   assert(qvapor.exposed_regions[1].extent_j == 2);
   assert(!qvapor.owns_overlap);
   assert(!qvapor.owns_halo);
+
+  const auto& t = exchange.fields[4];
+  assert(t.exposed_region_count == 2);
+  assert(t.exposed_horizontal_cell_count == qvapor.exposed_horizontal_cell_count);
+  assert(t.exchange_point_count == qvapor.exchange_point_count);
+
+  const auto& ph = exchange.fields[5];
+  assert(ph.stagger == tywrf::nest::HorizontalStagger::w_full);
+  assert(ph.exposed_region_count == 2);
+  assert(ph.exposed_horizontal_cell_count == qvapor.exposed_horizontal_cell_count);
+  assert(ph.exchange_point_count == 18);
 }
 
 }  // namespace

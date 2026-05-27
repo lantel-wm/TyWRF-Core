@@ -315,6 +315,8 @@ template <typename Real>
 template <typename ParentReal, typename ChildReal>
 [[nodiscard]] NestResult interpolate_regions_2d(
     const FieldStateExchangePlan& field_plan,
+    const StateExchangeField expected_field,
+    const HorizontalStagger expected_stagger,
     const ParentChildInterpolationConfig& config,
     const std::int32_t ratio,
     const std::int32_t parent_i_start_zero,
@@ -324,15 +326,15 @@ template <typename ParentReal, typename ChildReal>
     ParentChildInterpolationReport& report) noexcept {
   if (!field_plan_matches(
           field_plan,
-          StateExchangeField::mu,
-          HorizontalStagger::surface,
+          expected_field,
+          expected_stagger,
           active_nx(child),
           active_ny(child),
           1,
           false)) {
     return result(
         NestStatus::invalid_contract,
-        "parent-child interpolation MU plan does not match child field");
+        "parent-child interpolation field plan does not match child field");
   }
   if (!supported_region_ownership(field_plan, config)) {
     return result(
@@ -347,11 +349,11 @@ template <typename ParentReal, typename ChildReal>
        region_index < field_plan.exposed_regions.size();
        ++region_index) {
     const auto& region = field_plan.exposed_regions[region_index];
-    if (region.stagger != HorizontalStagger::surface ||
+    if (region.stagger != expected_stagger ||
         region.three_dimensional || !region_fits_active_shape(region, active_nx(child), active_ny(child), 1)) {
       return result(
           NestStatus::invalid_contract,
-          "parent-child interpolation MU region is outside child active field");
+          "parent-child interpolation region is outside child active field");
     }
     const auto child_i0 = child.halo.i_lower + region.child_i_begin;
     const auto child_j0 = child.halo.j_lower + region.child_j_begin;
@@ -479,6 +481,24 @@ template <typename ParentReal, typename ChildReal>
       !validation.ok()) {
     return validation;
   }
+  if (const auto validation = validate_3d_field(
+          descriptor.parent,
+          descriptor.child,
+          HorizontalStagger::mass,
+          parent.t,
+          child.t);
+      !validation.ok()) {
+    return validation;
+  }
+  if (const auto validation = validate_3d_field(
+          descriptor.parent,
+          descriptor.child,
+          HorizontalStagger::w_full,
+          parent.ph,
+          child.ph);
+      !validation.ok()) {
+    return validation;
+  }
   return ok_result();
 }
 
@@ -563,6 +583,8 @@ ParentChildInterpolationReport interpolate_parent_to_exposed_child(
       case StateExchangeField::mu:
         field_result = interpolate_regions_2d(
             field,
+            StateExchangeField::mu,
+            HorizontalStagger::surface,
             config,
             descriptor.parent_grid_ratio,
             parent_i_start_zero,
@@ -582,6 +604,32 @@ ParentChildInterpolationReport interpolate_parent_to_exposed_child(
             parent_j_start_zero,
             parent_state.qvapor,
             child_state.qvapor,
+            report);
+        break;
+      case StateExchangeField::t:
+        field_result = interpolate_regions_3d(
+            field,
+            StateExchangeField::t,
+            HorizontalStagger::mass,
+            config,
+            descriptor.parent_grid_ratio,
+            parent_i_start_zero,
+            parent_j_start_zero,
+            parent_state.t,
+            child_state.t,
+            report);
+        break;
+      case StateExchangeField::ph:
+        field_result = interpolate_regions_3d(
+            field,
+            StateExchangeField::ph,
+            HorizontalStagger::w_full,
+            config,
+            descriptor.parent_grid_ratio,
+            parent_i_start_zero,
+            parent_j_start_zero,
+            parent_state.ph,
+            child_state.ph,
             report);
         break;
     }

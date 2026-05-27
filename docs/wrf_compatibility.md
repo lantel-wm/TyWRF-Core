@@ -616,6 +616,40 @@ or report fields may describe planned `U10`, `V10`, `T2`, `Q2`, `RAINC`, and
 surface diagnostics, or a closed surface producer while the values remain
 cycle-start-preserved or scaffold-only.
 
+## Round D40 Compatibility Boundary
+
+D39 commit `0ea9a69` (`Guard pressure refresh and scaffold physics ABI v2`)
+keeps pressure refresh behind a readiness guard. In the current real KROSA
+smoke, `--pressure-refresh` aborts under that guard and does not generate an
+output file. This is the intended compatibility behavior: the guard is a safety
+constraint that prevents an unready pressure path from contaminating a
+gate-eligible candidate. It is not a pressure producer and must not be reported
+as evidence that exposed-cell `P` has been refreshed.
+
+The ABI v2 sidecar scaffold and fixture are compatibility scaffolding only. The
+current `_ex` wrapper path reports `wrapper_unavailable` and
+`executed_physics = 0`; therefore sidecar fixture success does not mean SFCLAY,
+surface diagnostics, precipitation, or any WRF physics package executed. ABI v2
+metadata may document argument shape, ownership, and fixture plumbing, but it
+must not be counted as a producer for `U10`, `V10`, `T2`, `Q2`, `RAINC`, or
+`RAINNC` until the wrapper actually runs and writes those fields.
+
+D40 should keep the next parent-fill slice narrow: exposed-cell `T` and `PH`
+may be produced by non-oracle parent-child interpolation from cycle-start d02
+state, d01-derived parent fields, same-time KROSA constants, and documented
+moving-nest geometry. It must not use `00:10` WRF d02 truth as source data,
+delta, bias correction, or storm-position guidance. `P` must not be direct
+parent-interpolated into a production field; it remains owned by a derived or
+recomputed pressure producer once readiness checks pass.
+
+`PB`, `PHB`, and `MUB` have a read-only ownership boundary for this slice. They
+may be consumed as same-domain, same-valid-time base-state/provider inputs for
+`T`/`PH` interpolation context and later pressure-refresh staging, but D40 must
+not overwrite them through selected-field interpolation or use later restart
+truth to repair them. Any future write path for these base-state fields needs a
+separate provider/sync design that preserves overlap, halo, and moving-nest
+ownership rules.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

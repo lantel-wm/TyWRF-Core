@@ -203,8 +203,20 @@ StateExchangePlan build_exposed_child_state_exchange_plan(
     plan.report.result = validation;
     return plan;
   }
+  if (const auto validation = validate_3d_window(remap_plan.mass, child_state.t);
+      !validation.ok()) {
+    plan.result = validation;
+    plan.report.result = validation;
+    return plan;
+  }
+  if (const auto validation = validate_3d_window(remap_plan.w_full, child_state.ph);
+      !validation.ok()) {
+    plan.result = validation;
+    plan.report.result = validation;
+    return plan;
+  }
 
-  plan.field_count = 4;
+  plan.field_count = 6;
   plan.fields[0] = make_field_plan(
       StateExchangeField::u,
       HorizontalStagger::u,
@@ -237,6 +249,22 @@ StateExchangePlan build_exposed_child_state_exchange_plan(
       active_ny(child_state.qvapor),
       active_nz(child_state.qvapor),
       true);
+  plan.fields[4] = make_field_plan(
+      StateExchangeField::t,
+      HorizontalStagger::mass,
+      remap_plan.mass,
+      active_nx(child_state.t),
+      active_ny(child_state.t),
+      active_nz(child_state.t),
+      true);
+  plan.fields[5] = make_field_plan(
+      StateExchangeField::ph,
+      HorizontalStagger::w_full,
+      remap_plan.w_full,
+      active_nx(child_state.ph),
+      active_ny(child_state.ph),
+      active_nz(child_state.ph),
+      true);
 
   plan.report = summarize_state_exchange_plan(plan);
   return plan;
@@ -268,6 +296,10 @@ std::string_view state_exchange_field_name(const StateExchangeField field) noexc
       return "MU";
     case StateExchangeField::qvapor:
       return "QVAPOR";
+    case StateExchangeField::t:
+      return "T";
+    case StateExchangeField::ph:
+      return "PH";
   }
   return "unknown";
 }

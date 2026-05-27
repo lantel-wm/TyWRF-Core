@@ -109,6 +109,14 @@ surface blocks and can distinguish a complete sidecar from missing required
 field pointers. `_ex` still reports `wrapper_unavailable` with
 `executed_physics = 0`; it is not a real WRF physics producer.
 
+The C++ `tywrf::physics_bridge::SidecarFixtureV2` helper is scaffold only. It
+owns finite dummy ABI v2 buffers and block headers so unit tests and the next
+SFCLAY leaf smoke can construct a complete sidecar chain from existing v1
+staging without hand-written fixture wiring. Its provenance is explicitly
+`scaffold/finite dummy sidecar; not executed physics`; the values are validator
+fixtures, not WRF outputs. The first real physics wrapper remains the future
+SFCLAY leaf smoke, not this helper.
+
 ABI v2 needs either a new struct or an extension block for these staging groups:
 
 The detailed field inventory, capability grouping, and backward-compatible ABI

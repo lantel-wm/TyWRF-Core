@@ -10,7 +10,6 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <vector>
 
 namespace {
 
@@ -62,62 +61,6 @@ void expect_status(
   expect(diagnostics.status == expected_status, std::string(label) + " diagnostic status");
   expect(diagnostics.failing_field == expected_field, std::string(label) + " failing field");
   expect(diagnostics.executed_physics == 0, std::string(label) + " remains a no-op stub");
-}
-
-TywrfPhysicsField2D make_field_2d(double* data, const std::int32_t nx, const std::int32_t ny) {
-  return {
-      .data = data,
-      .nx = nx,
-      .ny = ny,
-      .stride_i = 1,
-      .stride_j = nx,
-      .halo_i_lower = 0,
-      .halo_i_upper = 0,
-      .halo_j_lower = 0,
-      .halo_j_upper = 0,
-      .element_bytes = static_cast<std::int32_t>(sizeof(double)),
-  };
-}
-
-TywrfPhysicsField2D make_field_2d(
-    std::int32_t* data,
-    const std::int32_t nx,
-    const std::int32_t ny) {
-  return {
-      .data = data,
-      .nx = nx,
-      .ny = ny,
-      .stride_i = 1,
-      .stride_j = nx,
-      .halo_i_lower = 0,
-      .halo_i_upper = 0,
-      .halo_j_lower = 0,
-      .halo_j_upper = 0,
-      .element_bytes = static_cast<std::int32_t>(sizeof(std::int32_t)),
-  };
-}
-
-TywrfPhysicsField3D make_field_3d(
-    double* data,
-    const std::int32_t nx,
-    const std::int32_t ny,
-    const std::int32_t nz) {
-  return {
-      .data = data,
-      .nx = nx,
-      .ny = ny,
-      .nz = nz,
-      .stride_i = 1,
-      .stride_k = nx,
-      .stride_j = nx * nz,
-      .halo_i_lower = 0,
-      .halo_i_upper = 0,
-      .halo_j_lower = 0,
-      .halo_j_upper = 0,
-      .halo_k_lower = 0,
-      .halo_k_upper = 0,
-      .element_bytes = static_cast<std::int32_t>(sizeof(double)),
-  };
 }
 
 TywrfPhysicsBlockHeader make_v2_header(
@@ -341,156 +284,48 @@ int main() {
              "wrapper_unavailable",
          "v2 wrapper unavailable status name is available");
 
-  TywrfPhysicsConstantsV2 constants{
-      .g = 9.81,
-      .cp = 1004.0,
-      .r_d = 287.0,
-      .r_v = 461.6,
-      .p1000mb = 100000.0,
-      .t0 = 300.0,
-  };
-  std::vector<double> sidecar_3d(
-      static_cast<std::size_t>(
-          d01_staging.grid.mass_nx * d01_staging.grid.mass_ny * d01_staging.grid.mass_nz),
-      1.0);
-  std::vector<double> sidecar_2d(
-      static_cast<std::size_t>(d01_staging.grid.mass_nx * d01_staging.grid.mass_ny),
-      1.0);
-  std::vector<std::int32_t> lu_index(sidecar_2d.size(), 1);
-
-  TywrfPhysicsSfclaySurfaceV2 sfclay{
-      .header = make_v2_header(
-          TYWRF_PHYSICS_SFCLAY_SURFACE_V2_STRUCT_SIZE,
-          TYWRF_PHYSICS_CAPABILITY_SURFACE_STATE,
-          nullptr),
-      .psfc = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .tsk = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .znt = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .ust = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .pblh = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .hfx = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .qfx = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .lh = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .u10 = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .v10 = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .t2 = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .q2 = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .th2 = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .scratch_1 = {},
-      .scratch_2 = {},
-  };
-  TywrfPhysicsStaticMaskV2 static_mask{
-      .header = make_v2_header(
-          TYWRF_PHYSICS_STATIC_MASK_V2_STRUCT_SIZE,
-          TYWRF_PHYSICS_CAPABILITY_STATIC_MASK,
-          &sfclay.header),
-      .xland = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .lakemask =
-          make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .lu_index = make_field_2d(lu_index.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .hgt = make_field_2d(sidecar_2d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny),
-      .xlat = {},
-      .xlong = {},
-  };
-  TywrfPhysicsDerivedStateV2 derived{
-      .header = make_v2_header(
-          TYWRF_PHYSICS_DERIVED_STATE_V2_STRUCT_SIZE,
-          TYWRF_PHYSICS_CAPABILITY_DERIVED_STATE,
-          &static_mask.header),
-      .u_phy = make_field_3d(
-          sidecar_3d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny,
-          d01_staging.grid.mass_nz),
-      .v_phy = make_field_3d(
-          sidecar_3d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny,
-          d01_staging.grid.mass_nz),
-      .t_phy = make_field_3d(
-          sidecar_3d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny,
-          d01_staging.grid.mass_nz),
-      .qv_curr = make_field_3d(
-          sidecar_3d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny,
-          d01_staging.grid.mass_nz),
-      .p_phy = make_field_3d(
-          sidecar_3d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny,
-          d01_staging.grid.mass_nz),
-      .dz8w = make_field_3d(
-          sidecar_3d.data(), d01_staging.grid.mass_nx, d01_staging.grid.mass_ny,
-          d01_staging.grid.mass_nz),
-  };
-  TywrfPhysicsDriverContextV2 driver{
-      .header = make_v2_header(
-          TYWRF_PHYSICS_DRIVER_CONTEXT_V2_STRUCT_SIZE,
-          TYWRF_PHYSICS_CAPABILITY_DRIVER_CONTEXT,
-          &derived.header),
-      .domain_id = d01_staging.grid.domain_id,
-      .mass_nx = d01_staging.grid.mass_nx,
-      .mass_ny = d01_staging.grid.mass_ny,
-      .mass_nz = d01_staging.grid.mass_nz,
-      .full_nz = d01_staging.grid.full_nz,
-      .ids = 1,
-      .ide = d01_staging.grid.mass_nx,
-      .jds = 1,
-      .jde = d01_staging.grid.mass_ny,
-      .kds = 1,
-      .kde = d01_staging.grid.mass_nz,
-      .ims = 1,
-      .ime = d01_staging.grid.mass_nx,
-      .jms = 1,
-      .jme = d01_staging.grid.mass_ny,
-      .kms = 1,
-      .kme = d01_staging.grid.mass_nz,
-      .its = 1,
-      .ite = d01_staging.grid.mass_nx,
-      .jts = 1,
-      .jte = d01_staging.grid.mass_ny,
-      .kts = 1,
-      .kte = d01_staging.grid.mass_nz,
-      .enable_sfclay = 1,
-      .enable_surface_driver = 0,
-      .enable_pbl_driver = 0,
-      .enable_cumulus_driver = 0,
-      .enable_microphysics_driver = 0,
-      .enable_radiation_driver = 0,
-      .step_index = d01_staging.grid.step_index,
-      .dx_m = d01_staging.grid.dx_m,
-      .dy_m = d01_staging.grid.dy_m,
-      .dt_s = d01_staging.grid.dt_s,
-      .start_seconds = d01_staging.grid.start_seconds,
-      .end_seconds = d01_staging.grid.end_seconds,
-      .xtime_minutes = d01_staging.grid.end_seconds / 60.0,
-      .suite = d01_staging.suite,
-      .constants = &constants,
-  };
+  tywrf::physics_bridge::SidecarFixtureV2 sidecar(d01_staging);
+  expect(
+      tywrf::physics_bridge::SidecarFixtureV2::provenance() ==
+          "scaffold/finite dummy sidecar; not executed physics",
+      "ABI v2 helper declares fixture provenance");
+  expect(sidecar.sidecars() == &sidecar.driver_context().header, "sidecar chain starts at driver");
+  expect(sidecar.driver_context().constants != nullptr, "sidecar helper stages constants");
+  expect(sidecar.driver_context().enable_sfclay == 1, "sidecar helper enables SFCLAY leaf only");
+  expect(sidecar.derived_state().u_phy.data != nullptr, "sidecar helper stages derived fields");
+  expect(sidecar.static_mask().xlat.data != nullptr, "sidecar helper stages optional XLAT");
+  expect(sidecar.sfclay_surface().u10.data != nullptr, "sidecar helper stages finite U10 fixture");
 
   diagnostics = make_dirty_diagnostics();
-  status = tywrf_physics_validate_sidecar_v2(&d01_staging, &driver.header, &diagnostics);
+  status = tywrf_physics_validate_sidecar_v2(&d01_staging, sidecar.sidecars(), &diagnostics);
   expect_status(
       status, diagnostics, TYWRF_PHYSICS_STATUS_STUB_VALIDATED,
       TYWRF_PHYSICS_FIELD_NONE, "complete ABI v2 sidecar validation");
-  expect(diagnostics.validated_field_count == 23, "complete ABI v2 sidecar validates fields");
+  expect(diagnostics.validated_field_count == 27, "complete ABI v2 sidecar validates fields");
 
   diagnostics = make_dirty_diagnostics();
-  status = tywrf_wrf_physics_step_ex(&d01_staging, &driver.header, &diagnostics);
+  status = tywrf_wrf_physics_step_ex(&d01_staging, sidecar.sidecars(), &diagnostics);
   expect_status(
       status, diagnostics, TYWRF_PHYSICS_STATUS_WRAPPER_UNAVAILABLE,
       TYWRF_PHYSICS_FIELD_NONE, "ABI v2 extended entrypoint");
-  expect(diagnostics.validated_field_count == 23, "ABI v2 extended entrypoint validates fields");
+  expect(diagnostics.validated_field_count == 27, "ABI v2 extended entrypoint validates fields");
 
   diagnostics = make_dirty_diagnostics();
   const auto typed_v2_status =
-      tywrf::physics_bridge::run_stub_bridge_ex(d01_staging, &driver.header, &diagnostics);
+      tywrf::physics_bridge::run_stub_bridge_ex(d01_staging, sidecar.sidecars(), &diagnostics);
   expect(typed_v2_status == tywrf::physics_bridge::Status::wrapper_unavailable,
          "C++ ABI v2 stub wrapper reports unavailable wrapper");
   expect(tywrf::physics_bridge::status_name(typed_v2_status) == "wrapper_unavailable",
          "typed ABI v2 status name is available");
 
-  const auto saved_tsk = sfclay.tsk;
-  sfclay.tsk.data = nullptr;
+  const auto saved_tsk = sidecar.sfclay_surface().tsk;
+  sidecar.sfclay_surface().tsk.data = nullptr;
   diagnostics = make_dirty_diagnostics();
-  status = tywrf_physics_validate_sidecar_v2(&d01_staging, &driver.header, &diagnostics);
+  status = tywrf_physics_validate_sidecar_v2(&d01_staging, sidecar.sidecars(), &diagnostics);
   expect_status(
       status, diagnostics, TYWRF_PHYSICS_STATUS_MISSING_REQUIRED_FIELD,
       TYWRF_PHYSICS_FIELD_TSK, "ABI v2 sidecar missing required TSK");
-  sfclay.tsk = saved_tsk;
+  sidecar.sfclay_surface().tsk = saved_tsk;
 
   diagnostics = make_dirty_diagnostics();
   status = tywrf_wrf_physics_step(nullptr, &diagnostics);

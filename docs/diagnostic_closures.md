@@ -347,6 +347,30 @@ Round D39 keeps the post-D38 blockers out of closure scope:
   interface reports, or preserved cycle-start `U10`, `V10`, `T2`, `Q2`,
   `RAINC`, and `RAINNC` as executed physics or as a surface producer.
 
+Round D40 keeps the D39 safety and ABI results outside closure scope:
+
+- The `--pressure-refresh` readiness guard added in commit `0ea9a69` currently
+  aborts the real KROSA smoke and produces no output. That abort is a safety
+  constraint, not a pressure producer. A closure must not reinterpret a guarded
+  abort as refreshed `P`, must not fill the missing output from
+  `pressure_mu_closure`, and must not bypass the guard with reference-end
+  pressure, `PSFC`, SLP, or later restart truth.
+- Exposed-cell `T` and `PH` parent interpolation is an integrator producer
+  slice, not a diagnostic closure. It may use non-oracle parent-child
+  interpolation from cycle-start d02 state, d01-derived parent fields, and
+  same-time KROSA constants. It must not use `00:10` WRF d02 truth, end-state
+  deltas, bias corrections, or closure outputs as source data. `P` must remain
+  outside direct parent interpolation and cannot be closure-patched into a
+  production field.
+- `PB`, `PHB`, and `MUB` are read-only base-state/provider-owned inputs for
+  this slice. Closures must not overwrite them, repair them from later restart
+  files, or treat a selected-field interpolation run as an owner of those
+  fields. A future provider/sync path must document its ownership separately.
+- The ABI v2 sidecar fixture and `_ex` scaffold are not executed physics. The
+  current path reports `wrapper_unavailable` and `executed_physics = 0`, so a
+  closure must not use sidecar fixture success to satisfy `U10`, `V10`, `T2`,
+  `Q2`, `RAINC`, `RAINNC`, Vmax, or surface-producer validation.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

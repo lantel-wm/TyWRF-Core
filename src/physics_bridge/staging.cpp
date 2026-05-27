@@ -1,5 +1,6 @@
 #include "tywrf/physics_bridge/staging.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace tywrf::physics_bridge {
@@ -628,6 +629,256 @@ struct SidecarBlocksV2 {
 }
 
 }  // namespace
+
+namespace {
+
+[[nodiscard]] TywrfPhysicsBlockHeader make_sidecar_fixture_header(
+    const std::uint32_t struct_size,
+    const std::uint64_t capability,
+    const TywrfPhysicsBlockHeader* next) noexcept {
+  return {
+      struct_size,
+      TYWRF_PHYSICS_ABI_VERSION_V2,
+      capability,
+      next,
+  };
+}
+
+[[nodiscard]] TywrfPhysicsField2D make_sidecar_fixture_field_2d(
+    double* data,
+    const std::int32_t nx,
+    const std::int32_t ny) noexcept {
+  return {
+      data,
+      nx,
+      ny,
+      1,
+      nx,
+      0,
+      0,
+      0,
+      0,
+      static_cast<std::int32_t>(sizeof(double)),
+  };
+}
+
+[[nodiscard]] TywrfPhysicsField2D make_sidecar_fixture_field_2d(
+    std::int32_t* data,
+    const std::int32_t nx,
+    const std::int32_t ny) noexcept {
+  return {
+      data,
+      nx,
+      ny,
+      1,
+      nx,
+      0,
+      0,
+      0,
+      0,
+      static_cast<std::int32_t>(sizeof(std::int32_t)),
+  };
+}
+
+[[nodiscard]] TywrfPhysicsField3D make_sidecar_fixture_field_3d(
+    double* data,
+    const std::int32_t nx,
+    const std::int32_t ny,
+    const std::int32_t nz) noexcept {
+  return {
+      data,
+      nx,
+      ny,
+      nz,
+      1,
+      nx,
+      nx * nz,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      static_cast<std::int32_t>(sizeof(double)),
+  };
+}
+
+[[nodiscard]] std::size_t positive_product(
+    const std::int32_t lhs,
+    const std::int32_t rhs) noexcept {
+  if (lhs <= 0 || rhs <= 0) {
+    return 0U;
+  }
+  return static_cast<std::size_t>(lhs) * static_cast<std::size_t>(rhs);
+}
+
+[[nodiscard]] std::size_t positive_product(
+    const std::int32_t lhs,
+    const std::int32_t rhs,
+    const std::int32_t depth) noexcept {
+  if (depth <= 0) {
+    return 0U;
+  }
+  return positive_product(lhs, rhs) * static_cast<std::size_t>(depth);
+}
+
+}  // namespace
+
+SidecarFixtureV2::SidecarFixtureV2(const TywrfPhysicsStaging& staging) {
+  const auto nx = staging.grid.mass_nx;
+  const auto ny = staging.grid.mass_ny;
+  const auto nz = staging.grid.mass_nz;
+  const auto count_2d = positive_product(nx, ny);
+  const auto count_3d = positive_product(nx, ny, nz);
+
+  constants_ = {
+      9.81,
+      1004.0,
+      287.0,
+      461.6,
+      100000.0,
+      300.0,
+  };
+
+  // These finite values are validator fixtures only; no WRF physics has run.
+  const double derived_values[kDerived3DFieldCount] = {
+      0.0,
+      0.0,
+      300.0,
+      0.018,
+      90000.0,
+      100.0,
+  };
+  for (std::size_t index = 0; index < kDerived3DFieldCount; ++index) {
+    derived_3d_[index].assign(count_3d, derived_values[index]);
+  }
+
+  const double static_values[kStatic2DRealFieldCount] = {
+      1.0,
+      0.0,
+      10.0,
+      20.0,
+      120.0,
+  };
+  for (std::size_t index = 0; index < kStatic2DRealFieldCount; ++index) {
+    static_2d_[index].assign(count_2d, static_values[index]);
+  }
+  lu_index_.assign(count_2d, 1);
+
+  const double sfclay_values[kSfclay2DFieldCount] = {
+      100000.0,
+      300.0,
+      0.1,
+      0.1,
+      1000.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      300.0,
+      0.018,
+      300.0,
+      0.0,
+      0.0,
+  };
+  for (std::size_t index = 0; index < kSfclay2DFieldCount; ++index) {
+    sfclay_2d_[index].assign(count_2d, sfclay_values[index]);
+  }
+
+  sfclay_ = {
+      make_sidecar_fixture_header(
+          TYWRF_PHYSICS_SFCLAY_SURFACE_V2_STRUCT_SIZE,
+          TYWRF_PHYSICS_CAPABILITY_SURFACE_STATE,
+          nullptr),
+      make_sidecar_fixture_field_2d(sfclay_2d_[0].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[1].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[2].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[3].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[4].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[5].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[6].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[7].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[8].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[9].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[10].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[11].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[12].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[13].data(), nx, ny),
+      make_sidecar_fixture_field_2d(sfclay_2d_[14].data(), nx, ny),
+  };
+
+  static_mask_ = {
+      make_sidecar_fixture_header(
+          TYWRF_PHYSICS_STATIC_MASK_V2_STRUCT_SIZE,
+          TYWRF_PHYSICS_CAPABILITY_STATIC_MASK,
+          &sfclay_.header),
+      make_sidecar_fixture_field_2d(static_2d_[0].data(), nx, ny),
+      make_sidecar_fixture_field_2d(static_2d_[1].data(), nx, ny),
+      make_sidecar_fixture_field_2d(lu_index_.data(), nx, ny),
+      make_sidecar_fixture_field_2d(static_2d_[2].data(), nx, ny),
+      make_sidecar_fixture_field_2d(static_2d_[3].data(), nx, ny),
+      make_sidecar_fixture_field_2d(static_2d_[4].data(), nx, ny),
+  };
+
+  derived_ = {
+      make_sidecar_fixture_header(
+          TYWRF_PHYSICS_DERIVED_STATE_V2_STRUCT_SIZE,
+          TYWRF_PHYSICS_CAPABILITY_DERIVED_STATE,
+          &static_mask_.header),
+      make_sidecar_fixture_field_3d(derived_3d_[0].data(), nx, ny, nz),
+      make_sidecar_fixture_field_3d(derived_3d_[1].data(), nx, ny, nz),
+      make_sidecar_fixture_field_3d(derived_3d_[2].data(), nx, ny, nz),
+      make_sidecar_fixture_field_3d(derived_3d_[3].data(), nx, ny, nz),
+      make_sidecar_fixture_field_3d(derived_3d_[4].data(), nx, ny, nz),
+      make_sidecar_fixture_field_3d(derived_3d_[5].data(), nx, ny, nz),
+  };
+
+  driver_ = {
+      make_sidecar_fixture_header(
+          TYWRF_PHYSICS_DRIVER_CONTEXT_V2_STRUCT_SIZE,
+          TYWRF_PHYSICS_CAPABILITY_DRIVER_CONTEXT,
+          &derived_.header),
+      staging.grid.domain_id,
+      nx,
+      ny,
+      nz,
+      staging.grid.full_nz,
+      1,
+      nx,
+      1,
+      ny,
+      1,
+      nz,
+      1,
+      nx,
+      1,
+      ny,
+      1,
+      nz,
+      1,
+      nx,
+      1,
+      ny,
+      1,
+      nz,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      staging.grid.step_index,
+      staging.grid.dx_m,
+      staging.grid.dy_m,
+      staging.grid.dt_s,
+      staging.grid.start_seconds,
+      staging.grid.end_seconds,
+      staging.grid.end_seconds / 60.0,
+      staging.suite,
+      &constants_,
+  };
+}
 
 Status validate_staging(
     const TywrfPhysicsStaging& staging,

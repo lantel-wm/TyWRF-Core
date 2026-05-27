@@ -39,9 +39,9 @@ struct ParentChildInterpolationReport {
 // from child active indices to parent active indices using the target nest
 // position and parent_grid_ratio, then sampled by nearest-neighbor or bilinear
 // horizontal interpolation. Vertical levels are copied by matching active k.
-// Supported fields are U, V, MU, and QVAPOR. No NetCDF, logging, allocation, or
-// overlap/halo writes are performed unless the plan explicitly owns those
-// regions and config allows them.
+// Supported fields are U, V, MU, QVAPOR, T, and PH. No NetCDF, logging,
+// allocation, or overlap/halo writes are performed unless the plan explicitly
+// owns those regions and config allows them.
 [[nodiscard]] ParentChildInterpolationReport interpolate_parent_to_exposed_child(
     const ParentChildDescriptor& descriptor,
     const ParentChildPosition& target_position,

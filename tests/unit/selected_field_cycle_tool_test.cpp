@@ -511,6 +511,20 @@ void assert_successful_candidate(
   assert(contains_csv_value(state_variables, "RAINC"));
   assert(contains_csv_value(state_variables, "RAINNC"));
   assert(!contains_csv_value(state_variables, "SLP"));
+  const auto interpolated_variables =
+      read_text_attr(file_id, "TYWRF_PARENT_INTERPOLATED_STATE_VARIABLES");
+  assert(contains_csv_value(interpolated_variables, "U"));
+  assert(contains_csv_value(interpolated_variables, "V"));
+  assert(contains_csv_value(interpolated_variables, "T"));
+  assert(contains_csv_value(interpolated_variables, "PH"));
+  assert(contains_csv_value(interpolated_variables, "MU"));
+  assert(contains_csv_value(interpolated_variables, "QVAPOR"));
+  assert(!contains_csv_value(interpolated_variables, "P"));
+  const auto candidate_message = read_text_attr(file_id, "TYWRF_CANDIDATE_MESSAGE");
+  assert(candidate_message.find("U/V/T/PH/MU/QVAPOR exposed cells are parent interpolated") !=
+         std::string::npos);
+  assert(candidate_message.find("P/PB/PHB/MUB remain finite d02 start-state ownership") !=
+         std::string::npos);
   assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
 
   expect_close(read_2d_value(file_id, "XLAT", 2, 0), linear_2d(2, 5, 40'000.0F, 1.0F, 10.0F), "XLAT overlap");
@@ -534,8 +548,8 @@ void assert_successful_candidate(
   expect_close(read_2d_value(file_id, "MU", 0, 9), parent_linear(5'000.0F, 19.0F, 23.0F, 0.0F, 3.8, 1.0, 0), "MU exposed");
   expect_close(read_3d_value(file_id, "QVAPOR", 1, 9, 9), parent_linear(7'000.0F, 29.0F, 31.0F, 107.0F, 3.8, 2.8, 1), "QVAPOR exposed");
 
-  expect_close(read_3d_value(file_id, "T", 1, 9, 9), linear_3d(1, 9, 9, 30'000.0F, 1.0F, 10.0F, 100.0F), "T preserved exposed");
-  expect_close(read_3d_value(file_id, "PH", 2, 9, 9), linear_3d(2, 9, 9, 40'000.0F, 1.0F, 10.0F, 100.0F), "PH preserved exposed");
+  expect_close(read_3d_value(file_id, "T", 1, 9, 9), parent_linear(3'000.0F, 5.0F, 3.0F, 10.0F, 3.8, 2.8, 1), "T exposed");
+  expect_close(read_3d_value(file_id, "PH", 2, 9, 9), parent_linear(4'000.0F, 2.0F, 4.0F, 50.0F, 3.8, 2.8, 2), "PH exposed");
   const auto preserved_exposed_p = linear_3d(1, 9, 9, 60'000.0F, 1.0F, 10.0F, 100.0F);
   if (pressure_refresh) {
     const auto refreshed_p = read_3d_value(file_id, "P", 1, 9, 9);
@@ -590,7 +604,10 @@ void assert_pressure_refresh_not_ready(
           "consistency missing") != std::string::npos);
   assert(log.find("static_refresh_applied=true") != std::string::npos);
   assert(log.find("static_refresh_uses_reference_end=false") != std::string::npos);
-  assert(log.find("exposed T/PH are preserved d02 start fields") != std::string::npos);
+  assert(log.find("exposed T/PH are parent interpolated from d01 start-state fields") !=
+         std::string::npos);
+  assert(log.find("PB/PHB/MUB/P base-state ownership is still preserved") !=
+         std::string::npos);
   assert(log.find("moved candidate HGT is not injectable") != std::string::npos);
 }
 

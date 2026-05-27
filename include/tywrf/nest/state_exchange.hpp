@@ -14,6 +14,8 @@ enum class StateExchangeField : std::uint8_t {
   v,
   mu,
   qvapor,
+  t,
+  ph,
 };
 
 struct ExposedChildRegion {
@@ -77,7 +79,7 @@ struct StateExchangeReport {
 struct StateExchangePlan {
   NestResult result{NestStatus::ok, "ok"};
   ExchangeOperation operation = ExchangeOperation::parent_to_child_interpolation;
-  std::array<FieldStateExchangePlan, 4> fields{};
+  std::array<FieldStateExchangePlan, 6> fields{};
   std::uint8_t field_count = 0;
   StateExchangeReport report{};
 

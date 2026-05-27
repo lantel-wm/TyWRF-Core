@@ -4,9 +4,12 @@
 #include "tywrf/state.hpp"
 #include "wrf_physics_bridge.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace tywrf::physics_bridge {
 
@@ -179,5 +182,62 @@ template <typename Real>
     TywrfPhysicsDiagnostics* diagnostics = nullptr) noexcept;
 
 [[nodiscard]] std::string_view status_name(Status status) noexcept;
+
+class SidecarFixtureV2 {
+ public:
+  static constexpr std::size_t kDerived3DFieldCount = 6;
+  static constexpr std::size_t kStatic2DRealFieldCount = 5;
+  static constexpr std::size_t kSfclay2DFieldCount = 15;
+
+  explicit SidecarFixtureV2(const TywrfPhysicsStaging& staging);
+
+  SidecarFixtureV2(const SidecarFixtureV2&) = delete;
+  SidecarFixtureV2& operator=(const SidecarFixtureV2&) = delete;
+  SidecarFixtureV2(SidecarFixtureV2&&) noexcept = delete;
+  SidecarFixtureV2& operator=(SidecarFixtureV2&&) noexcept = delete;
+
+  [[nodiscard]] static constexpr std::string_view provenance() noexcept {
+    return "scaffold/finite dummy sidecar; not executed physics";
+  }
+
+  [[nodiscard]] const TywrfPhysicsBlockHeader* sidecars() const noexcept {
+    return &driver_.header;
+  }
+
+  [[nodiscard]] TywrfPhysicsBlockHeader* sidecars() noexcept {
+    return &driver_.header;
+  }
+
+  [[nodiscard]] const TywrfPhysicsDriverContextV2& driver_context() const noexcept {
+    return driver_;
+  }
+
+  [[nodiscard]] const TywrfPhysicsDerivedStateV2& derived_state() const noexcept {
+    return derived_;
+  }
+
+  [[nodiscard]] const TywrfPhysicsStaticMaskV2& static_mask() const noexcept {
+    return static_mask_;
+  }
+
+  [[nodiscard]] const TywrfPhysicsSfclaySurfaceV2& sfclay_surface() const noexcept {
+    return sfclay_;
+  }
+
+  [[nodiscard]] TywrfPhysicsSfclaySurfaceV2& sfclay_surface() noexcept {
+    return sfclay_;
+  }
+
+ private:
+  std::array<std::vector<double>, kDerived3DFieldCount> derived_3d_;
+  std::array<std::vector<double>, kStatic2DRealFieldCount> static_2d_;
+  std::vector<std::int32_t> lu_index_;
+  std::array<std::vector<double>, kSfclay2DFieldCount> sfclay_2d_;
+  TywrfPhysicsConstantsV2 constants_{};
+  TywrfPhysicsSfclaySurfaceV2 sfclay_{};
+  TywrfPhysicsStaticMaskV2 static_mask_{};
+  TywrfPhysicsDerivedStateV2 derived_{};
+  TywrfPhysicsDriverContextV2 driver_{};
+};
 
 }  // namespace tywrf::physics_bridge

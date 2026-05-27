@@ -132,6 +132,8 @@ void fill_supported_parent_gradients(tywrf::State<float>& parent) {
   fill_gradient_3d(parent.v, 2'000.0F, 11.0F, 17.0F, 103.0F);
   fill_gradient_2d(parent.mu, 3'000.0F, 19.0F, 23.0F);
   fill_gradient_3d(parent.qvapor, 4'000.0F, 29.0F, 31.0F, 107.0F);
+  fill_gradient_3d(parent.t, 5'000.0F, 5.0F, 3.0F, 10.0F);
+  fill_gradient_3d(parent.ph, 6'000.0F, 2.0F, 4.0F, 50.0F);
 }
 
 tywrf::nest::StateExchangePlan make_exchange_plan(
@@ -310,8 +312,8 @@ void test_bilinear_exposed_fill_for_selected_staggers() {
 
   const auto exchange = make_exchange_plan(descriptor, child);
   assert(exchange.ok());
-  assert(exchange.field_count == 4);
-  assert(exchange.report.exposed_region_count == 4);
+  assert(exchange.field_count == 6);
+  assert(exchange.report.exposed_region_count == 6);
   assert(exchange.fields[0].active_nx == 11);
   assert(exchange.fields[0].active_ny == 10);
   assert(exchange.fields[1].active_nx == 10);
@@ -320,6 +322,12 @@ void test_bilinear_exposed_fill_for_selected_staggers() {
   assert(exchange.fields[2].active_ny == 10);
   assert(exchange.fields[3].active_nx == 10);
   assert(exchange.fields[3].active_ny == 10);
+  assert(exchange.fields[4].active_nx == 10);
+  assert(exchange.fields[4].active_ny == 10);
+  assert(exchange.fields[4].active_k_count == 3);
+  assert(exchange.fields[5].active_nx == 10);
+  assert(exchange.fields[5].active_ny == 10);
+  assert(exchange.fields[5].active_k_count == 4);
 
   const auto report = tywrf::nest::interpolate_parent_to_exposed_child(
       descriptor,
@@ -329,11 +337,11 @@ void test_bilinear_exposed_fill_for_selected_staggers() {
       child.view());
   assert(report.ok());
   assert(report.method == tywrf::nest::ParentChildInterpolationMethod::bilinear);
-  assert(report.requested_field_count == 4);
-  assert(report.interpolated_field_count == 4);
-  assert(report.interpolated_region_count == 4);
-  assert(report.interpolated_horizontal_cell_count == 205);
-  assert(report.interpolated_point_count == 515);
+  assert(report.requested_field_count == 6);
+  assert(report.interpolated_field_count == 6);
+  assert(report.interpolated_region_count == 6);
+  assert(report.interpolated_horizontal_cell_count == 305);
+  assert(report.interpolated_point_count == 865);
   assert(!report.wrote_overlap);
   assert(!report.wrote_halo);
 
@@ -342,6 +350,8 @@ void test_bilinear_exposed_fill_for_selected_staggers() {
   expect_interpolated_2d(child.mu, exchange.fields[2], 3'000.0F, 19.0F, 23.0F, "MU");
   expect_interpolated_3d(
       child.qvapor, exchange.fields[3], 4'000.0F, 29.0F, 31.0F, 107.0F, "QVAPOR");
+  expect_interpolated_3d(child.t, exchange.fields[4], 5'000.0F, 5.0F, 3.0F, 10.0F, "T");
+  expect_interpolated_3d(child.ph, exchange.fields[5], 6'000.0F, 2.0F, 4.0F, 50.0F, "PH");
 }
 
 void test_plan_selects_only_requested_field() {
@@ -373,6 +383,8 @@ void test_plan_selects_only_requested_field() {
   expect_halo_3d(child.u, "U");
   expect_halo_3d(child.v, "V");
   expect_halo_2d(child.mu, "MU");
+  expect_halo_3d(child.t, "T");
+  expect_halo_3d(child.ph, "PH");
   expect_interpolated_3d(
       child.qvapor,
       full_exchange.fields[3],
@@ -390,6 +402,22 @@ void test_plan_selects_only_requested_field() {
         u_layout.k_begin()),
       kSentinel,
       "unselected U active");
+  const auto t_layout = child.t.layout();
+  const auto t = child.t.view();
+  expect_value(
+      t(t_layout.i_begin() + t_layout.active_nx() - 1,
+        t_layout.j_begin(),
+        t_layout.k_begin()),
+      kSentinel,
+      "unselected T active");
+  const auto ph_layout = child.ph.layout();
+  const auto ph = child.ph.view();
+  expect_value(
+      ph(ph_layout.i_begin() + ph_layout.active_nx() - 1,
+         ph_layout.j_begin(),
+         ph_layout.k_begin()),
+      kSentinel,
+      "unselected PH active");
 }
 
 void test_rejects_non_krosa_ratio_or_resolution() {

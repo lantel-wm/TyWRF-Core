@@ -48,7 +48,7 @@ const std::vector<std::string>& optional_preserved_state_variable_names() {
 }
 
 const std::vector<std::string>& parent_interpolation_variable_names() {
-  static const std::vector<std::string> names = {"U", "V", "MU", "QVAPOR"};
+  static const std::vector<std::string> names = {"U", "V", "T", "PH", "MU", "QVAPOR"};
   return names;
 }
 
@@ -157,18 +157,19 @@ Options:
   --variables A,B,C              Output variables; default strict fields, Times/XLAT/XLONG/HGT,
                                   plus available d02 PB/PHB/MUB/PSFC/U10/V10/T2/Q2/RAINC/RAINNC.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
-                                  Current selected-field state aborts before output because T/PH
-                                  and provider base-state terrain are not yet refreshed by the
-                                  same moved-pose producer.
+                                  Current selected-field state aborts before output because
+                                  PB/PHB/MUB/P ownership and provider terrain are not yet from
+                                  the same moved-pose producer.
   --pretty                       Pretty-print JSON report.
   --help                         Show this help.
 
 Oracle inputs are not accepted: --end-state, --reference-end, --d01-end-state,
 and --d02-end-state are rejected. This tool remaps the d02 start state from the
 old moving-nest pose to the new pose, fills newly exposed U/V/MU/QVAPOR cells
-from d01 start-state parent interpolation, and preserves strict plus available
-d02 start-state diagnostic fields without using reference-end truth. It is a
-selected-field integrator candidate, not a WRF-exact physics result.
+from d01 start-state parent interpolation, fills newly exposed T/PH from the
+same d01 start-state parent interpolation, and preserves P plus available d02
+start-state diagnostic/base-state fields without using reference-end truth. It
+is a selected-field integrator candidate, not a WRF-exact physics result.
 )";
 }
 
@@ -587,6 +588,7 @@ template <typename BeforeStorage, typename AfterStorage>
     const tywrf::State<float>& before,
     const tywrf::State<float>& after) {
   return changed_points(before.u, after.u) + changed_points(before.v, after.v) +
+         changed_points(before.t, after.t) + changed_points(before.ph, after.ph) +
          changed_points(before.mu, after.mu) + changed_points(before.qvapor, after.qvapor);
 }
 
@@ -657,8 +659,8 @@ struct PressureRefreshReadiness {
           << (readiness.static_refresh_applied ? "true" : "false");
   message << "; static_refresh_uses_reference_end="
           << (readiness.static_refresh_uses_reference_end ? "true" : "false");
-  message << "; exposed T/PH are preserved d02 start fields and have not been refreshed by the "
-             "same moved-pose producer/interpolation";
+  message << "; exposed T/PH are parent interpolated from d01 start-state fields, but "
+             "PB/PHB/MUB/P base-state ownership is still preserved d02 start-state data";
   message << "; provider terrain would still come from template HGT because moved candidate HGT "
              "is not injectable into the pressure-refresh provider yet";
   return message.str();
@@ -909,6 +911,10 @@ void stamp_gate_metadata(
   write_text_attr(file, "TYWRF_D02_START_STATE_SOURCE", options.d02_start_state_path.string());
   write_text_attr(file, "TYWRF_TEMPLATE_SOURCE", options.template_path.string());
   write_text_attr(file, "TYWRF_STATE_VARIABLES", join_variables(options.variables));
+  write_text_attr(
+      file,
+      "TYWRF_PARENT_INTERPOLATED_STATE_VARIABLES",
+      join_variables(parent_interpolation_variable_names()));
   write_text_attr(file, "TYWRF_FROM_PARENT_START", std::to_string(options.from_parent_start.i_parent_start) + "," + std::to_string(options.from_parent_start.j_parent_start));
   write_text_attr(file, "TYWRF_TO_PARENT_START", std::to_string(options.to_parent_start.i_parent_start) + "," + std::to_string(options.to_parent_start.j_parent_start));
   write_int_attr(file, "I_PARENT_START", options.to_parent_start.i_parent_start);
@@ -998,9 +1004,9 @@ void stamp_gate_metadata(
   write_text_attr(
       file,
       "TYWRF_CANDIDATE_MESSAGE",
-      "Selected-field moving-nest candidate from start states only; U/V/MU/QVAPOR exposed "
-      "cells are parent interpolated, XLAT/XLONG/HGT are refreshed from start-state pose data, "
-      "and T/PH/P are preserved from finite d02 start-state data.");
+      "Selected-field moving-nest candidate from start states only; U/V/T/PH/MU/QVAPOR "
+      "exposed cells are parent interpolated, XLAT/XLONG/HGT are refreshed from "
+      "start-state pose data, and P/PB/PHB/MUB remain finite d02 start-state ownership.");
   file.check(nc_enddef(file.id()), "leave define mode");
 }
 
@@ -1118,6 +1124,12 @@ void print_report(
       std::cout,
       "interpolated_points",
       static_cast<double>(report.interpolation.interpolated_point_count),
+      true,
+      pretty);
+  write_json_string(
+      std::cout,
+      "parent_interpolated_state_variables",
+      join_variables(parent_interpolation_variable_names()),
       report.pressure_refresh.has_value(),
       pretty);
   if (report.pressure_refresh.has_value()) {

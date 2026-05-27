@@ -479,6 +479,38 @@ surface/physics wrapper and writes those fields from that producer. Preserved
 cycle-start values and scaffold-only outputs remain producer gaps for field and
 Vmax validation.
 
+Round D40 validation records the D39 guard and scaffold results. Commit
+`0ea9a69` makes `--pressure-refresh` fail closed: the real KROSA smoke aborts
+on the readiness guard and produces no output. This abort is a successful
+safety check, not a pressure-refresh result. Validation reports must keep
+`P` as unresolved when the guard blocks refresh, and they must not reinterpret
+the guard as a pressure producer, a skipped-pass result, or a reason to advance
+past the failed `00:10` endpoint.
+
+D40 parent interpolation should target exposed-cell `T` and `PH` only. A valid
+candidate may compare those fields against the `00:10` reference after
+generation, but generation must use non-oracle inputs: cycle-start d02 remap
+state, d01-derived parent fields, same-time KROSA constants, and documented
+parent-child interpolation rules. It must not use `00:10` WRF d02 truth,
+reference-end deltas, bias corrections, or storm-center information as an
+input. `P` remains outside direct parent interpolation and cannot be promoted
+to a production field until a derived/recomputed pressure path passes its
+readiness and numerical checks.
+
+`PB`, `PHB`, and `MUB` are read-only validation inputs for this D40 slice. They
+may support interpolation context and pressure-refresh staging as
+same-domain/same-time base-state fields, but selected-field interpolation must
+not overwrite them, and validation must not repair them from later restart or
+reference-end truth. If a future provider writes these fields, its report must
+separate provider ownership from interpolation ownership.
+
+The ABI v2 sidecar fixture is a validation fixture, not executed physics. The
+current `_ex` sidecar path reports `wrapper_unavailable` with
+`executed_physics = 0`; therefore fixture success can validate ABI shape,
+sidecar metadata, and failure reporting only. It must not satisfy surface field
+comparisons or Vmax provenance until the ABI v2 wrapper actually executes the
+documented surface/physics producer.
+
 Example:
 
 ```bash
