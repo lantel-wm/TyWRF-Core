@@ -556,6 +556,25 @@ restart `PHB`/`ALB` provider substitutes, and probe or diagnostic
 pressure-refresh artifacts as gate evidence. The current strict `00:10` gate is
 still failed on `U`, `V`, `MU`, `P`, and storm-center distance.
 
+Round D44 defines the next selected-field pressure-refresh readiness contract.
+D41-D43 provide moved `HGT` provider override, a selected-field moved-HGT
+provider probe, and hook terrain override, but validation must still treat those
+as readiness evidence only. Before `selected_field_cycle --pressure-refresh`
+may write any candidate output, its report must explicitly show the provider
+terrain source/provenance, base-state reconstruction success, planned sync
+counts for base-state and exposed pressure fields, overlap/halo safety for the
+moved d02 window, and pressure compute/requested/applied status.
+
+If any readiness item is missing, false, unsafe, or inconsistent,
+`--pressure-refresh` must fail closed with no output file. The default path
+continues to preserve `P`, `PB`, `PHB`, and `MUB`; validation must not accept
+direct parent interpolation of `P`, restart `PHB`/`ALB` as a provider
+substitute, `00:10` reference-end truth, or diagnostic artifacts as gate
+evidence. A hook diagnostic smoke that refreshes exposed `P` remains useful
+hook-level evidence only and must not be counted as selected-field readiness or
+a strict `00:10` gate pass. The real `00:10` gate still fails on `U`, `V`,
+`MU`, `P`, and storm-center distance.
+
 Example:
 
 ```bash

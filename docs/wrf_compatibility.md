@@ -697,6 +697,31 @@ not use `00:10` reference-end truth, restart `PHB`/`ALB` as a provider
 substitute, or probe/diagnostic artifacts as gate evidence. The current real
 `00:10` gate remains failed on `U`, `V`, `MU`, `P`, and storm-center distance.
 
+## Round D44 Selected-Field Pressure-Refresh Readiness Contract
+
+D41 through D43 complete only the capability chain needed to inspect the next
+pressure-refresh step: moved `HGT` provider override, selected-field moved-HGT
+provider probe, and hook terrain override. This chain is not yet a selected-field
+pressure producer. The default selected-field candidate must continue to
+preserve `P`, `PB`, `PHB`, and `MUB` from start-state ownership.
+
+The next stage must define a controlled readiness contract before
+`selected_field_cycle --pressure-refresh` can be allowed to write a candidate.
+At minimum, the opt-in path must report provider terrain source/provenance,
+base-state reconstruction status, planned base-state and pressure sync counts,
+overlap and halo safety for the moved nest, and pressure compute/requested/
+applied status. Missing, inconsistent, non-finite, or unsafe readiness data must
+keep the path fail-closed.
+
+While the opt-in path is not ready, `--pressure-refresh` must abort before
+writing output and must not modify `P`, `PB`, `PHB`, or `MUB`. A hook-level
+diagnostic smoke may refresh exposed `P`, but that is hook evidence only; it is
+not selected-field readiness, not a gate-eligible candidate, and not a real
+`00:10` pass. Shortcuts remain forbidden: `00:10` reference-end truth, restart
+`PHB`/`ALB` as a provider substitute, direct parent interpolation of `P`, and
+diagnostic artifacts as gate evidence. The current real `00:10` gate remains
+failed on `U`, `V`, `MU`, `P`, and storm-center distance.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

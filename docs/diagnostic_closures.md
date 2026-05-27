@@ -412,6 +412,28 @@ Round D43 keeps pressure-refresh hook terrain overrides outside closure scope:
   current `00:10` gate remains failed on `U`, `V`, `MU`, `P`, and storm-center
   distance.
 
+Round D44 defines the selected-field pressure-refresh readiness boundary:
+
+- D41-D43 provide moved `HGT` provider override, selected-field moved-HGT
+  provider probe, and hook terrain override. These are readiness capabilities,
+  not closure producers and not selected-field gate evidence.
+- The next stage must report a controlled readiness contract before
+  `--pressure-refresh` can write output: provider terrain source/provenance,
+  base-state reconstruction status, planned base-state and pressure sync
+  counts, moved-nest overlap/halo safety, and pressure compute/requested/
+  applied status.
+- Until that contract is complete and positive, `--pressure-refresh` must fail
+  closed with no output file. The default selected-field candidate must preserve
+  `P`/`PB`/`PHB`/`MUB`, and a closure must not fill or reinterpret those fields
+  from diagnostic artifacts.
+- A hook diagnostic smoke may refresh exposed `P`, but it is hook-level evidence
+  only. It must not be promoted into selected-field readiness or a real `00:10`
+  gate pass.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  as a provider substitute, direct parent interpolation of `P`, and diagnostic
+  artifact gate evidence. The current `00:10` gate remains failed on `U`, `V`,
+  `MU`, `P`, and storm-center distance.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
