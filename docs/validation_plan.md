@@ -111,6 +111,46 @@ The checked KROSA d02 reference files under
 do not contain the accepted SLP candidates. Across 29 `wrfout_d02_*` files, the
 pressure-related matches were `P`, `PB`, `PSFC`, and non-equivalent `SEAICE`.
 
+## Opt-In Diagnostic Closures
+
+Diagnostic closures are separate from normal d02 cycle-gate acceptance. A file
+modified by a closure is a diagnostic candidate, not physical TyWRF-Core
+integrator output, even when it keeps WRF-compatible variable names.
+
+`pressure_mu_closure` is the current proposed closure. Its design contract is
+tracked in `docs/diagnostic_closures.md`. It may be used only to study local
+pressure and dry column mass consistency from cycle-start fields. It must not
+use a WRF reference end-state delta, copy cycle-end reference pressure fields,
+patch validation metrics, or hide modified pressure fields inside the normal
+skeleton, integrator, or writer path.
+
+The minimum allowed closure inputs are cycle-start `MU`, `P`, `PB`, `PH`,
+`PHB`, `T`, `QVAPOR`, and `PSFC`. Future implementations may use a hydrostatic
+column consistency approximation or a local mass-pressure closure, but the
+result remains a `not_physical` / `diagnostic_closure` artifact.
+
+Closure output must carry machine-readable metadata, including:
+
+```text
+diagnostic_closure = "pressure_mu_closure"
+diagnostic_candidate = "true"
+not_physical = "true"
+excluded_from_default_gate = "true"
+uses_reference_end_delta = "false"
+```
+
+The only opt-in closure metrics currently in scope are `MU` normalized RMSE,
+`P` normalized RMSE, derived SLP minimum error, and `PSFC`/`SLP` range sanity
+checks. The closure does not claim or improve `U`, `V`, `QVAPOR`, storm-center
+distance, Vmax, or rainfall metrics. If a report locates the minimum of a
+closure-derived `SLP` field, it must label that point as a closure SLP minimum,
+not as the accepted TC storm center.
+
+Default validation tools must either exclude closure-marked files from normal
+pass/fail gates or require an explicit diagnostic-closure mode that reports
+closure metrics in a separate block. Closure-derived `SLP` does not satisfy the
+default minimum-SLP or storm-center gate.
+
 ## Python Validation Tools
 
 `tools/audit_reference_cycles.py` checks KROSA d02 reference coverage before

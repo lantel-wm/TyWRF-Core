@@ -1,6 +1,8 @@
 #include "tywrf/field_view.hpp"
 #include "tywrf/io/netcdf_schema.hpp"
 #include "tywrf/io/wrf_state_io.hpp"
+#include "tywrf/nest/nest_interface.hpp"
+#include "tywrf/nest/state_remap.hpp"
 #include "tywrf/state.hpp"
 
 #include <netcdf.h>
@@ -9,9 +11,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -43,6 +47,14 @@ struct Options {
   std::size_t output_time_index = 0;
   std::vector<std::string> variables;
   bool pretty = false;
+  bool diagnostic_remap_overlap = false;
+  std::optional<tywrf::nest::ParentChildPosition> from_parent_start;
+  std::optional<tywrf::nest::ParentChildPosition> to_parent_start;
+};
+
+struct DiagnosticRemapResult {
+  tywrf::nest::RemapPlan plan;
+  tywrf::nest::ChildStateRemapReport report;
 };
 
 struct Resolution {
@@ -105,6 +117,9 @@ Options:
   --cycle-end TEXT                Optional report/metadata cycle end string.
   --times TEXT                    Override output Times; default copies template Times.
   --variables A,B,C               Combined State/template variables to write.
+  --diagnostic-remap-overlap      Remap d02 state overlap only; leaves exposed cells unfilled.
+  --from-parent-start I,J         One-based d02 parent start before diagnostic remap.
+  --to-parent-start I,J           One-based d02 parent start after diagnostic remap.
   --pretty                        Pretty-print JSON report.
   --help                          Show this help.
 
@@ -116,6 +131,8 @@ the end nest pose.
 
 This executable is a skeleton candidate writer only. It does not run dynamics
 or physics and marks output metadata as skeleton/not-physical/integrator_output=false.
+The diagnostic remap path is opt-in, d02 2 km only, writes NaN into cells not
+covered by overlap, and is not a validation-gate candidate.
 )";
 }
 
@@ -126,6 +143,35 @@ or physics and marks output metadata as skeleton/not-physical/integrator_output=
     throw std::invalid_argument(std::string(option) + " expects an unsigned integer");
   }
   return static_cast<std::size_t>(result);
+}
+
+[[nodiscard]] std::int32_t parse_i32(
+    const std::string& value,
+    const std::string_view option) {
+  std::size_t parsed_chars = 0;
+  const auto parsed = std::stol(value, &parsed_chars);
+  if (parsed_chars != value.size()) {
+    throw std::invalid_argument(std::string(option) + " expects an integer");
+  }
+  if (parsed < std::numeric_limits<std::int32_t>::min() ||
+      parsed > std::numeric_limits<std::int32_t>::max()) {
+    throw std::out_of_range(std::string(option) + " is outside int32 range");
+  }
+  return static_cast<std::int32_t>(parsed);
+}
+
+[[nodiscard]] tywrf::nest::ParentChildPosition parse_parent_start(
+    const std::string& value,
+    const std::string_view option) {
+  const auto comma = value.find(',');
+  if (comma == std::string::npos || value.find(',', comma + 1) != std::string::npos) {
+    throw std::invalid_argument(std::string(option) + " expects I,J");
+  }
+  return {
+      parse_i32(value.substr(0, comma), option),
+      parse_i32(value.substr(comma + 1), option),
+      tywrf::nest::IndexBase::one_based,
+  };
 }
 
 [[nodiscard]] std::vector<std::string> split_variables(const std::string& value) {
@@ -190,6 +236,12 @@ or physics and marks output metadata as skeleton/not-physical/integrator_output=
       options.output_time_index = parse_size(require_value(arg), arg);
     } else if (arg == "--variables") {
       options.variables = split_variables(require_value(arg));
+    } else if (arg == "--diagnostic-remap-overlap") {
+      options.diagnostic_remap_overlap = true;
+    } else if (arg == "--from-parent-start") {
+      options.from_parent_start = parse_parent_start(require_value(arg), arg);
+    } else if (arg == "--to-parent-start") {
+      options.to_parent_start = parse_parent_start(require_value(arg), arg);
     } else if (arg == "--pretty") {
       options.pretty = true;
     } else {
@@ -208,6 +260,11 @@ or physics and marks output metadata as skeleton/not-physical/integrator_output=
   }
   if (options.domain != "d02") {
     throw std::invalid_argument("tywrf_skeleton_cycle currently supports d02 only");
+  }
+  if (options.diagnostic_remap_overlap &&
+      (!options.from_parent_start.has_value() || !options.to_parent_start.has_value())) {
+    throw std::invalid_argument(
+        "--diagnostic-remap-overlap requires --from-parent-start and --to-parent-start");
   }
   if (options.variables.empty()) {
     options.variables = template_variable_names();
@@ -323,20 +380,36 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
   return "static_coords_from_template_not_verified_against_state_source";
 }
 
+[[nodiscard]] std::string parent_start_string(
+    const tywrf::nest::ParentChildPosition& position) {
+  std::ostringstream value;
+  value << position.i_parent_start << "," << position.j_parent_start;
+  return value.str();
+}
+
+[[nodiscard]] std::string bool_string(const bool value) {
+  return value ? "true" : "false";
+}
+
 void mark_skeleton_output(
     const Options& options,
     const Resolution resolution,
-    const std::vector<std::string>& state_variables) {
+    const std::vector<std::string>& state_variables,
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  const bool diagnostic_remap = remap_result.has_value();
   const NetcdfHandle file(options.output_path, NetcdfHandle::Mode::write);
   file.check(nc_redef(file.id()), "enter define mode");
   write_double_attr(file, "DX", resolution.dx);
   write_double_attr(file, "DY", resolution.dy);
-  write_text_attr(file, "TYWRF_CANDIDATE_KIND", "cpp_skeleton_candidate");
+  write_text_attr(
+      file,
+      "TYWRF_CANDIDATE_KIND",
+      diagnostic_remap ? "cpp_skeleton_remap_overlap_diagnostic" : "cpp_skeleton_candidate");
   write_text_attr(file, "TYWRF_SKELETON", "true");
   write_text_attr(file, "TYWRF_NOT_PHYSICAL", "true");
   write_text_attr(file, "TYWRF_SKELETON_NOT_PHYSICAL", "true");
   write_text_attr(file, "TYWRF_INTEGRATOR_OUTPUT", "false");
-  write_text_attr(file, "TYWRF_VALIDATION_GATE_ONLY", "true");
+  write_text_attr(file, "TYWRF_VALIDATION_GATE_ONLY", diagnostic_remap ? "false" : "true");
   write_text_attr(file, "TYWRF_EXPECTED_TO_MEET_THRESHOLDS", "false");
   write_text_attr(file, "TYWRF_CANDIDATE_DOMAIN", options.domain);
   write_text_attr(file, "TYWRF_CANDIDATE_SOURCE", options.state_path.string());
@@ -357,9 +430,14 @@ void mark_skeleton_output(
   write_text_attr(
       file,
       "TYWRF_CANDIDATE_MESSAGE",
-      "C++ skeleton candidate generated from cycle-start reference state; not physical and "
-      "not an integrator result. For d02 moving-nest persistence, static coordinates must come "
-      "from the cycle-start nest pose and Times should be overridden to the cycle end.");
+      diagnostic_remap
+          ? "C++ diagnostic remap-overlap candidate; overlap cells copied from old d02 state, "
+            "exposed cells require parent fill and may contain NaN. Not physical and not a "
+            "validation-gate candidate."
+          : "C++ skeleton candidate generated from cycle-start reference state; not physical "
+            "and not an integrator result. For d02 moving-nest persistence, static coordinates "
+            "must come from the cycle-start nest pose and Times should be overridden to the "
+            "cycle end.");
   if (!options.cycle_start.empty()) {
     write_text_attr(file, "TYWRF_CYCLE_START", options.cycle_start);
   }
@@ -374,6 +452,25 @@ void mark_skeleton_output(
     loaded << state_variables[index];
   }
   write_text_attr(file, "TYWRF_STATE_VARIABLES", loaded.str());
+  if (diagnostic_remap) {
+    const auto& report = remap_result->report;
+    write_text_attr(file, "TYWRF_DIAGNOSTIC_REMAP_OVERLAP", "true");
+    write_text_attr(file, "TYWRF_DIAGNOSTIC_ONLY", "true");
+    write_text_attr(file, "TYWRF_GATE_CANDIDATE", "false");
+    write_text_attr(file, "TYWRF_NEEDS_PARENT_FILL", bool_string(report.needs_parent_fill));
+    write_text_attr(file, "TYWRF_REMAP_EXPOSED_CELLS_FILLED_BY_PARENT", "false");
+    write_text_attr(file, "TYWRF_UNFILLED_EXPOSED_CELLS", "nan_sentinel_pending_parent_fill");
+    write_text_attr(file, "TYWRF_REMAP_FROM_PARENT_START", parent_start_string(*options.from_parent_start));
+    write_text_attr(file, "TYWRF_REMAP_TO_PARENT_START", parent_start_string(*options.to_parent_start));
+    write_double_attr(
+        file,
+        "TYWRF_REMAP_COPIED_FIELD_COUNT",
+        static_cast<double>(report.copied_field_count));
+    write_double_attr(
+        file,
+        "TYWRF_REMAP_COPIED_POINT_COUNT",
+        static_cast<double>(report.copied_point_count));
+  }
   file.check(nc_enddef(file.id()), "leave define mode");
 }
 
@@ -443,6 +540,32 @@ void write_json_number(
   stream << (pretty ? "\n" : "");
 }
 
+void write_json_uint64(
+    std::ostream& stream,
+    const std::string_view name,
+    const std::uint64_t value,
+    const bool comma,
+    const bool pretty) {
+  stream << (pretty ? "  \"" : "\"") << name << "\": " << value;
+  if (comma) {
+    stream << ",";
+  }
+  stream << (pretty ? "\n" : "");
+}
+
+void write_json_int32(
+    std::ostream& stream,
+    const std::string_view name,
+    const std::int32_t value,
+    const bool comma,
+    const bool pretty) {
+  stream << (pretty ? "  \"" : "\"") << name << "\": " << value;
+  if (comma) {
+    stream << ",";
+  }
+  stream << (pretty ? "\n" : "");
+}
+
 void write_json_array(
     std::ostream& stream,
     const std::string_view name,
@@ -466,15 +589,27 @@ void write_json_array(
 void print_report(
     const Options& options,
     const Resolution resolution,
-    const std::vector<std::string>& state_variables) {
+    const std::vector<std::string>& state_variables,
+    const std::optional<DiagnosticRemapResult>& remap_result) {
   const bool pretty = options.pretty;
+  const bool diagnostic_remap = remap_result.has_value();
   std::cout << "{" << (pretty ? "\n" : "");
-  write_json_string(std::cout, "status", "skeleton_candidate_generated", true, pretty);
-  write_json_string(std::cout, "candidate_kind", "cpp_skeleton_candidate", true, pretty);
+  write_json_string(
+      std::cout,
+      "status",
+      diagnostic_remap ? "diagnostic_remap_overlap_generated" : "skeleton_candidate_generated",
+      true,
+      pretty);
+  write_json_string(
+      std::cout,
+      "candidate_kind",
+      diagnostic_remap ? "cpp_skeleton_remap_overlap_diagnostic" : "cpp_skeleton_candidate",
+      true,
+      pretty);
   write_json_bool(std::cout, "skeleton", true, true, pretty);
   write_json_bool(std::cout, "not_physical", true, true, pretty);
   write_json_bool(std::cout, "integrator_output", false, true, pretty);
-  write_json_bool(std::cout, "validation_gate_only", true, true, pretty);
+  write_json_bool(std::cout, "validation_gate_only", !diagnostic_remap, true, pretty);
   write_json_string(std::cout, "domain", options.domain, true, pretty);
   write_json_string(std::cout, "source", options.state_path.string(), true, pretty);
   write_json_string(std::cout, "template", options.template_path.string(), true, pretty);
@@ -499,13 +634,158 @@ void print_report(
   write_json_number(std::cout, "dy_m", resolution.dy, true, pretty);
   write_json_array(std::cout, "variables", options.variables, true, pretty);
   write_json_array(std::cout, "state_variables", state_variables, true, pretty);
+  if (diagnostic_remap) {
+    const auto& report = remap_result->report;
+    write_json_bool(std::cout, "diagnostic_remap_overlap", true, true, pretty);
+    write_json_bool(std::cout, "diagnostic_only", true, true, pretty);
+    write_json_bool(std::cout, "gate_candidate", false, true, pretty);
+    write_json_bool(std::cout, "needs_parent_fill", report.needs_parent_fill, true, pretty);
+    write_json_bool(std::cout, "exposed_cells_filled_by_parent", false, true, pretty);
+    write_json_string(
+        std::cout,
+        "unfilled_exposed_cells",
+        "nan_sentinel_pending_parent_fill",
+        true,
+        pretty);
+    write_json_string(
+        std::cout,
+        "from_parent_start",
+        parent_start_string(*options.from_parent_start),
+        true,
+        pretty);
+    write_json_string(
+        std::cout,
+        "to_parent_start",
+        parent_start_string(*options.to_parent_start),
+        true,
+        pretty);
+    write_json_int32(
+        std::cout,
+        "from_i_parent_start",
+        options.from_parent_start->i_parent_start,
+        true,
+        pretty);
+    write_json_int32(
+        std::cout,
+        "from_j_parent_start",
+        options.from_parent_start->j_parent_start,
+        true,
+        pretty);
+    write_json_int32(
+        std::cout,
+        "to_i_parent_start",
+        options.to_parent_start->i_parent_start,
+        true,
+        pretty);
+    write_json_int32(
+        std::cout,
+        "to_j_parent_start",
+        options.to_parent_start->j_parent_start,
+        true,
+        pretty);
+    write_json_uint64(
+        std::cout,
+        "remap_copied_field_count",
+        report.copied_field_count,
+        true,
+        pretty);
+    write_json_uint64(
+        std::cout,
+        "remap_copied_point_count",
+        report.copied_point_count,
+        true,
+        pretty);
+  }
   write_json_string(
       std::cout,
       "message",
-      "C++ skeleton candidate only; output is not physical and not a TyWRF-Core integrator result.",
+      diagnostic_remap
+          ? "C++ diagnostic overlap remap only; exposed cells require parent fill before any physical validation."
+          : "C++ skeleton candidate only; output is not physical and not a TyWRF-Core integrator result.",
       false,
       pretty);
   std::cout << "}" << (pretty ? "\n" : "\n");
+}
+
+template <typename Storage>
+void fill_storage(Storage& storage, const float value) {
+  std::fill_n(storage.data(), storage.size(), value);
+}
+
+void fill_state(tywrf::State<float>& state, const float value) {
+  fill_storage(state.u, value);
+  fill_storage(state.v, value);
+  fill_storage(state.w, value);
+  fill_storage(state.ph, value);
+  fill_storage(state.phb, value);
+  fill_storage(state.t, value);
+  fill_storage(state.p, value);
+  fill_storage(state.pb, value);
+  fill_storage(state.qvapor, value);
+  fill_storage(state.qcloud, value);
+  fill_storage(state.qrain, value);
+  fill_storage(state.qice, value);
+  fill_storage(state.qsnow, value);
+  fill_storage(state.qgraup, value);
+  fill_storage(state.qnice, value);
+  fill_storage(state.qnrain, value);
+  fill_storage(state.mu, value);
+  fill_storage(state.mub, value);
+  fill_storage(state.psfc, value);
+  fill_storage(state.u10, value);
+  fill_storage(state.v10, value);
+  fill_storage(state.t2, value);
+  fill_storage(state.q2, value);
+  fill_storage(state.rainc, value);
+  fill_storage(state.rainnc, value);
+}
+
+void require_krosa_d02_grid(
+    const tywrf::Grid& grid,
+    const tywrf::nest::ParentChildDescriptor& descriptor) {
+  const auto& config = grid.config();
+  if (config.mass_nx == descriptor.child.mass_nx &&
+      config.mass_ny == descriptor.child.mass_ny) {
+    return;
+  }
+  std::ostringstream message;
+  message << "diagnostic remap overlap currently supports KROSA d02 active mass grid "
+          << descriptor.child.mass_nx << "x" << descriptor.child.mass_ny << "; state has "
+          << config.mass_nx << "x" << config.mass_ny;
+  throw std::runtime_error(message.str());
+}
+
+void require_nest_result_ok(
+    const tywrf::nest::NestResult result,
+    const std::string_view operation) {
+  if (result.ok()) {
+    return;
+  }
+  std::ostringstream message;
+  message << operation << " failed with "
+          << tywrf::nest::nest_status_name(result.status) << ": " << result.message;
+  throw std::runtime_error(message.str());
+}
+
+[[nodiscard]] DiagnosticRemapResult apply_diagnostic_remap_overlap(
+    const Options& options,
+    const tywrf::State<float>& old_state,
+    tywrf::State<float>& new_state) {
+  const auto descriptor = tywrf::nest::make_krosa_parent_child_descriptor();
+  require_krosa_d02_grid(old_state.grid, descriptor);
+
+  const auto from_pose = tywrf::nest::make_domain_pose(descriptor, *options.from_parent_start);
+  require_nest_result_ok(from_pose.result, "from parent-start pose");
+  const auto to_pose = tywrf::nest::make_domain_pose(descriptor, *options.to_parent_start);
+  require_nest_result_ok(to_pose.result, "to parent-start pose");
+  auto result = DiagnosticRemapResult{};
+  result.plan = tywrf::nest::build_remap_plan(from_pose, to_pose);
+  require_nest_result_ok(result.plan.result, "diagnostic overlap remap plan");
+
+  fill_state(new_state, std::numeric_limits<float>::quiet_NaN());
+  result.report = tywrf::nest::remap_child_state_overlap_only(result.plan, old_state, new_state);
+  require_nest_result_ok(result.report.result, "diagnostic overlap remap");
+  return result;
 }
 
 int run(const Options& options) {
@@ -532,19 +812,35 @@ int run(const Options& options) {
       state,
       {.time_index = options.state_time_index, .variables = state_variables});
 
-  tywrf::io::write_wrf_state(
-      options.output_path,
-      state,
-      {
-          .time_index = options.output_time_index,
-          .variables = options.variables,
-          .template_path = options.template_path,
-          .template_time_index = options.template_time_index,
-          .times_value = options.times_value,
-      });
+  std::optional<DiagnosticRemapResult> remap_result;
+  if (options.diagnostic_remap_overlap) {
+    tywrf::State<float> remapped_state(grid);
+    remap_result = apply_diagnostic_remap_overlap(options, state, remapped_state);
+    tywrf::io::write_wrf_state(
+        options.output_path,
+        remapped_state,
+        {
+            .time_index = options.output_time_index,
+            .variables = options.variables,
+            .template_path = options.template_path,
+            .template_time_index = options.template_time_index,
+            .times_value = options.times_value,
+        });
+  } else {
+    tywrf::io::write_wrf_state(
+        options.output_path,
+        state,
+        {
+            .time_index = options.output_time_index,
+            .variables = options.variables,
+            .template_path = options.template_path,
+            .template_time_index = options.template_time_index,
+            .times_value = options.times_value,
+        });
+  }
 
-  mark_skeleton_output(options, template_resolution, state_variables);
-  print_report(options, template_resolution, state_variables);
+  mark_skeleton_output(options, template_resolution, state_variables, remap_result);
+  print_report(options, template_resolution, state_variables, remap_result);
   return 0;
 }
 

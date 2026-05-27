@@ -55,6 +55,31 @@ The output NetCDF metadata and JSON report identify the state source, static
 coordinate source, `Times` source, and whether static coordinates came from the
 same source file as the state.
 
+An opt-in diagnostic remap path is available for wiring the moving-nest overlap
+remap into this C++ skeleton:
+
+```bash
+./build/tywrf_skeleton_cycle \
+  --state /path/to/wrfout_d02_2025-07-26_00:00:00 \
+  --template /path/to/wrfout_d02_2025-07-26_00:00:00 \
+  --output /path/to/diagnostic/remap_overlap_wrfout_d02 \
+  --cycle-start 2025-07-26_00:00:00 \
+  --cycle-end 2025-07-26_06:00:00 \
+  --times 2025-07-26_06:00:00 \
+  --diagnostic-remap-overlap \
+  --from-parent-start 114,96 \
+  --to-parent-start 115,96 \
+  --pretty
+```
+
+This path only copies d02 active cells covered by the old/new moving-nest
+overlap. Newly exposed cells are left as NaN until a future parent-fill step is
+implemented. Its NetCDF metadata and JSON report mark
+`TYWRF_DIAGNOSTIC_REMAP_OVERLAP=true`, `TYWRF_NEEDS_PARENT_FILL`, copied
+field/point counts, from/to parent starts, and `TYWRF_NOT_PHYSICAL=true`. It is
+a diagnostic candidate only, not a physical 6 h result and not a validation-gate
+candidate.
+
 ## Python Tools
 
 Use the project-local uv environment:

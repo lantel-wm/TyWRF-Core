@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -101,7 +102,11 @@ void create_synthetic_wrfout(
     const bool state_fields,
     const float xlat_offset = 40000.0F,
     const float xlong_offset = 50000.0F,
-    const float hgt_offset = 60000.0F) {
+    const float hgt_offset = 60000.0F,
+    const int mass_nx = 4,
+    const int mass_ny = 3,
+    const int mass_nz = 2,
+    const int full_nz = 3) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create synthetic wrfout");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
@@ -117,15 +122,17 @@ void create_synthetic_wrfout(
   int west_east_stag_dim = -1;
   check_nc(nc_def_dim(file_id, "Time", NC_UNLIMITED, &time_dim), "define Time");
   check_nc(nc_def_dim(file_id, "DateStrLen", 19, &date_str_len_dim), "define DateStrLen");
-  check_nc(nc_def_dim(file_id, "bottom_top", 2, &bottom_top_dim), "define bottom_top");
-  check_nc(nc_def_dim(file_id, "bottom_top_stag", 3, &bottom_top_stag_dim), "define bottom_top_stag");
-  check_nc(nc_def_dim(file_id, "south_north", 3, &south_north_dim), "define south_north");
+  check_nc(nc_def_dim(file_id, "bottom_top", mass_nz, &bottom_top_dim), "define bottom_top");
   check_nc(
-      nc_def_dim(file_id, "south_north_stag", 4, &south_north_stag_dim),
+      nc_def_dim(file_id, "bottom_top_stag", full_nz, &bottom_top_stag_dim),
+      "define bottom_top_stag");
+  check_nc(nc_def_dim(file_id, "south_north", mass_ny, &south_north_dim), "define south_north");
+  check_nc(
+      nc_def_dim(file_id, "south_north_stag", mass_ny + 1, &south_north_stag_dim),
       "define south_north_stag");
-  check_nc(nc_def_dim(file_id, "west_east", 4, &west_east_dim), "define west_east");
+  check_nc(nc_def_dim(file_id, "west_east", mass_nx, &west_east_dim), "define west_east");
   check_nc(
-      nc_def_dim(file_id, "west_east_stag", 5, &west_east_stag_dim),
+      nc_def_dim(file_id, "west_east_stag", mass_nx + 1, &west_east_stag_dim),
       "define west_east_stag");
 
   int times_var = -1;
@@ -152,13 +159,13 @@ void create_synthetic_wrfout(
   check_nc(nc_enddef(file_id), "end definitions");
 
   put_times(file_id, times_var, time_value);
-  put_2d(file_id, xlat_var, 3, 4, xlat_offset);
-  put_2d(file_id, xlong_var, 3, 4, xlong_offset);
-  put_2d(file_id, hgt_var, 3, 4, hgt_offset);
+  put_2d(file_id, xlat_var, mass_ny, mass_nx, xlat_offset);
+  put_2d(file_id, xlong_var, mass_ny, mass_nx, xlong_offset);
+  put_2d(file_id, hgt_var, mass_ny, mass_nx, hgt_offset);
   if (state_fields) {
-    put_3d(file_id, u_var, 2, 3, 5, 10000.0F);
-    put_3d(file_id, t_var, 2, 3, 4, 20000.0F);
-    put_2d(file_id, mu_var, 3, 4, 30000.0F);
+    put_3d(file_id, u_var, mass_nz, mass_ny, mass_nx + 1, 10000.0F);
+    put_3d(file_id, t_var, mass_nz, mass_ny, mass_nx, 20000.0F);
+    put_2d(file_id, mu_var, mass_ny, mass_nx, 30000.0F);
   }
 
   check_nc(nc_close(file_id), "close synthetic wrfout");
@@ -202,6 +209,20 @@ void run_command_expect_failure(const std::string& command) {
   double value = 0.0;
   check_nc(nc_get_att_double(file_id, NC_GLOBAL, std::string(name).c_str(), &value), "read attr");
   return value;
+}
+
+[[nodiscard]] bool has_global_attr(
+    const int file_id,
+    const std::string_view name) {
+  const int status = nc_inq_att(file_id, NC_GLOBAL, std::string(name).c_str(), nullptr, nullptr);
+  if (status == NC_NOERR) {
+    return true;
+  }
+  if (status == NC_ENOTATT) {
+    return false;
+  }
+  check_nc(status, "inquire attr");
+  return false;
 }
 
 [[nodiscard]] std::string read_times(const int file_id) {
@@ -252,6 +273,7 @@ void assert_output(const std::filesystem::path& output) {
   assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
   assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "true");
   assert(read_text_attr(file_id, "TYWRF_D02_RESOLUTION_CHECK") == "d02_2km");
+  assert(!has_global_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_OVERLAP"));
   assert(read_text_attr(file_id, "TYWRF_STATIC_SOURCE").find("wrfout_d02_2025-07-26_00:00:00") !=
          std::string::npos);
   assert(read_text_attr(file_id, "TYWRF_TIMES_SOURCE") == "--times:2025-07-26_06:00:00");
@@ -272,6 +294,38 @@ void assert_output(const std::filesystem::path& output) {
   assert(read_2d_value(file_id, "HGT", 0, 1) == value_2d(0, 0, 1, 60000.0F));
   assert(read_2d_value(file_id, "HGT", 0, 1) != value_2d(0, 0, 1, 90000.0F));
   check_nc(nc_close(file_id), "close output");
+}
+
+void assert_remap_output(
+    const std::filesystem::path& output,
+    const std::filesystem::path& report_path) {
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open remap output");
+  assert(read_text_attr(file_id, "TYWRF_CANDIDATE_KIND") == "cpp_skeleton_remap_overlap_diagnostic");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_OVERLAP") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ONLY") == "true");
+  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "false");
+  assert(read_text_attr(file_id, "TYWRF_NOT_PHYSICAL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_NEEDS_PARENT_FILL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_REMAP_EXPOSED_CELLS_FILLED_BY_PARENT") == "false");
+  assert(read_text_attr(file_id, "TYWRF_UNFILLED_EXPOSED_CELLS") == "nan_sentinel_pending_parent_fill");
+  assert(read_text_attr(file_id, "TYWRF_REMAP_FROM_PARENT_START") == "114,96");
+  assert(read_text_attr(file_id, "TYWRF_REMAP_TO_PARENT_START") == "115,96");
+  assert(read_double_attr(file_id, "TYWRF_REMAP_COPIED_FIELD_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_REMAP_COPIED_POINT_COUNT") > 0.0);
+  assert(read_3d_value(file_id, "U", 0, 0, 0) == value_3d(0, 0, 0, 5, 10000.0F));
+  assert(std::isnan(read_3d_value(file_id, "U", 0, 0, 210)));
+  check_nc(nc_close(file_id), "close remap output");
+
+  std::ifstream report_file(report_path);
+  std::ostringstream report_buffer;
+  report_buffer << report_file.rdbuf();
+  const auto report = report_buffer.str();
+  assert(report.find("\"diagnostic_remap_overlap\": true") != std::string::npos);
+  assert(report.find("\"needs_parent_fill\": true") != std::string::npos);
+  assert(report.find("\"gate_candidate\": false") != std::string::npos);
+  assert(report.find("\"remap_copied_point_count\":") != std::string::npos);
 }
 
 std::string base_command(
@@ -302,9 +356,15 @@ int main(const int argc, char** argv) {
     const auto state = root / "wrfout_d02_2025-07-26_00:00:00";
     const auto end_template = root / "wrfout_d02_2025-07-26_06:00:00";
     const auto output = root / "tywrf_cpp_skeleton_wrfout_d02_2025-07-26_06:00:00";
+    const auto remap_state = root / "wrfout_d02_krosa_remap_state";
+    const auto remap_output = root / "tywrf_cpp_skeleton_remap_wrfout_d02";
+    const auto remap_report = root / "tywrf_cpp_skeleton_remap_report.json";
     std::filesystem::remove(state);
     std::filesystem::remove(end_template);
     std::filesystem::remove(output);
+    std::filesystem::remove(remap_state);
+    std::filesystem::remove(remap_output);
+    std::filesystem::remove(remap_report);
     create_synthetic_wrfout(state, 2000.0, "2025-07-26_00:00:00", true);
     create_synthetic_wrfout(
         end_template,
@@ -317,6 +377,24 @@ int main(const int argc, char** argv) {
 
     run_command(base_command(executable, state, state, output));
     assert_output(output);
+
+    create_synthetic_wrfout(
+        remap_state,
+        2000.0,
+        "2025-07-26_00:00:00",
+        true,
+        40000.0F,
+        50000.0F,
+        60000.0F,
+        210,
+        210,
+        2,
+        3);
+    run_command(
+        base_command(executable, remap_state, remap_state, remap_output) +
+        " --diagnostic-remap-overlap --from-parent-start 114,96 --to-parent-start 115,96 > " +
+        shell_quote(remap_report));
+    assert_remap_output(remap_output, remap_report);
 
     const auto bad_state = root / "wrfout_d02_bad_dx";
     const auto bad_output = root / "tywrf_bad_dx_output";

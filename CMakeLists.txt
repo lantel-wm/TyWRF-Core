@@ -16,6 +16,7 @@ add_library(tywrf_core STATIC
   src/dynamics/state_stepper.cpp
   src/dynamics/tendency.cpp
   src/io/forcing_frames.cpp
+  src/io/forcing_apply.cpp
   src/io/forcing_io.cpp
   src/io/netcdf_schema.cpp
   src/io/wrf_state_io.cpp
@@ -112,6 +113,10 @@ if(BUILD_TESTING)
   add_executable(tywrf_forcing_frames_test tests/unit/forcing_frames_test.cpp)
   target_link_libraries(tywrf_forcing_frames_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_forcing_frames_test COMMAND tywrf_forcing_frames_test)
+
+  add_executable(tywrf_forcing_apply_test tests/unit/forcing_apply_test.cpp)
+  target_link_libraries(tywrf_forcing_apply_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_forcing_apply_test COMMAND tywrf_forcing_apply_test)
 
   add_executable(tywrf_physics_bridge_test tests/unit/physics_bridge_test.cpp)
   target_link_libraries(tywrf_physics_bridge_test PRIVATE TyWRF::Core)
