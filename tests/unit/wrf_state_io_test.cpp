@@ -44,6 +44,24 @@ float value_2d(const int time_index, const int j, const int i, const float offse
          10.0F * static_cast<float>(j) + static_cast<float>(i);
 }
 
+std::string synthetic_time_string(const int time_index) {
+  return time_index == 0 ? "2025-07-26_00:00:00" : "2025-07-26_06:00:00";
+}
+
+void put_times(
+    const int file_id,
+    const int var_id,
+    const int time_index,
+    const std::string_view value) {
+  constexpr std::size_t date_str_len = 19;
+  assert(value.size() <= date_str_len);
+  std::vector<char> buffer(date_str_len, ' ');
+  std::copy(value.begin(), value.end(), buffer.begin());
+  const std::size_t start[2] = {static_cast<std::size_t>(time_index), 0};
+  const std::size_t count[2] = {1, date_str_len};
+  check_nc(nc_put_vara_text(file_id, var_id, start, count, buffer.data()), "write Times");
+}
+
 void put_3d(
     const int file_id,
     const int var_id,
@@ -132,7 +150,9 @@ void create_synthetic_wrfout(const std::filesystem::path& path) {
   int south_north_stag_dim = -1;
   int west_east_dim = -1;
   int west_east_stag_dim = -1;
+  int date_str_len_dim = -1;
   check_nc(nc_def_dim(file_id, "Time", NC_UNLIMITED, &time_dim), "define Time");
+  check_nc(nc_def_dim(file_id, "DateStrLen", 19, &date_str_len_dim), "define DateStrLen");
   check_nc(nc_def_dim(file_id, "bottom_top", 2, &bottom_top_dim), "define bottom_top");
   check_nc(nc_def_dim(file_id, "bottom_top_stag", 3, &bottom_top_stag_dim), "define bottom_top_stag");
   check_nc(nc_def_dim(file_id, "south_north", 3, &south_north_dim), "define south_north");
@@ -144,24 +164,77 @@ void create_synthetic_wrfout(const std::filesystem::path& path) {
       nc_def_dim(file_id, "west_east_stag", 5, &west_east_stag_dim),
       "define west_east_stag");
 
+  int times_var = -1;
   int u_var = -1;
   int t_var = -1;
   int mu_var = -1;
+  int xlat_var = -1;
+  int xlong_var = -1;
+  int hgt_var = -1;
+  const int times_dims[2] = {time_dim, date_str_len_dim};
   const int u_dims[4] = {time_dim, bottom_top_dim, south_north_dim, west_east_stag_dim};
   const int t_dims[4] = {time_dim, bottom_top_dim, south_north_dim, west_east_dim};
   const int mu_dims[3] = {time_dim, south_north_dim, west_east_dim};
+  const int static_dims[3] = {time_dim, south_north_dim, west_east_dim};
+  check_nc(nc_def_var(file_id, "Times", NC_CHAR, 2, times_dims, &times_var), "define Times");
   check_nc(nc_def_var(file_id, "U", NC_FLOAT, 4, u_dims, &u_var), "define U");
   check_nc(nc_def_var(file_id, "T", NC_FLOAT, 4, t_dims, &t_var), "define T");
   check_nc(nc_def_var(file_id, "MU", NC_FLOAT, 3, mu_dims, &mu_var), "define MU");
+  check_nc(nc_def_var(file_id, "XLAT", NC_FLOAT, 3, static_dims, &xlat_var), "define XLAT");
+  check_nc(nc_def_var(file_id, "XLONG", NC_FLOAT, 3, static_dims, &xlong_var), "define XLONG");
+  check_nc(nc_def_var(file_id, "HGT", NC_FLOAT, 3, static_dims, &hgt_var), "define HGT");
   check_nc(nc_enddef(file_id), "end definitions");
 
   for (int time_index = 0; time_index < 2; ++time_index) {
+    put_times(file_id, times_var, time_index, synthetic_time_string(time_index));
     put_3d(file_id, u_var, time_index, 2, 3, 5, 10000.0F);
     put_3d(file_id, t_var, time_index, 2, 3, 4, 20000.0F);
     put_2d(file_id, mu_var, time_index, 3, 4, 30000.0F);
+    put_2d(file_id, xlat_var, time_index, 3, 4, 40000.0F);
+    put_2d(file_id, xlong_var, time_index, 3, 4, 50000.0F);
+    put_2d(file_id, hgt_var, time_index, 3, 4, 60000.0F);
   }
 
   check_nc(nc_close(file_id), "close synthetic wrfout");
+}
+
+std::string read_times(const std::filesystem::path& path, const int time_index) {
+  int file_id = -1;
+  check_nc(nc_open(path.string().c_str(), NC_NOWRITE, &file_id), "open Times reader");
+
+  int times_var = -1;
+  int date_str_len_dim = -1;
+  check_nc(nc_inq_varid(file_id, "Times", &times_var), "inquire Times");
+  check_nc(nc_inq_dimid(file_id, "DateStrLen", &date_str_len_dim), "inquire DateStrLen");
+  std::size_t date_str_len = 0;
+  check_nc(nc_inq_dimlen(file_id, date_str_len_dim, &date_str_len), "read DateStrLen");
+
+  std::vector<char> buffer(date_str_len, '\0');
+  const std::size_t start[2] = {static_cast<std::size_t>(time_index), 0};
+  const std::size_t count[2] = {1, date_str_len};
+  check_nc(nc_get_vara_text(file_id, times_var, start, count, buffer.data()), "read Times");
+  check_nc(nc_close(file_id), "close Times reader");
+  return std::string(buffer.begin(), buffer.end());
+}
+
+float read_2d_value(
+    const std::filesystem::path& path,
+    const std::string_view name,
+    const int time_index,
+    const int j,
+    const int i) {
+  int file_id = -1;
+  check_nc(nc_open(path.string().c_str(), NC_NOWRITE, &file_id), "open static reader");
+
+  int var_id = -1;
+  check_nc(nc_inq_varid(file_id, std::string(name).c_str(), &var_id), "inquire static var");
+  float value = 0.0F;
+  const std::size_t start[3] = {
+      static_cast<std::size_t>(time_index), static_cast<std::size_t>(j), static_cast<std::size_t>(i)};
+  const std::size_t count[3] = {1, 1, 1};
+  check_nc(nc_get_vara_float(file_id, var_id, start, count, &value), "read static var");
+  check_nc(nc_close(file_id), "close static reader");
+  return value;
 }
 
 void create_broken_wrfout(const std::filesystem::path& path) {
@@ -294,6 +367,61 @@ int run_synthetic_writer_test() {
   return 0;
 }
 
+int run_template_writer_test() {
+  const auto template_path =
+      std::filesystem::temp_directory_path() / "tywrf_wrf_state_io_template_source_test.nc";
+  const auto output_path =
+      std::filesystem::temp_directory_path() / "tywrf_wrf_state_io_template_writer_test.nc";
+  std::filesystem::remove(template_path);
+  std::filesystem::remove(output_path);
+  create_synthetic_wrfout(template_path);
+
+  const int output_time_index = 0;
+  const int template_time_index = 1;
+  const tywrf::Grid grid({4, 3, 2, 3, tywrf::uniform_halo_3d(1)});
+  tywrf::State<float> state(grid);
+  fill_3d(state.u, output_time_index, 71000.0F);
+  fill_3d(state.t, output_time_index, 72000.0F);
+  fill_2d(state.mu, output_time_index, 73000.0F);
+
+  const std::string cycle_end = "2025-07-26_12:00:00";
+  tywrf::io::write_wrf_state(
+      output_path,
+      state,
+      {
+          .time_index = static_cast<std::size_t>(output_time_index),
+          .variables = {"Times", "XLAT", "XLONG", "HGT", "U", "T", "MU"},
+          .template_path = template_path,
+          .template_time_index = static_cast<std::size_t>(template_time_index),
+          .times_value = cycle_end,
+      });
+
+  assert(read_times(output_path, output_time_index) == cycle_end);
+  assert(
+      read_2d_value(output_path, "XLAT", output_time_index, 2, 3) ==
+      value_2d(template_time_index, 2, 3, 40000.0F));
+  assert(
+      read_2d_value(output_path, "XLONG", output_time_index, 1, 2) ==
+      value_2d(template_time_index, 1, 2, 50000.0F));
+  assert(
+      read_2d_value(output_path, "HGT", output_time_index, 0, 1) ==
+      value_2d(template_time_index, 0, 1, 60000.0F));
+
+  const auto written_grid = tywrf::io::derive_grid_from_wrf_file(output_path);
+  tywrf::State<float> roundtrip(written_grid);
+  tywrf::io::load_wrf_state(
+      output_path,
+      roundtrip,
+      {.time_index = static_cast<std::size_t>(output_time_index), .variables = {"U", "T", "MU"}});
+  assert(roundtrip.u.view()(4, 2, 1) == value_3d(output_time_index, 1, 2, 4, 71000.0F));
+  assert(roundtrip.t.view()(3, 2, 1) == value_3d(output_time_index, 1, 2, 3, 72000.0F));
+  assert(roundtrip.mu.view()(3, 2) == value_2d(output_time_index, 2, 3, 73000.0F));
+
+  std::filesystem::remove(template_path);
+  std::filesystem::remove(output_path);
+  return 0;
+}
+
 int run_error_contract_test() {
   const auto path = std::filesystem::temp_directory_path() / "tywrf_wrf_state_io_broken_test.nc";
   std::filesystem::remove(path);
@@ -374,6 +502,9 @@ int main() {
       return status;
     }
     if (const int status = run_synthetic_writer_test(); status != 0) {
+      return status;
+    }
+    if (const int status = run_template_writer_test(); status != 0) {
       return status;
     }
     if (const int status = run_error_contract_test(); status != 0) {

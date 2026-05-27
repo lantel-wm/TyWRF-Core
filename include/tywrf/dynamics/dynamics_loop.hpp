@@ -11,8 +11,11 @@ enum class DomainId : std::uint8_t {
 };
 
 enum class LoopEventKind : std::uint8_t {
+  boundary_input_refresh,
+  spectral_nudging_input_refresh,
   boundary_update,
   spectral_nudging,
+  moving_nest_position_update,
   zero_dynamics_tendency,
   physics,
   nest_interpolation,
@@ -48,10 +51,12 @@ struct DynamicsLoopConfig {
 struct LoopEvent {
   LoopEventKind kind = LoopEventKind::zero_dynamics_tendency;
   DomainId domain = DomainId::d01;
+  std::int64_t schedule_sequence_index = -1;
   std::int64_t parent_step_index = 0;
   std::int32_t child_substep_index = -1;
   std::int64_t start_seconds = 0;
   std::int64_t end_seconds = 0;
+  std::int64_t nominal_seconds = 0;
 };
 
 using LoopEventCallback = void (*)(void* user_data, const LoopEvent& event);
@@ -64,8 +69,12 @@ struct LoopEventSink {
 struct LoopSummary {
   std::int64_t parent_steps = 0;
   std::int64_t child_steps = 0;
+  std::int64_t schedule_calls = 0;
+  std::int64_t boundary_input_refreshes = 0;
+  std::int64_t spectral_nudging_input_refreshes = 0;
   std::int64_t boundary_updates = 0;
   std::int64_t spectral_nudging_calls = 0;
+  std::int64_t moving_nest_position_updates = 0;
   std::int64_t dynamics_tendency_calls = 0;
   std::int64_t physics_calls = 0;
   std::int64_t nest_interpolations = 0;

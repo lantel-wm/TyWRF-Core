@@ -26,6 +26,9 @@ struct WrfStateReadOptions {
 struct WrfStateWriteOptions {
   std::size_t time_index = 0;
   std::vector<std::string> variables;
+  std::filesystem::path template_path;
+  std::size_t template_time_index = 0;
+  std::string times_value;
 };
 
 [[nodiscard]] std::vector<std::string> wrf_state_core_field_names();

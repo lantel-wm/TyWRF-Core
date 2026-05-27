@@ -108,10 +108,18 @@ Sampled on 2026-05-27 from:
   selected variables from canonical TyWRF layout back to WRF `Time,k,j,i`
   ordering. With no explicit selection it writes all currently State-backed
   core fields returned by `tywrf::io::wrf_state_writable_field_names`.
-- The C++ State writer still does not write non-State metadata/static fields:
-  `Times`, `XLAT`, `XLONG`, and `HGT`. Those are reported by
-  `tywrf::io::wrf_state_writer_missing_field_names`, and requesting them through
-  `WrfStateWriteOptions::variables` fails with `WrfStateIoError` instead of
+- The writer can now combine State-backed variables with selected metadata and
+  static fields copied from a WRF template file. Set
+  `WrfStateWriteOptions::template_path` to a compatible wrfout/wrfinput-style
+  file, then request `Times`, `XLAT`, `XLONG`, or `HGT` alongside State-backed
+  variables. `Times` can be overwritten with
+  `WrfStateWriteOptions::times_value` so cycle-end candidates do not retain the
+  template timestamp. `template_time_index` controls which template record is
+  copied for time-dependent static fields.
+- `Times`, `XLAT`, `XLONG`, and `HGT` are still not generated from `State`;
+  `tywrf::io::wrf_state_writer_missing_field_names` reports them as fields that
+  require a template source. Requesting them without
+  `WrfStateWriteOptions::template_path` fails with `WrfStateIoError` instead of
   silently producing incomplete compatibility output.
 - Current KROSA input validation is exposed through:
   - `validate_wrfinput_d01_schema`

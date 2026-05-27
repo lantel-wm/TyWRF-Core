@@ -44,6 +44,7 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/comp
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/cycle_gate.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/baseline_candidate.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/skeleton_cycle_driver.py --help
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_skeleton_cycle.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/write_core_wrfout.py --help
 UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_6h_cycle_test.py --help
 ```
@@ -64,6 +65,15 @@ NetCDF metadata with `skeleton=true`, `not_physical=true`, and
 `integrator_output=false`; it also marks `validation_gate_only=true`. The report
 includes the suggested `cycle_gate.py` command to run next; this output is
 wiring infrastructure, not a physical TyWRF-Core result.
+
+`tools/run_skeleton_cycle.py` is the dual-domain wrapper for the same skeleton
+path. It generates d01 and d02 6 h candidate files, keeps d02 on the existing
+`DX/DY=2000m` check, does not require d01 to be 2 km, and writes a
+machine-readable report with per-domain source, candidate, reference-end,
+copied/missing variables, and suggested `cycle_gate.py` commands. Its JSON and
+NetCDF metadata also mark `skeleton=true`, `not_physical=true`, and
+`integrator_output=false`; this is a shell for later C++ executable wiring, not
+an integrator result.
 
 The current acceptance gate is `tools/cycle_gate.py`. It defaults to d02 and
 checks each 6 h cycle-end `wrfout` for `U,V,T,PH,MU,P,QVAPOR` normalized RMSE <=

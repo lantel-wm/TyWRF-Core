@@ -1,5 +1,7 @@
 #include "tywrf/dynamics/dynamics_loop.hpp"
 
+#include "tywrf/dynamics/cycle_schedule.hpp"
+
 #include <stdexcept>
 
 namespace tywrf::dynamics {
@@ -18,10 +20,20 @@ void validate_config(const DynamicsLoopConfig& config) {
 
   require(parent.id == DomainId::d01, "Phase 4 dynamics skeleton expects d01 as parent");
   require(child.id == DomainId::d02, "Phase 4 dynamics skeleton expects d02 as child");
+  require(parent.grid_spacing_m == 10'000,
+          "KROSA dynamics schedule expects d01 horizontal spacing to be 10 km");
+  require(child.grid_spacing_m == 2'000,
+          "KROSA dynamics schedule requires d02 horizontal spacing to remain 2 km");
   require(parent.grid_spacing_m > 0, "parent grid spacing must be positive");
   require(child.grid_spacing_m > 0, "child grid spacing must be positive");
   require(parent.time_step_seconds > 0, "parent time step must be positive");
   require(child.time_step_seconds > 0, "child time step must be positive");
+  require(parent.has_lateral_boundary,
+          "KROSA dynamics schedule expects d01 lateral boundary updates");
+  require(parent.has_spectral_nudging,
+          "KROSA dynamics schedule expects d01 spectral nudging");
+  require(child.is_moving_nest,
+          "KROSA dynamics schedule expects d02 to remain a moving nest");
   require(timing.parent_time_step_seconds == parent.time_step_seconds,
           "parent descriptor and timing descriptor disagree");
   require(timing.child_time_step_seconds == child.time_step_seconds,
@@ -42,13 +54,40 @@ void validate_config(const DynamicsLoopConfig& config) {
           "spectral nudging input interval must be positive");
 }
 
+[[nodiscard]] CycleScheduleConfig make_cycle_schedule_config(
+    const DynamicsLoopConfig& config) noexcept {
+  return CycleScheduleConfig{
+      config.parent.grid_spacing_m,
+      config.child.grid_spacing_m,
+      config.timing.parent_time_step_seconds,
+      config.timing.child_time_step_seconds,
+      config.timing.parent_time_step_ratio,
+      config.timing.segment_seconds,
+      config.timing.boundary_refresh_interval_seconds,
+      config.timing.spectral_nudging_input_interval_seconds,
+      900,
+      config.timing.history_interval_seconds,
+      SegmentEndpointPolicy::bracket_start_and_end,
+      MovingNestTimingPolicy::snap_to_next_parent_step,
+  };
+}
+
 void count_event(const LoopEventKind kind, LoopSummary& summary) noexcept {
   switch (kind) {
+    case LoopEventKind::boundary_input_refresh:
+      ++summary.boundary_input_refreshes;
+      break;
+    case LoopEventKind::spectral_nudging_input_refresh:
+      ++summary.spectral_nudging_input_refreshes;
+      break;
     case LoopEventKind::boundary_update:
       ++summary.boundary_updates;
       break;
     case LoopEventKind::spectral_nudging:
       ++summary.spectral_nudging_calls;
+      break;
+    case LoopEventKind::moving_nest_position_update:
+      ++summary.moving_nest_position_updates;
       break;
     case LoopEventKind::zero_dynamics_tendency:
       ++summary.dynamics_tendency_calls;
@@ -68,11 +107,86 @@ void count_event(const LoopEventKind kind, LoopSummary& summary) noexcept {
   }
 }
 
+[[nodiscard]] LoopEventKind map_schedule_call_kind(
+    const CycleScheduleCallKind kind) noexcept {
+  switch (kind) {
+    case CycleScheduleCallKind::boundary_input_refresh:
+      return LoopEventKind::boundary_input_refresh;
+    case CycleScheduleCallKind::spectral_nudging_input_refresh:
+      return LoopEventKind::spectral_nudging_input_refresh;
+    case CycleScheduleCallKind::d01_boundary_update:
+      return LoopEventKind::boundary_update;
+    case CycleScheduleCallKind::d01_spectral_nudging:
+      return LoopEventKind::spectral_nudging;
+    case CycleScheduleCallKind::moving_nest_position_update:
+      return LoopEventKind::moving_nest_position_update;
+    case CycleScheduleCallKind::parent_child_interpolation:
+      return LoopEventKind::nest_interpolation;
+    case CycleScheduleCallKind::two_way_feedback:
+      return LoopEventKind::nest_feedback;
+    case CycleScheduleCallKind::history_output:
+      return LoopEventKind::history_output;
+  }
+  return LoopEventKind::zero_dynamics_tendency;
+}
+
 void emit_event(const LoopEventSink& sink, const LoopEvent& event, LoopSummary& summary) {
   count_event(event.kind, summary);
   if (sink.callback != nullptr) {
     sink.callback(sink.user_data, event);
   }
+}
+
+void emit_schedule_call(
+    const LoopEventSink& sink,
+    const CycleScheduleCall& call,
+    LoopSummary& summary) {
+  ++summary.schedule_calls;
+  emit_event(
+      sink,
+      LoopEvent{
+          map_schedule_call_kind(call.kind),
+          call.domain,
+          call.sequence_index,
+          call.parent_step_index,
+          call.child_substep_index,
+          call.start_seconds,
+          call.end_seconds,
+          call.nominal_seconds,
+      },
+      summary);
+}
+
+void emit_skeleton_dynamics_and_physics(
+    const LoopEventSink& sink,
+    const CycleScheduleCall& call,
+    LoopSummary& summary) {
+  emit_event(
+      sink,
+      LoopEvent{
+          LoopEventKind::zero_dynamics_tendency,
+          call.domain,
+          call.sequence_index,
+          call.parent_step_index,
+          call.child_substep_index,
+          call.start_seconds,
+          call.end_seconds,
+          call.nominal_seconds,
+      },
+      summary);
+  emit_event(
+      sink,
+      LoopEvent{
+          LoopEventKind::physics,
+          call.domain,
+          call.sequence_index,
+          call.parent_step_index,
+          call.child_substep_index,
+          call.start_seconds,
+          call.end_seconds,
+          call.nominal_seconds,
+      },
+      summary);
 }
 
 }  // namespace
@@ -87,87 +201,17 @@ const DynamicsLoopConfig& DynamicsLoopRunner::config() const noexcept {
 
 LoopSummary DynamicsLoopRunner::run(const LoopEventSink& sink) const {
   LoopSummary summary;
-  const auto& timing = config_.timing;
+  const auto schedule = CycleSchedule::build(make_cycle_schedule_config(config_));
+  summary.parent_steps = schedule.summary().parent_steps;
+  summary.child_steps = schedule.summary().child_substeps;
 
-  const auto parent_steps =
-      static_cast<std::int64_t>(timing.segment_seconds / timing.parent_time_step_seconds);
+  for (const auto& call : schedule.calls()) {
+    emit_schedule_call(sink, call, summary);
 
-  for (std::int64_t parent_step = 0; parent_step < parent_steps; ++parent_step) {
-    const auto parent_start =
-        parent_step * static_cast<std::int64_t>(timing.parent_time_step_seconds);
-    const auto parent_end = parent_start + timing.parent_time_step_seconds;
-
-    if (config_.parent.has_lateral_boundary) {
-      emit_event(
-          sink,
-          {LoopEventKind::boundary_update, DomainId::d01, parent_step, -1, parent_start,
-           parent_end},
-          summary);
+    if (call.kind == CycleScheduleCallKind::d01_spectral_nudging ||
+        call.kind == CycleScheduleCallKind::parent_child_interpolation) {
+      emit_skeleton_dynamics_and_physics(sink, call, summary);
     }
-
-    if (config_.parent.has_spectral_nudging) {
-      emit_event(
-          sink,
-          {LoopEventKind::spectral_nudging, DomainId::d01, parent_step, -1, parent_start,
-           parent_end},
-          summary);
-    }
-
-    emit_event(
-        sink,
-        {LoopEventKind::zero_dynamics_tendency, DomainId::d01, parent_step, -1,
-         parent_start, parent_end},
-        summary);
-    emit_event(
-        sink,
-        {LoopEventKind::physics, DomainId::d01, parent_step, -1, parent_start, parent_end},
-        summary);
-
-    for (std::int32_t child_substep = 0; child_substep < timing.parent_time_step_ratio;
-         ++child_substep) {
-      const auto child_start =
-          parent_start + child_substep * static_cast<std::int64_t>(timing.child_time_step_seconds);
-      const auto child_end = child_start + timing.child_time_step_seconds;
-
-      emit_event(
-          sink,
-          {LoopEventKind::nest_interpolation, DomainId::d02, parent_step, child_substep,
-           child_start, child_end},
-          summary);
-      emit_event(
-          sink,
-          {LoopEventKind::zero_dynamics_tendency, DomainId::d02, parent_step, child_substep,
-           child_start, child_end},
-          summary);
-      emit_event(
-          sink,
-          {LoopEventKind::physics, DomainId::d02, parent_step, child_substep, child_start,
-           child_end},
-          summary);
-
-      ++summary.child_steps;
-    }
-
-    emit_event(
-        sink,
-        {LoopEventKind::nest_feedback, DomainId::d01, parent_step, -1, parent_start,
-         parent_end},
-        summary);
-
-    if (parent_end % timing.history_interval_seconds == 0) {
-      emit_event(
-          sink,
-          {LoopEventKind::history_output, DomainId::d01, parent_step, -1, parent_end,
-           parent_end},
-          summary);
-      emit_event(
-          sink,
-          {LoopEventKind::history_output, DomainId::d02, parent_step, -1, parent_end,
-           parent_end},
-          summary);
-    }
-
-    ++summary.parent_steps;
   }
 
   return summary;
@@ -193,10 +237,16 @@ std::string_view domain_name(const DomainId domain) noexcept {
 
 std::string_view loop_event_name(const LoopEventKind kind) noexcept {
   switch (kind) {
+    case LoopEventKind::boundary_input_refresh:
+      return "boundary_input_refresh";
+    case LoopEventKind::spectral_nudging_input_refresh:
+      return "spectral_nudging_input_refresh";
     case LoopEventKind::boundary_update:
       return "boundary_update";
     case LoopEventKind::spectral_nudging:
       return "spectral_nudging";
+    case LoopEventKind::moving_nest_position_update:
+      return "moving_nest_position_update";
     case LoopEventKind::zero_dynamics_tendency:
       return "zero_dynamics_tendency";
     case LoopEventKind::physics:

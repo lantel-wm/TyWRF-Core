@@ -60,7 +60,9 @@ can wire to stable call contracts without pretending the numerics exist.
 
 The first dynamics implementation is an orchestration skeleton, not a numerical
 core. `tywrf::dynamics::DynamicsLoopRunner` owns only domain and time-step
-descriptors plus call-point sequencing for the fixed KROSA v1 configuration:
+descriptors for the fixed KROSA v1 configuration and consumes the
+`CycleSchedule` contract for boundary, nudging, moving-nest, interpolation,
+feedback, and history call-point sequencing:
 
 - d01 parent: `10 km`, `40 s`, lateral boundary update enabled, spectral
   nudging enabled;
@@ -68,7 +70,11 @@ descriptors plus call-point sequencing for the fixed KROSA v1 configuration:
 - `parent_time_step_ratio = 5`;
 - one 6 h segment is `540` d01 steps and `2700` d02 substeps.
 
-Each d01 step emits call points in this order:
+The runner traverses every schedule call, then inserts current no-op numerical
+placeholders at the compatible call points. Segment-start and segment-end
+boundary/nudging input refreshes, inclusive moving-nest position updates, and
+history output are visible in the callback event stream. Each d01 step emits
+these effective call points:
 
 1. d01 lateral boundary update;
 2. d01 spectral nudging;
@@ -80,9 +86,10 @@ Each d01 step emits call points in this order:
 7. d01 and d02 history output when the step lands on the 6 h history interval.
 
 All dynamics tendencies are currently zero/identity placeholders. The event sink
-is callback-based and carries no NetCDF, logging, or state-layout dependency, so
-Agent B's field/state interfaces and later physics/nesting work can attach at
-these call points without changing the tested time sequencing.
+is callback-based and carries no NetCDF, logging, or state-layout dependency.
+It also records the originating schedule sequence index and nominal schedule
+time so later state, physics, and nesting work can attach without changing the
+tested 6 h schedule contract.
 
 `tywrf::dynamics::CycleSchedule` freezes the v1 KROSA 6 h
 boundary/nudging/nesting contract separately from the executable loop. It is a

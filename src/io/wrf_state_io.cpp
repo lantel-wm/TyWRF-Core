@@ -83,6 +83,10 @@ struct NetcdfVariable {
   return names;
 }
 
+[[nodiscard]] const std::vector<std::string>& template_copy_field_names_ref() {
+  return writer_missing_field_names_ref();
+}
+
 [[nodiscard]] std::string nc_type_name(const nc_type type) {
   switch (type) {
     case NC_BYTE:
@@ -422,6 +426,7 @@ enum class WrfStateVariableLayout {
 
 struct OutputDimensions {
   int time = -1;
+  int date_str_len = -1;
   int bottom_top = -1;
   int bottom_top_stag = -1;
   int south_north = -1;
@@ -435,31 +440,81 @@ struct DefinedVariable {
   int id = -1;
 };
 
-[[nodiscard]] bool is_writable_state_variable(const std::string_view name) {
-  const auto& names = core_field_names_ref();
+struct DefinedTemplateVariable {
+  std::string name;
+  int output_id = -1;
+  NetcdfVariable source;
+};
+
+[[nodiscard]] bool contains_name(
+    const std::vector<std::string>& names,
+    const std::string_view name) {
   return std::find(names.begin(), names.end(), name) != names.end();
 }
 
-[[nodiscard]] std::vector<std::string> selected_write_variables(
+[[nodiscard]] bool is_writable_state_variable(const std::string_view name) {
+  return contains_name(core_field_names_ref(), name);
+}
+
+[[nodiscard]] bool is_template_copy_variable(const std::string_view name) {
+  return contains_name(template_copy_field_names_ref(), name);
+}
+
+struct SelectedWriteVariables {
+  std::vector<std::string> state_variables;
+  std::vector<std::string> template_variables;
+};
+
+void require_no_duplicate_write_variable(
+    const std::vector<std::string>& variables,
+    const std::size_t index) {
+  const auto current = variables.begin() + static_cast<std::ptrdiff_t>(index);
+  if (std::find(variables.begin(), current, variables[index]) != current) {
+    throw WrfStateIoError("duplicate WRF state writer variable selection: " + variables[index]);
+  }
+}
+
+[[nodiscard]] SelectedWriteVariables selected_write_variables(
     const WrfStateWriteOptions& options) {
-  const auto selected = options.variables.empty() ? core_field_names_ref() : options.variables;
-  std::vector<std::string> variables(selected.begin(), selected.end());
+  const auto has_template = !options.template_path.empty();
+  std::vector<std::string> variables;
+  if (options.variables.empty()) {
+    variables = core_field_names_ref();
+    if (has_template) {
+      const auto& template_names = template_copy_field_names_ref();
+      variables.insert(variables.end(), template_names.begin(), template_names.end());
+    }
+  } else {
+    variables = options.variables;
+  }
+
+  SelectedWriteVariables selected;
   for (std::size_t index = 0; index < variables.size(); ++index) {
     const auto& name = variables[index];
-    if (!is_writable_state_variable(name)) {
+    require_no_duplicate_write_variable(variables, index);
+    if (is_writable_state_variable(name)) {
+      selected.state_variables.push_back(name);
+    } else if (is_template_copy_variable(name)) {
+      if (!has_template) {
+        std::ostringstream message;
+        message << "unsupported WRF state writer variable selection: " << name
+                << "; writable State-backed variables are "
+                << join_strings(core_field_names_ref()) << "; not yet written without "
+                << "WrfStateWriteOptions::template_path: "
+                << join_strings(template_copy_field_names_ref());
+        throw WrfStateIoError(message.str());
+      }
+      selected.template_variables.push_back(name);
+    } else {
       std::ostringstream message;
       message << "unsupported WRF state writer variable selection: " << name
               << "; writable State-backed variables are "
-              << join_strings(core_field_names_ref()) << "; not yet written by this "
-              << "State writer: " << join_strings(writer_missing_field_names_ref());
+              << join_strings(core_field_names_ref()) << "; template-backed variables are "
+              << join_strings(template_copy_field_names_ref());
       throw WrfStateIoError(message.str());
     }
-    const auto current = variables.begin() + static_cast<std::ptrdiff_t>(index);
-    if (std::find(variables.begin(), current, name) != current) {
-      throw WrfStateIoError("duplicate WRF state writer variable selection: " + name);
-    }
   }
-  return variables;
+  return selected;
 }
 
 [[nodiscard]] WrfStateVariableLayout variable_layout_for_name(const std::string_view name) {
@@ -521,6 +576,87 @@ int define_dimension(
   dimensions.west_east_stag =
       define_dimension(file, "west_east_stag", static_cast<std::size_t>(config.mass_nx + 1));
   return dimensions;
+}
+
+void require_template_dimension_size(
+    const std::string_view variable_name,
+    const std::string_view dimension_name,
+    const std::size_t actual,
+    const std::size_t expected) {
+  if (actual == expected) {
+    return;
+  }
+  std::ostringstream message;
+  message << "template variable " << variable_name << " dimension " << dimension_name
+          << " has size " << actual << ", expected " << expected;
+  throw WrfStateIoError(message.str());
+}
+
+[[nodiscard]] int output_dimension_id_for_template_dimension(
+    const NetcdfFile& file,
+    OutputDimensions& dimensions,
+    const GridConfig& config,
+    const std::string_view variable_name,
+    const std::string& dimension_name,
+    const std::size_t dimension_size) {
+  if (dimension_name == "Time") {
+    return dimensions.time;
+  }
+  if (dimension_name == "DateStrLen") {
+    if (dimensions.date_str_len < 0) {
+      dimensions.date_str_len = define_dimension(file, "DateStrLen", dimension_size);
+    } else {
+      int date_str_len_id = -1;
+      file.check(nc_inq_dimid(file.id(), "DateStrLen", &date_str_len_id), "inquire DateStrLen");
+      std::size_t existing_size = 0;
+      file.check(
+          nc_inq_dimlen(file.id(), date_str_len_id, &existing_size),
+          "inquire DateStrLen length");
+      require_template_dimension_size(
+          variable_name, dimension_name, dimension_size, existing_size);
+    }
+    return dimensions.date_str_len;
+  }
+  if (dimension_name == "bottom_top") {
+    require_template_dimension_size(
+        variable_name, dimension_name, dimension_size, static_cast<std::size_t>(config.mass_nz));
+    return dimensions.bottom_top;
+  }
+  if (dimension_name == "bottom_top_stag") {
+    require_template_dimension_size(
+        variable_name, dimension_name, dimension_size, static_cast<std::size_t>(config.full_nz));
+    return dimensions.bottom_top_stag;
+  }
+  if (dimension_name == "south_north") {
+    require_template_dimension_size(
+        variable_name, dimension_name, dimension_size, static_cast<std::size_t>(config.mass_ny));
+    return dimensions.south_north;
+  }
+  if (dimension_name == "south_north_stag") {
+    require_template_dimension_size(
+        variable_name,
+        dimension_name,
+        dimension_size,
+        static_cast<std::size_t>(config.mass_ny + 1));
+    return dimensions.south_north_stag;
+  }
+  if (dimension_name == "west_east") {
+    require_template_dimension_size(
+        variable_name, dimension_name, dimension_size, static_cast<std::size_t>(config.mass_nx));
+    return dimensions.west_east;
+  }
+  if (dimension_name == "west_east_stag") {
+    require_template_dimension_size(
+        variable_name,
+        dimension_name,
+        dimension_size,
+        static_cast<std::size_t>(config.mass_nx + 1));
+    return dimensions.west_east_stag;
+  }
+
+  throw WrfStateIoError(
+      "template variable " + std::string(variable_name) + " uses unsupported dimension " +
+      dimension_name);
 }
 
 [[nodiscard]] std::vector<int> dimension_ids_for_layout(
@@ -610,6 +746,251 @@ void write_text_attribute(
   write_text_attribute(file, variable_id, "MemoryOrder", memory_order_for_layout(layout));
   write_text_attribute(file, variable_id, "stagger", stagger_for_layout(layout));
   return variable_id;
+}
+
+void copy_variable_attributes(
+    const NetcdfFile& source_file,
+    const int source_variable_id,
+    const NetcdfFile& output_file,
+    const int output_variable_id) {
+  int attribute_count = 0;
+  source_file.check(
+      nc_inq_varnatts(source_file.id(), source_variable_id, &attribute_count),
+      "inquire template variable attributes");
+  for (int attribute_index = 0; attribute_index < attribute_count; ++attribute_index) {
+    std::array<char, NC_MAX_NAME + 1> attribute_name{};
+    source_file.check(
+        nc_inq_attname(
+            source_file.id(), source_variable_id, attribute_index, attribute_name.data()),
+        "inquire template variable attribute name");
+    output_file.check(
+        nc_copy_att(
+            source_file.id(),
+            source_variable_id,
+            attribute_name.data(),
+            output_file.id(),
+            output_variable_id),
+        "copy template variable attribute");
+  }
+}
+
+[[nodiscard]] DefinedVariable define_template_output_variable(
+    const NetcdfFile& output_file,
+    const NetcdfFile& template_file,
+    const std::string& name,
+    OutputDimensions& dimensions,
+    const GridConfig& config,
+    NetcdfVariable& source_variable) {
+  source_variable = inquire_variable(template_file, name);
+
+  std::vector<int> dimids;
+  dimids.reserve(source_variable.dimensions.size());
+  for (std::size_t dim = 0; dim < source_variable.dimensions.size(); ++dim) {
+    dimids.push_back(
+        output_dimension_id_for_template_dimension(
+            output_file,
+            dimensions,
+            config,
+            name,
+            source_variable.dimensions[dim],
+            source_variable.shape[dim]));
+  }
+
+  int variable_id = -1;
+  output_file.check(
+      nc_def_var(
+          output_file.id(),
+          name.c_str(),
+          source_variable.type,
+          static_cast<int>(dimids.size()),
+          dimids.empty() ? nullptr : dimids.data(),
+          &variable_id),
+      "define template-backed WRF variable");
+  copy_variable_attributes(template_file, source_variable.id, output_file, variable_id);
+  return {name, variable_id};
+}
+
+[[nodiscard]] std::size_t element_count(const std::vector<std::size_t>& counts) {
+  std::size_t count = 1;
+  for (const auto value : counts) {
+    count *= value;
+  }
+  return count;
+}
+
+void require_template_time_index(
+    const std::string_view name,
+    const std::size_t time_length,
+    const std::size_t template_time_index) {
+  if (time_length > template_time_index) {
+    return;
+  }
+  std::ostringstream message;
+  message << "template variable " << name << " has Time length " << time_length
+          << ", cannot copy template time index " << template_time_index;
+  throw WrfStateIoError(message.str());
+}
+
+void write_times_template_variable(
+    const NetcdfFile& output_file,
+    const NetcdfFile& template_file,
+    const NetcdfVariable& source_variable,
+    const std::size_t output_time_index,
+    const std::size_t template_time_index,
+    const std::string& times_value,
+    const int output_variable_id) {
+  if (source_variable.type != NC_CHAR || source_variable.dimensions.size() != 2 ||
+      source_variable.dimensions[0] != "Time" ||
+      source_variable.dimensions[1] != "DateStrLen") {
+    std::ostringstream message;
+    message << "template variable Times must be char(Time,DateStrLen), found type "
+            << nc_type_name(source_variable.type) << " dimensions "
+            << join_strings(source_variable.dimensions);
+    throw WrfStateIoError(message.str());
+  }
+
+  const auto date_str_len = source_variable.shape[1];
+  std::vector<char> buffer(date_str_len, ' ');
+  if (times_value.empty()) {
+    require_template_time_index("Times", source_variable.shape[0], template_time_index);
+    const std::array<std::size_t, 2> start = {template_time_index, 0};
+    const std::array<std::size_t, 2> count = {1, date_str_len};
+    template_file.check(
+        nc_get_vara_text(
+            template_file.id(), source_variable.id, start.data(), count.data(), buffer.data()),
+        "read template Times");
+  } else {
+    if (times_value.size() > date_str_len) {
+      std::ostringstream message;
+      message << "Times value '" << times_value << "' is longer than DateStrLen "
+              << date_str_len;
+      throw WrfStateIoError(message.str());
+    }
+    std::copy(times_value.begin(), times_value.end(), buffer.begin());
+  }
+
+  const std::array<std::size_t, 2> target_start = {output_time_index, 0};
+  const std::array<std::size_t, 2> target_count = {1, date_str_len};
+  output_file.check(
+      nc_put_vara_text(
+          output_file.id(),
+          output_variable_id,
+          target_start.data(),
+          target_count.data(),
+          buffer.data()),
+      "write output Times");
+}
+
+[[nodiscard]] bool has_leading_time_dimension(const NetcdfVariable& variable) {
+  return !variable.dimensions.empty() && variable.dimensions.front() == "Time";
+}
+
+void require_only_leading_time_dimension(
+    const std::string_view name,
+    const NetcdfVariable& variable) {
+  for (std::size_t dim = 1; dim < variable.dimensions.size(); ++dim) {
+    if (variable.dimensions[dim] == "Time") {
+      throw WrfStateIoError(
+          "template variable " + std::string(name) +
+          " uses Time outside the leading dimension");
+    }
+  }
+}
+
+void copy_float_template_variable(
+    const NetcdfFile& output_file,
+    const NetcdfFile& template_file,
+    const NetcdfVariable& source_variable,
+    const std::vector<std::size_t>& source_start,
+    const std::vector<std::size_t>& target_start,
+    const std::vector<std::size_t>& count,
+    const int output_variable_id) {
+  std::vector<float> buffer(element_count(count));
+  template_file.check(
+      nc_get_vara_float(
+          template_file.id(), source_variable.id, source_start.data(), count.data(), buffer.data()),
+      "read float template variable");
+  output_file.check(
+      nc_put_vara_float(
+          output_file.id(), output_variable_id, target_start.data(), count.data(), buffer.data()),
+      "write float template variable");
+}
+
+void copy_double_template_variable(
+    const NetcdfFile& output_file,
+    const NetcdfFile& template_file,
+    const NetcdfVariable& source_variable,
+    const std::vector<std::size_t>& source_start,
+    const std::vector<std::size_t>& target_start,
+    const std::vector<std::size_t>& count,
+    const int output_variable_id) {
+  std::vector<double> buffer(element_count(count));
+  template_file.check(
+      nc_get_vara_double(
+          template_file.id(), source_variable.id, source_start.data(), count.data(), buffer.data()),
+      "read double template variable");
+  output_file.check(
+      nc_put_vara_double(
+          output_file.id(), output_variable_id, target_start.data(), count.data(), buffer.data()),
+      "write double template variable");
+}
+
+void copy_template_variable_data(
+    const NetcdfFile& output_file,
+    const NetcdfFile& template_file,
+    const std::string_view name,
+    const NetcdfVariable& source_variable,
+    const int output_variable_id,
+    const std::size_t output_time_index,
+    const std::size_t template_time_index,
+    const std::string& times_value) {
+  if (name == "Times") {
+    write_times_template_variable(
+        output_file,
+        template_file,
+        source_variable,
+        output_time_index,
+        template_time_index,
+        times_value,
+        output_variable_id);
+    return;
+  }
+
+  require_only_leading_time_dimension(name, source_variable);
+  auto source_start = std::vector<std::size_t>(source_variable.shape.size(), 0);
+  auto target_start = std::vector<std::size_t>(source_variable.shape.size(), 0);
+  auto count = source_variable.shape;
+  if (has_leading_time_dimension(source_variable)) {
+    require_template_time_index(name, source_variable.shape[0], template_time_index);
+    source_start[0] = template_time_index;
+    target_start[0] = output_time_index;
+    count[0] = 1;
+  }
+
+  if (source_variable.type == NC_FLOAT) {
+    copy_float_template_variable(
+        output_file,
+        template_file,
+        source_variable,
+        source_start,
+        target_start,
+        count,
+        output_variable_id);
+  } else if (source_variable.type == NC_DOUBLE) {
+    copy_double_template_variable(
+        output_file,
+        template_file,
+        source_variable,
+        source_start,
+        target_start,
+        count,
+        output_variable_id);
+  } else {
+    std::ostringstream message;
+    message << "template variable " << name << " has unsupported copy type "
+            << nc_type_name(source_variable.type);
+    throw WrfStateIoError(message.str());
+  }
 }
 
 void require_2d_write_shape(
@@ -963,12 +1344,49 @@ void write_wrf_state(
   const auto dimensions = define_output_dimensions(file, state.grid.config());
 
   std::vector<DefinedVariable> defined;
-  defined.reserve(variables.size());
-  for (const auto& name : variables) {
+  defined.reserve(variables.state_variables.size());
+  for (const auto& name : variables.state_variables) {
     defined.push_back({name, define_output_variable(file, name, dimensions)});
   }
 
+  if (variables.template_variables.empty()) {
+    file.check(nc_enddef(file.id()), "end definitions");
+
+    for (const auto& variable : defined) {
+      write_named_variable(file, variable.name, variable.id, state, options.time_index);
+    }
+    return;
+  }
+
+  const NetcdfFile template_file(options.template_path);
+  auto mutable_dimensions = dimensions;
+  std::vector<DefinedTemplateVariable> template_defined;
+  template_defined.reserve(variables.template_variables.size());
+  for (const auto& name : variables.template_variables) {
+    NetcdfVariable source_variable;
+    const auto defined_variable = define_template_output_variable(
+        file,
+        template_file,
+        name,
+        mutable_dimensions,
+        state.grid.config(),
+        source_variable);
+    template_defined.push_back({defined_variable.name, defined_variable.id, source_variable});
+  }
+
   file.check(nc_enddef(file.id()), "end definitions");
+
+  for (const auto& variable : template_defined) {
+    copy_template_variable_data(
+        file,
+        template_file,
+        variable.name,
+        variable.source,
+        variable.output_id,
+        options.time_index,
+        options.template_time_index,
+        options.times_value);
+  }
 
   for (const auto& variable : defined) {
     write_named_variable(file, variable.name, variable.id, state, options.time_index);

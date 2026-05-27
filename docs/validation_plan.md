@@ -87,6 +87,25 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/deri
   --pretty
 ```
 
+`tools/run_cycle_gate_with_slp.py` wraps the common validation plumbing: for
+each cycle-end file, it derives `SLP` for both reference and candidate into
+separate output directories, then runs `tools/cycle_gate.py` against those
+derived copies. The combined JSON report records the derived directories,
+per-file derivation summaries, and the nested gate report. A derivation failure
+is a hard overall failure; the wrapper does not fall back to a `PSFC` proxy.
+
+Example:
+
+```bash
+UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.uv-python uv run python tools/run_cycle_gate_with_slp.py \
+  --reference-dir /path/to/reference/WRF \
+  --candidate-dir /path/to/tywrf/output \
+  --start 2025-07-26_00:00:00 \
+  --end 2025-07-26_06:00:00 \
+  --derived-dir build/validation/cycle_gate_with_slp \
+  --pretty
+```
+
 The checked KROSA d02 reference files under
 `/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF`
 do not contain the accepted SLP candidates. Across 29 `wrfout_d02_*` files, the
