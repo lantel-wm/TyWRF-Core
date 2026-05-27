@@ -132,7 +132,8 @@ template <typename Real>
 
 [[nodiscard]] PressureRefreshStagingReport base_report(
     const StateView<float>& state,
-    const io::KrosaPressureRefreshMetadata& metadata) noexcept {
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const PressureRefreshAlbSource alb_source) noexcept {
   PressureRefreshStagingReport report{};
   report.expected_mass_level_count = active_nz(state.p);
   report.expected_full_level_count = report.expected_mass_level_count + 1;
@@ -141,6 +142,11 @@ template <typename Real>
   report.c3h_count = vector_size_or_negative(metadata.c3h.size());
   report.c4h_count = vector_size_or_negative(metadata.c4h.size());
   report.alb_is_external = true;
+  report.alb_source = alb_source;
+  report.alb_source_name = pressure_refresh_alb_source_name(alb_source);
+  report.pressure_refresh_applied = false;
+  report.gate_candidate = false;
+  report.diagnostic_only = true;
   return report;
 }
 
@@ -150,7 +156,19 @@ PressureRefreshStagingReport validate_krosa_pressure_refresh_staging(
     const StateView<float>& state,
     const FieldView3D<const float> external_alb,
     const io::KrosaPressureRefreshMetadata& metadata) noexcept {
-  auto report = base_report(state, metadata);
+  return validate_krosa_pressure_refresh_staging(
+      state,
+      external_alb,
+      metadata,
+      PressureRefreshAlbSource::direct_alb_input);
+}
+
+PressureRefreshStagingReport validate_krosa_pressure_refresh_staging(
+    const StateView<float>& state,
+    const FieldView3D<const float> external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const PressureRefreshAlbSource alb_source) noexcept {
+  auto report = base_report(state, metadata, alb_source);
 
   if (!valid_canonical_view(state.p) || !valid_canonical_view(state.pb) ||
       !valid_canonical_view(state.t) || !valid_canonical_view(state.ph) ||
@@ -239,16 +257,45 @@ PressureRefreshStagingReport validate_krosa_pressure_refresh_staging(
   return validate_krosa_pressure_refresh_staging(
       state.view(),
       external_alb.view(),
-      metadata);
+      metadata,
+      PressureRefreshAlbSource::direct_alb_input);
+}
+
+PressureRefreshStagingReport validate_krosa_pressure_refresh_staging(
+    State<float>& state,
+    const FieldStorage3D<float>& external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const PressureRefreshAlbSource alb_source) noexcept {
+  return validate_krosa_pressure_refresh_staging(
+      state.view(),
+      external_alb.view(),
+      metadata,
+      alb_source);
 }
 
 PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
     const StateView<float> state,
     const FieldView3D<const float> external_alb,
     const io::KrosaPressureRefreshMetadata& metadata) noexcept {
+  return make_krosa_pressure_refresh_inputs(
+      state,
+      external_alb,
+      metadata,
+      PressureRefreshAlbSource::direct_alb_input);
+}
+
+PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
+    const StateView<float> state,
+    const FieldView3D<const float> external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const PressureRefreshAlbSource alb_source) noexcept {
   PressureRefreshStagingResult staging{};
   staging.report =
-      validate_krosa_pressure_refresh_staging(state, external_alb, metadata);
+      validate_krosa_pressure_refresh_staging(
+          state,
+          external_alb,
+          metadata,
+          alb_source);
   if (!staging.ok()) {
     return staging;
   }
@@ -278,7 +325,20 @@ PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
   return make_krosa_pressure_refresh_inputs(
       state.view(),
       external_alb.view(),
-      metadata);
+      metadata,
+      PressureRefreshAlbSource::direct_alb_input);
+}
+
+PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
+    State<float>& state,
+    const FieldStorage3D<float>& external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const PressureRefreshAlbSource alb_source) noexcept {
+  return make_krosa_pressure_refresh_inputs(
+      state.view(),
+      external_alb.view(),
+      metadata,
+      alb_source);
 }
 
 }  // namespace tywrf::dynamics

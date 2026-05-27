@@ -9,6 +9,22 @@
 
 namespace tywrf::dynamics {
 
+enum class PressureRefreshAlbSource : std::uint8_t {
+  direct_alb_input,
+  base_state_reconstruction_provider,
+};
+
+[[nodiscard]] constexpr const char* pressure_refresh_alb_source_name(
+    const PressureRefreshAlbSource source) noexcept {
+  switch (source) {
+    case PressureRefreshAlbSource::direct_alb_input:
+      return "direct_alb_input";
+    case PressureRefreshAlbSource::base_state_reconstruction_provider:
+      return "base_state_reconstruction_provider";
+  }
+  return "unknown";
+}
+
 // Stages the narrow KROSA pressure-refresh kernel inputs from an existing
 // State plus externally supplied WRF ALB metadata. In this WRF branch ALB is
 // inverse base density, not surface albedo. The d02 ALB buffer must come from a
@@ -24,6 +40,11 @@ struct PressureRefreshStagingReport {
   std::int32_t c3h_count = 0;
   std::int32_t c4h_count = 0;
   bool alb_is_external = false;
+  PressureRefreshAlbSource alb_source = PressureRefreshAlbSource::direct_alb_input;
+  const char* alb_source_name = "direct_alb_input";
+  bool pressure_refresh_applied = false;
+  bool gate_candidate = false;
+  bool diagnostic_only = true;
 
   [[nodiscard]] constexpr bool ok() const noexcept {
     return result.ok();
@@ -45,9 +66,21 @@ struct PressureRefreshStagingResult {
     const io::KrosaPressureRefreshMetadata& metadata) noexcept;
 
 [[nodiscard]] PressureRefreshStagingReport validate_krosa_pressure_refresh_staging(
+    const StateView<float>& state,
+    FieldView3D<const float> external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    PressureRefreshAlbSource alb_source) noexcept;
+
+[[nodiscard]] PressureRefreshStagingReport validate_krosa_pressure_refresh_staging(
     State<float>& state,
     const FieldStorage3D<float>& external_alb,
     const io::KrosaPressureRefreshMetadata& metadata) noexcept;
+
+[[nodiscard]] PressureRefreshStagingReport validate_krosa_pressure_refresh_staging(
+    State<float>& state,
+    const FieldStorage3D<float>& external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    PressureRefreshAlbSource alb_source) noexcept;
 
 [[nodiscard]] PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
     StateView<float> state,
@@ -55,8 +88,20 @@ struct PressureRefreshStagingResult {
     const io::KrosaPressureRefreshMetadata& metadata) noexcept;
 
 [[nodiscard]] PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
+    StateView<float> state,
+    FieldView3D<const float> external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    PressureRefreshAlbSource alb_source) noexcept;
+
+[[nodiscard]] PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
     State<float>& state,
     const FieldStorage3D<float>& external_alb,
     const io::KrosaPressureRefreshMetadata& metadata) noexcept;
+
+[[nodiscard]] PressureRefreshStagingResult make_krosa_pressure_refresh_inputs(
+    State<float>& state,
+    const FieldStorage3D<float>& external_alb,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    PressureRefreshAlbSource alb_source) noexcept;
 
 }  // namespace tywrf::dynamics

@@ -184,6 +184,25 @@ provider success must not relax strict d02 gate criteria or be reported as a
 10 min pass. Later restart-file `ALB` or `PHB` may be sampled only for
 smoke/range probes and must not become d02 start-time truth.
 
+Round D29 adds the adapter/staging bridge rule for pressure-refresh inputs. The
+`base_state_reconstruction_provider` may act as the same-domain/time source for
+staged `ALB`, `PB`, `MUB`, and `PHB` buffers consumed by pressure refresh. That
+bridge is still not the pressure-refresh compute step. Validation reports must
+keep `pressure_refresh_applied` as the deciding marker: if it is `false`, the
+candidate cannot pass the d02 gate, even when provider, adapter, and staging
+all succeeded.
+
+The next hook belongs in round D30 and must preserve this sequence:
+
+```text
+parent-fill/remap -> provider -> staging -> pressure refresh compute -> report/write
+```
+
+Reports should expose each step separately so diagnostic/staging/provider
+success cannot be confused with a passing pressure-refresh result. Later
+restart-file `ALB` or `PHB` remains usable only for probe/smoke comparisons and
+must not be used as start-time truth.
+
 Example:
 
 ```bash

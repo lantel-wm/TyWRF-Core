@@ -309,6 +309,26 @@ Later restart-file `ALB` or `PHB` remains limited to smoke/range/probe checks.
 Those fields must not be used as d02 start-time truth, even when they agree
 with the provider within expected ranges.
 
+Round D29 records the adapter/staging bridge boundary. The
+`base_state_reconstruction_provider` source may feed pressure-refresh staging
+with same-domain, same-valid-time `ALB`, `PB`, `MUB`, and `PHB` buffers. This
+is a source and staging contract only: successful provider adapter/staging
+bridge execution does not mean perturbation-pressure refresh was computed.
+Any report or output with `pressure_refresh_applied = false` remains ineligible
+for a validation-gate pass.
+
+Round D30 should only consider the skeleton/remap hook after preserving this
+ordering:
+
+```text
+parent-fill/remap -> provider -> staging -> pressure refresh compute -> report/write
+```
+
+The hook must keep provider and staging status separate from pressure-refresh
+compute status. Later restart-file `ALB` or `PHB` remains restricted to
+probe/smoke use and must not become start-time truth for the pressure-refresh
+chain.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

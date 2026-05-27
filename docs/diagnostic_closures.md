@@ -92,6 +92,24 @@ Later restart-file `ALB` or `PHB` remains acceptable only for smoke/range probe
 comparisons. It must not be treated as d02 start-time truth or used to bypass
 the provider/recompute path.
 
+Round D29 defines the adapter/staging bridge boundary. The
+`base_state_reconstruction_provider` may supply same-domain, same-valid-time
+`ALB`, `PB`, `MUB`, and `PHB` buffers to pressure-refresh staging. That bridge
+does not apply pressure refresh, does not modify exposed-cell `P`, and does not
+make a diagnostic parent-fill or closure artifact gate-eligible. If
+`pressure_refresh_applied = false`, the artifact must remain non-physical and
+excluded from normal gates, regardless of provider or staging success.
+
+Round D30 may consider a skeleton/remap hook only with this explicit ordering:
+
+```text
+parent-fill/remap -> provider -> staging -> pressure refresh compute -> report/write
+```
+
+The report/write step must preserve distinct provider, staging, and pressure
+compute markers. Later restart `ALB` or `PHB` may still be used only for
+probe/smoke checks and must never substitute for start-time truth.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

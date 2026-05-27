@@ -12,6 +12,7 @@ pkg_check_modules(NETCDF REQUIRED IMPORTED_TARGET netcdf)
 add_library(tywrf_core STATIC
   src/core/version.cpp
   src/dynamics/base_state.cpp
+  src/dynamics/base_state_provider.cpp
   src/dynamics/cycle_schedule.cpp
   src/dynamics/dynamics_loop.cpp
   src/dynamics/pressure_refresh.cpp
@@ -149,6 +150,13 @@ if(BUILD_TESTING)
   add_executable(tywrf_base_state_test tests/unit/base_state_test.cpp)
   target_link_libraries(tywrf_base_state_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_base_state_test COMMAND tywrf_base_state_test)
+
+  add_executable(tywrf_base_state_provider_test
+    tests/unit/base_state_provider_test.cpp)
+  target_link_libraries(tywrf_base_state_provider_test PRIVATE TyWRF::Core)
+  add_test(
+    NAME tywrf_base_state_provider_test
+    COMMAND tywrf_base_state_provider_test)
 
   add_executable(tywrf_pressure_refresh_io_test tests/unit/pressure_refresh_io_test.cpp)
   target_link_libraries(tywrf_pressure_refresh_io_test PRIVATE TyWRF::Core)

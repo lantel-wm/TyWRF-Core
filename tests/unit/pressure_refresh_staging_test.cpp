@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -21,6 +22,13 @@ tywrf::io::KrosaPressureRefreshMetadata make_metadata() {
   metadata.c3h = {0.75F, 0.25F};
   metadata.c4h = {0.0F, 0.0F};
   return metadata;
+}
+
+void assert_non_gate_report(
+    const tywrf::dynamics::PressureRefreshStagingReport& report) {
+  assert(!report.pressure_refresh_applied);
+  assert(!report.gate_candidate);
+  assert(report.diagnostic_only);
 }
 
 void test_success_stages_existing_buffers() {
@@ -44,6 +52,11 @@ void test_success_stages_existing_buffers() {
   assert(staging.report.c3f_count == 3);
   assert(staging.report.c3h_count == 2);
   assert(staging.report.alb_is_external);
+  assert(
+      staging.report.alb_source ==
+      tywrf::dynamics::PressureRefreshAlbSource::direct_alb_input);
+  assert(std::string_view(staging.report.alb_source_name) == "direct_alb_input");
+  assert_non_gate_report(staging.report);
   assert(staging.inputs.p.data == state.p.data());
   assert(staging.inputs.pb.data == state.pb.data());
   assert(staging.inputs.t.data == state.t.data());
@@ -57,6 +70,32 @@ void test_success_stages_existing_buffers() {
   assert(staging.inputs.c3h.count == 2);
   assert(staging.inputs.p_top_pa == metadata.p_top_pa);
   assert(std::equal(state.p.data(), state.p.data() + state.p.size(), p_before.begin()));
+}
+
+void test_provider_source_is_reported_without_gate_credit() {
+  auto grid = make_grid();
+  tywrf::State<float> state(grid);
+  tywrf::FieldStorage3D<float> provider_alb(grid.mass_layout());
+  auto metadata = make_metadata();
+
+  const auto staging = tywrf::dynamics::make_krosa_pressure_refresh_inputs(
+      state,
+      provider_alb,
+      metadata,
+      tywrf::dynamics::PressureRefreshAlbSource::
+          base_state_reconstruction_provider);
+
+  assert(staging.ok());
+  assert(staging.report.alb_is_external);
+  assert(
+      staging.report.alb_source ==
+      tywrf::dynamics::PressureRefreshAlbSource::
+          base_state_reconstruction_provider);
+  assert(
+      std::string_view(staging.report.alb_source_name) ==
+      "base_state_reconstruction_provider");
+  assert(staging.inputs.alb.data == provider_alb.data());
+  assert_non_gate_report(staging.report);
 }
 
 void test_missing_coefficients_fail_without_inputs() {
@@ -76,6 +115,7 @@ void test_missing_coefficients_fail_without_inputs() {
       staging.report.result.status ==
       tywrf::nest::NestStatus::invalid_contract);
   assert(staging.report.c4h_count == 0);
+  assert_non_gate_report(staging.report);
   assert(staging.inputs.p.data == nullptr);
   assert(staging.inputs.alb.data == nullptr);
 }
@@ -95,6 +135,32 @@ void test_bad_external_alb_shape_fails() {
 
   assert(!report.ok());
   assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert_non_gate_report(report);
+}
+
+void test_missing_alb_view_fails_without_gate_credit() {
+  auto grid = make_grid();
+  tywrf::State<float> state(grid);
+  const auto metadata = make_metadata();
+
+  const tywrf::FieldView3D<const float> missing_alb{};
+  const auto report = tywrf::dynamics::validate_krosa_pressure_refresh_staging(
+      state.view(),
+      missing_alb,
+      metadata,
+      tywrf::dynamics::PressureRefreshAlbSource::
+          base_state_reconstruction_provider);
+
+  assert(!report.ok());
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(
+      report.alb_source ==
+      tywrf::dynamics::PressureRefreshAlbSource::
+          base_state_reconstruction_provider);
+  assert(
+      std::string_view(report.alb_source_name) ==
+      "base_state_reconstruction_provider");
+  assert_non_gate_report(report);
 }
 
 void test_alb_must_be_external_and_p_top_present() {
@@ -111,7 +177,12 @@ void test_alb_must_be_external_and_p_top_present() {
 
   assert(!staging.ok());
   assert(staging.report.alb_is_external);
+  assert(
+      staging.report.alb_source ==
+      tywrf::dynamics::PressureRefreshAlbSource::direct_alb_input);
+  assert(std::string_view(staging.report.alb_source_name) == "direct_alb_input");
   assert(staging.report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert_non_gate_report(staging.report);
 }
 
 void test_staging_does_not_compute_or_modify_pressure() {
@@ -127,6 +198,7 @@ void test_staging_does_not_compute_or_modify_pressure() {
       metadata);
 
   assert(staging.ok());
+  assert_non_gate_report(staging.report);
   for (std::size_t index = 0; index < state.p.size(); ++index) {
     assert(state.p.data()[index] == -9999.0F);
   }
@@ -145,8 +217,10 @@ int main() {
       std::is_trivially_copyable_v<tywrf::dynamics::PressureRefreshStagingResult>);
 
   test_success_stages_existing_buffers();
+  test_provider_source_is_reported_without_gate_credit();
   test_missing_coefficients_fail_without_inputs();
   test_bad_external_alb_shape_fails();
+  test_missing_alb_view_fails_without_gate_credit();
   test_alb_must_be_external_and_p_top_present();
   test_staging_does_not_compute_or_modify_pressure();
 
