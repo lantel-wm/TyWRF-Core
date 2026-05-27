@@ -42,6 +42,9 @@ class SourceAuditEntry:
     p_top_present: bool
     p_top_source: str | None
     alb_available: bool
+    direct_alb_source: bool
+    base_state_reconstruction_required: bool
+    recommended_next_source: str | None
     diagnostic_only: bool
     can_seed_pressure_refresh: bool
     suitable_for_start_time_truth: bool
@@ -160,6 +163,9 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
             p_top_present=False,
             p_top_source=None,
             alb_available=False,
+            direct_alb_source=False,
+            base_state_reconstruction_required=False,
+            recommended_next_source=None,
             diagnostic_only=True,
             can_seed_pressure_refresh=False,
             suitable_for_start_time_truth=False,
@@ -201,6 +207,9 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
             p_top_present=False,
             p_top_source=None,
             alb_available=False,
+            direct_alb_source=False,
+            base_state_reconstruction_required=False,
+            recommended_next_source=None,
             diagnostic_only=True,
             can_seed_pressure_refresh=False,
             suitable_for_start_time_truth=False,
@@ -217,6 +226,9 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
             p_top_present=p_top_present,
             p_top_source=p_top_source,
             alb_available=alb_available,
+            direct_alb_source=False,
+            base_state_reconstruction_required=False,
+            recommended_next_source=None,
             diagnostic_only=True,
             can_seed_pressure_refresh=False,
             suitable_for_start_time_truth=False,
@@ -225,6 +237,16 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
 
     status = "ok" if not missing_names else "missing"
     can_seed = status == "ok"
+    base_state_reconstruction_required = (
+        not alb_available
+        and p_top_present
+        and all(name not in missing_names for name in (*FULL_LEVEL_NAMES, *MASS_LEVEL_NAMES))
+    )
+    recommended_next_source = (
+        "wrf_start_domain_base_state_reconstruction"
+        if base_state_reconstruction_required
+        else None
+    )
     return SourceAuditEntry(
         name=entry.name,
         domain=entry.domain,
@@ -234,6 +256,9 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
         p_top_present=p_top_present,
         p_top_source=p_top_source,
         alb_available=alb_available,
+        direct_alb_source=alb_available,
+        base_state_reconstruction_required=base_state_reconstruction_required,
+        recommended_next_source=recommended_next_source,
         diagnostic_only=True,
         can_seed_pressure_refresh=can_seed,
         suitable_for_start_time_truth=can_seed and entry.suitable_for_start_time_truth,
@@ -253,6 +278,14 @@ def audit_pressure_refresh_sources(entries: Iterable[SourceEntry]) -> PressureRe
         for entry in audited_entries
         if entry.domain == "d02" and entry.status == "missing" and ALB_NAME in entry.missing_names
     ]
+    base_state_reconstruction_entries = [
+        entry.name for entry in audited_entries if entry.base_state_reconstruction_required
+    ]
+    d02_base_state_reconstruction_entries = [
+        entry.name
+        for entry in audited_entries
+        if entry.domain == "d02" and entry.base_state_reconstruction_required
+    ]
     failed = bool(
         counts["missing_count"] or counts["error_count"] or counts["nonexistent_count"]
     )
@@ -263,6 +296,15 @@ def audit_pressure_refresh_sources(entries: Iterable[SourceEntry]) -> PressureRe
             **counts,
             "d02_alb_blocker": bool(d02_alb_blockers),
             "d02_alb_blocker_entries": d02_alb_blockers,
+            "base_state_reconstruction_required": bool(base_state_reconstruction_entries),
+            "base_state_reconstruction_entries": base_state_reconstruction_entries,
+            "d02_base_state_reconstruction_required": bool(
+                d02_base_state_reconstruction_entries
+            ),
+            "d02_base_state_reconstruction_entries": d02_base_state_reconstruction_entries,
+            "recommended_next_source": "wrf_start_domain_base_state_reconstruction"
+            if d02_base_state_reconstruction_entries
+            else None,
         },
         entries=audited_entries,
     )

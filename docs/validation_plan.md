@@ -125,6 +125,14 @@ no clean source, because d02 history has the coefficients and `P_TOP` without
 `ALB`, while later d02 restart samples include `ALB`. Output missing applied
 pressure refresh must not be counted as a gate pass.
 
+The `ALB` in that source set is WRF Registry `alb`, the inverse base density,
+not surface `ALBEDO`. It is input/restart/interp/smooth state without history
+output, so `wrfout` missing `ALB` is expected. For non-restart startup WRF
+reconstructs base-state `T_INIT`, `PB`, `ALB`, and `PHB`; TyWRF needs the same
+kind of base-state reconstruction provider before d02 pressure-refresh output
+can be gate-eligible. Later restart `ALB` may be used only as a probe/smoke
+sample and must not serve as d02 start-time validation truth.
+
 Example:
 
 ```bash

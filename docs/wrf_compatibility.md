@@ -244,6 +244,17 @@ the coefficients and `P_TOP` but not `ALB`, while later d02 restart samples do
 contain `ALB`. A clean source for d02 start-time `ALB` has not been found, so
 this is the current real wiring blocker for applying pressure refresh on d02.
 
+WRF Registry defines `ALB` as state variable `alb`: inverse base density on
+`ikj`, not the surface albedo field `ALBEDO`. Its flags include
+input/restart/interp/smooth handling (`irdus`) but no history-output flag, so
+`wrfout` files normally omitting `ALB` is expected. Non-restart
+`start_domain` rebuilds the base state rather than sourcing it from history
+output; the relevant reconstructed fields are `T_INIT`, `PB`, `ALB`, and
+`PHB`. TyWRF should therefore add a base-state reconstruction provider for
+these fields before treating d02 pressure refresh as physically wired. Later
+restart-file `ALB` may be used only as a probe or smoke reference for shape and
+range checks; it is not d02 start-time validation truth.
+
 Diagnostic parent-fill candidates remain marked `not_physical`,
 `diagnostic_only`, and `gate_candidate = false`. They are non-physical,
 non-gate artifacts even after direct parent-fill and time-level sync, and they

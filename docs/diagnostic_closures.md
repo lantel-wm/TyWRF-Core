@@ -41,6 +41,14 @@ not resolved: d02 history has the coefficients and `P_TOP` without `ALB`, while
 later d02 restart samples include `ALB`. That missing clean start-time `ALB`
 source is a wiring blocker, not a diagnostic-closure permission.
 
+`ALB` here is WRF Registry `alb`, the inverse base density on `ikj`, not the
+surface albedo variable `ALBEDO`. Registry flags give it input/restart/interp/
+smooth behavior (`irdus`) but no history output, so missing `ALB` in `wrfout`
+is expected. For a non-restart `start_domain`, WRF reconstructs base-state
+`T_INIT`, `PB`, `ALB`, and `PHB`; TyWRF must model that with an explicit
+base-state reconstruction provider. Later restart-file `ALB` can only support
+probe/smoke checks and must not be promoted to d02 start-time validation truth.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

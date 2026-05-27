@@ -90,6 +90,9 @@ def test_audit_reports_complete_source_as_seedable_and_clean_only_when_marked(
     assert entry["p_top_present"] is True
     assert entry["p_top_source"] == "time_variable"
     assert entry["alb_available"] is True
+    assert entry["direct_alb_source"] is True
+    assert entry["base_state_reconstruction_required"] is False
+    assert entry["recommended_next_source"] is None
     assert entry["diagnostic_only"] is True
     assert entry["can_seed_pressure_refresh"] is True
     assert entry["suitable_for_start_time_truth"] is True
@@ -106,12 +109,25 @@ def test_audit_reports_d02_start_time_missing_alb_as_blocker(tmp_path: Path) -> 
     assert payload["summary"]["missing_count"] == 1
     assert payload["summary"]["d02_alb_blocker"] is True
     assert payload["summary"]["d02_alb_blocker_entries"] == ["d02_start_wrfout"]
+    assert payload["summary"]["base_state_reconstruction_required"] is True
+    assert payload["summary"]["base_state_reconstruction_entries"] == ["d02_start_wrfout"]
+    assert payload["summary"]["d02_base_state_reconstruction_required"] is True
+    assert payload["summary"]["d02_base_state_reconstruction_entries"] == [
+        "d02_start_wrfout"
+    ]
+    assert (
+        payload["summary"]["recommended_next_source"]
+        == "wrf_start_domain_base_state_reconstruction"
+    )
     entry = payload["entries"][0]
     assert entry["status"] == "missing"
     assert entry["missing_names"] == ["ALB"]
     assert entry["p_top_present"] is True
     assert entry["p_top_source"] == "global_attribute"
     assert entry["alb_available"] is False
+    assert entry["direct_alb_source"] is False
+    assert entry["base_state_reconstruction_required"] is True
+    assert entry["recommended_next_source"] == "wrf_start_domain_base_state_reconstruction"
     assert entry["can_seed_pressure_refresh"] is False
     assert entry["suitable_for_start_time_truth"] is False
 
@@ -128,6 +144,9 @@ def test_audit_reports_nonexistent_candidate(tmp_path: Path) -> None:
     entry = payload["entries"][0]
     assert entry["status"] == "nonexistent"
     assert entry["missing_names"] == []
+    assert entry["direct_alb_source"] is False
+    assert entry["base_state_reconstruction_required"] is False
+    assert entry["recommended_next_source"] is None
     assert entry["can_seed_pressure_refresh"] is False
 
 
@@ -143,6 +162,9 @@ def test_audit_reports_bad_shape_as_error(tmp_path: Path) -> None:
     assert entry["status"] == "error"
     assert entry["missing_names"] == []
     assert "ALB has shape (2, 3, 5), expected (2, 3, 4)" in entry["message"]
+    assert entry["direct_alb_source"] is False
+    assert entry["base_state_reconstruction_required"] is False
+    assert entry["recommended_next_source"] is None
     assert entry["can_seed_pressure_refresh"] is False
 
 
@@ -158,8 +180,41 @@ def test_later_restart_is_not_clean_truth_without_explicit_manifest_flag(
 
     entry = payload["entries"][0]
     assert entry["status"] == "ok"
+    assert entry["direct_alb_source"] is True
+    assert entry["base_state_reconstruction_required"] is False
+    assert entry["recommended_next_source"] is None
     assert entry["can_seed_pressure_refresh"] is True
     assert entry["suitable_for_start_time_truth"] is False
+
+
+def test_later_restart_direct_alb_does_not_clear_d02_start_time_blocker(
+    tmp_path: Path,
+) -> None:
+    start_source = tmp_path / "wrfout_d02_2025-07-26_00:00:00"
+    restart_source = tmp_path / "wrfrst_d02_later"
+    _write_source(start_source, include_alb=False, p_top_as_attr=True)
+    _write_source(restart_source)
+
+    payload = json.loads(
+        report_to_json(
+            audit_pressure_refresh_sources(
+                [
+                    _entry("d02_start_wrfout", "d02", start_source),
+                    _entry("d02_later_restart", "d02", restart_source),
+                ]
+            )
+        )
+    )
+
+    assert payload["status"] == "failed"
+    assert payload["summary"]["d02_alb_blocker"] is True
+    assert payload["summary"]["d02_alb_blocker_entries"] == ["d02_start_wrfout"]
+    assert payload["summary"]["d02_base_state_reconstruction_required"] is True
+    entries = {entry["name"]: entry for entry in payload["entries"]}
+    assert entries["d02_start_wrfout"]["base_state_reconstruction_required"] is True
+    assert entries["d02_start_wrfout"]["suitable_for_start_time_truth"] is False
+    assert entries["d02_later_restart"]["direct_alb_source"] is True
+    assert entries["d02_later_restart"]["suitable_for_start_time_truth"] is False
 
 
 def test_main_reads_manifest_and_writes_json(tmp_path: Path) -> None:
