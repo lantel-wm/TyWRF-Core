@@ -9,7 +9,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import netCDF4
 import numpy as np
@@ -66,6 +66,10 @@ DEFAULT_THRESHOLDS = {
     **{name: 0.10 for name in W_AND_HYDROMETEOR_VARIABLES},
     **{name: 0.10 for name in NEAR_SURFACE_VARIABLES},
 }
+
+_BLOCKING_CANDIDATE_KIND_TOKENS = ("diagnostic", "closure", "remap", "oracle")
+_BOOL_TRUE_VALUES = {"1", "on", "true", "t", "yes", "y"}
+_BOOL_FALSE_VALUES = {"0", "off", "false", "f", "no", "n"}
 
 
 @dataclass(frozen=True)
@@ -152,6 +156,12 @@ def normalized_rmse(reference: np.ndarray, candidate: np.ndarray) -> tuple[float
     return metrics.rmse, metrics.normalized_rmse, metrics.max_abs_error
 
 
+def _missing_message(variable: str, owner: str) -> str:
+    if variable in STRICT_CORE_VARIABLES:
+        return f"required strict field missing from {owner}"
+    return f"variable missing from {owner}"
+
+
 def compare_variable(
     reference: netCDF4.Dataset,
     candidate: netCDF4.Dataset,
@@ -164,7 +174,7 @@ def compare_variable(
             variable=variable,
             status="missing_reference",
             threshold=threshold,
-            message="variable missing from reference",
+            message=_missing_message(variable, "reference"),
         )
     if variable not in candidate.variables:
         return VariableComparison(
@@ -172,7 +182,7 @@ def compare_variable(
             status="missing_candidate",
             reference_shape=tuple(int(v) for v in reference.variables[variable].shape),
             threshold=threshold,
-            message="variable missing from candidate",
+            message=_missing_message(variable, "candidate"),
         )
 
     ref_data = reference.variables[variable][:]
@@ -236,6 +246,143 @@ def compare_variable(
     )
 
 
+def _failure_kind(comparison: VariableComparison) -> str | None:
+    if comparison.status == "ok":
+        return None
+    if comparison.status in {"missing_reference", "missing_candidate"}:
+        return "missing_field"
+    if comparison.status == "threshold_exceeded":
+        return "numeric_rmse"
+    if comparison.status in {"non_numeric", "no_valid_samples"}:
+        return "numeric_failure"
+    if comparison.status == "shape_mismatch":
+        return "shape_mismatch"
+    return "failure"
+
+
+def _failure_detail(comparison: VariableComparison) -> dict[str, Any]:
+    return {
+        "variable": comparison.variable,
+        "status": comparison.status,
+        "failure_kind": _failure_kind(comparison),
+        "rmse": comparison.rmse,
+        "normalized_rmse": comparison.normalized_rmse,
+        "max_abs_error": comparison.max_abs_error,
+        "threshold": comparison.threshold,
+        "message": comparison.message,
+    }
+
+
+def _strict_field_diagnostics(comparisons: list[VariableComparison]) -> dict[str, Any]:
+    strict_comparisons = [
+        comparison
+        for comparison in comparisons
+        if comparison.variable in STRICT_CORE_VARIABLES
+    ]
+    failures = [
+        comparison
+        for comparison in strict_comparisons
+        if comparison.status != "ok"
+    ]
+    missing_candidate = [
+        comparison.variable
+        for comparison in strict_comparisons
+        if comparison.status == "missing_candidate"
+    ]
+    missing_reference = [
+        comparison.variable
+        for comparison in strict_comparisons
+        if comparison.status == "missing_reference"
+    ]
+    numeric_failures = [
+        comparison.variable
+        for comparison in strict_comparisons
+        if _failure_kind(comparison) in {"numeric_rmse", "numeric_failure"}
+    ]
+    shape_failures = [
+        comparison.variable
+        for comparison in strict_comparisons
+        if comparison.status == "shape_mismatch"
+    ]
+
+    return {
+        "status": "failed" if failures else "ok",
+        "required": list(STRICT_CORE_VARIABLES),
+        "evaluated": [comparison.variable for comparison in strict_comparisons],
+        "missing_candidate": missing_candidate,
+        "missing_reference": missing_reference,
+        "numeric_failures": numeric_failures,
+        "shape_failures": shape_failures,
+        "failed": len(failures),
+        "first_failure": _failure_detail(failures[0]) if failures else None,
+    }
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in _BOOL_TRUE_VALUES:
+        return True
+    if text in _BOOL_FALSE_VALUES:
+        return False
+    return None
+
+
+def _read_bool_attr(dataset: netCDF4.Dataset, name: str) -> bool | None:
+    if name not in dataset.ncattrs():
+        return None
+    return _coerce_bool(dataset.getncattr(name))
+
+
+def _read_text_attr(dataset: netCDF4.Dataset, name: str) -> str | None:
+    if name not in dataset.ncattrs():
+        return None
+    return str(dataset.getncattr(name)).strip()
+
+
+def _candidate_metadata_diagnostics(candidate: netCDF4.Dataset) -> dict[str, Any]:
+    diagnostic_only = _read_bool_attr(candidate, "TYWRF_DIAGNOSTIC_ONLY")
+    gate_candidate = _read_bool_attr(candidate, "TYWRF_GATE_CANDIDATE")
+    integrator_output = _read_bool_attr(candidate, "TYWRF_INTEGRATOR_OUTPUT")
+    validation_gate_only = _read_bool_attr(candidate, "TYWRF_VALIDATION_GATE_ONLY")
+    candidate_kind = _read_text_attr(candidate, "TYWRF_CANDIDATE_KIND")
+
+    disqualifiers: list[str] = []
+    if diagnostic_only is True:
+        disqualifiers.append("TYWRF_DIAGNOSTIC_ONLY=true")
+    if gate_candidate is False:
+        disqualifiers.append("TYWRF_GATE_CANDIDATE=false")
+    if integrator_output is False:
+        disqualifiers.append("TYWRF_INTEGRATOR_OUTPUT=false")
+    if validation_gate_only is True:
+        disqualifiers.append("TYWRF_VALIDATION_GATE_ONLY=true")
+
+    kind = candidate_kind.lower() if candidate_kind else ""
+    if kind and any(token in kind for token in _BLOCKING_CANDIDATE_KIND_TOKENS):
+        disqualifiers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
+
+    status = "failed" if disqualifiers else "ok"
+    return {
+        "status": status,
+        "disqualifiers": disqualifiers,
+        "message": (
+            "candidate is explicitly marked as diagnostic/oracle and is not "
+            "eligible for a default comparison pass: "
+            + ", ".join(disqualifiers)
+            if disqualifiers
+            else None
+        ),
+        "attrs": {
+            "TYWRF_DIAGNOSTIC_ONLY": diagnostic_only,
+            "TYWRF_GATE_CANDIDATE": gate_candidate,
+            "TYWRF_INTEGRATOR_OUTPUT": integrator_output,
+            "TYWRF_VALIDATION_GATE_ONLY": validation_gate_only,
+            "TYWRF_CANDIDATE_KIND": candidate_kind,
+        },
+    }
+
+
 def compare_files(
     reference_path: Path,
     candidate_path: Path,
@@ -250,6 +397,7 @@ def compare_files(
             compare_variable(reference, candidate, variable, thresholds=thresholds)
             for variable in variables
         ]
+        candidate_metadata = _candidate_metadata_diagnostics(candidate)
 
     tc_diagnostics = (
         compare_tc_diagnostics(
@@ -273,14 +421,25 @@ def compare_files(
     )
     if diagnostics_failed:
         summary["diagnostics_failed"] = 1
-    status = "ok" if summary["failed"] == 0 and not diagnostics_failed else "failed"
+    candidate_metadata_failed = candidate_metadata["status"] != "ok"
+    if candidate_metadata_failed:
+        summary["candidate_metadata_failed"] = 1
+    status = (
+        "ok"
+        if summary["failed"] == 0 and not diagnostics_failed and not candidate_metadata_failed
+        else "failed"
+    )
     return ComparisonReport(
         reference=str(reference_path),
         candidate=str(candidate_path),
         status=status,
         summary=summary,
         variables=comparisons,
-        diagnostics={"tc": tc_diagnostics},
+        diagnostics={
+            "tc": tc_diagnostics,
+            "strict_fields": _strict_field_diagnostics(comparisons),
+            "candidate_metadata": candidate_metadata,
+        },
     )
 
 

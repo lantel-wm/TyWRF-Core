@@ -27,6 +27,7 @@ add_library(tywrf_core STATIC
   src/io/pressure_refresh_io.cpp
   src/io/wrf_state_io.cpp
   src/nest/nest_interface.cpp
+  src/nest/parent_child_interpolation.cpp
   src/nest/state_exchange.cpp
   src/nest/state_remap.cpp
   src/nest/time_level_sync.cpp
@@ -137,6 +138,13 @@ if(BUILD_TESTING)
   add_executable(tywrf_state_exchange_test tests/unit/state_exchange_test.cpp)
   target_link_libraries(tywrf_state_exchange_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_state_exchange_test COMMAND tywrf_state_exchange_test)
+
+  add_executable(tywrf_parent_child_interpolation_test
+    tests/unit/parent_child_interpolation_test.cpp)
+  target_link_libraries(tywrf_parent_child_interpolation_test PRIVATE TyWRF::Core)
+  add_test(
+    NAME tywrf_parent_child_interpolation_test
+    COMMAND tywrf_parent_child_interpolation_test)
 
   add_executable(tywrf_time_level_sync_test tests/unit/time_level_sync_test.cpp)
   target_link_libraries(tywrf_time_level_sync_test PRIVATE TyWRF::Core)

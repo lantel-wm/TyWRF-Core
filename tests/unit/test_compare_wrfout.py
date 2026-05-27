@@ -5,12 +5,19 @@ from pathlib import Path
 import netCDF4
 import numpy as np
 
-from tools.compare_wrfout import compare_files, main as compare_main
+from tools.compare_wrfout import STRICT_CORE_VARIABLES, compare_files, main as compare_main
 from tools.compare_wrfout import normalized_rmse, report_to_json
 
 
-def _write_dataset(path: Path, variables: dict[str, np.ndarray]) -> None:
+def _write_dataset(
+    path: Path,
+    variables: dict[str, np.ndarray],
+    *,
+    attrs: dict[str, str] | None = None,
+) -> None:
     with netCDF4.Dataset(path, "w") as dataset:
+        for name, value in (attrs or {}).items():
+            dataset.setncattr(name, value)
         for name, values in variables.items():
             data = np.asarray(values, dtype=np.float64)
             dimensions = []
@@ -20,6 +27,13 @@ def _write_dataset(path: Path, variables: dict[str, np.ndarray]) -> None:
                 dimensions.append(dimension)
             variable = dataset.createVariable(name, "f8", tuple(dimensions))
             variable[:] = data
+
+
+def _strict_core_fields(value: float = 1.0) -> dict[str, np.ndarray]:
+    return {
+        name: np.array([value, value + 1.0, value + 2.0])
+        for name in STRICT_CORE_VARIABLES
+    }
 
 
 def _write_dataset_with_tc_fields(path: Path) -> None:
@@ -196,6 +210,83 @@ def test_compare_files_reports_missing_and_shape_mismatch_statuses(tmp_path: Pat
     assert report.variables[0].reference_shape == (3,)
     assert report.variables[0].candidate_shape == (2,)
     assert report.variables[1].reference_shape == (2,)
+
+
+def test_compare_files_reports_missing_strict_fields_explicitly(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+    candidate_fields = _strict_core_fields()
+    del candidate_fields["PH"]
+    del candidate_fields["QVAPOR"]
+
+    _write_dataset(reference, _strict_core_fields())
+    _write_dataset(candidate, candidate_fields)
+
+    report = compare_files(reference, candidate, variables=STRICT_CORE_VARIABLES)
+    results = {result.variable: result for result in report.variables}
+    strict = report.diagnostics["strict_fields"]
+
+    assert report.status == "failed"
+    assert results["PH"].status == "missing_candidate"
+    assert results["PH"].message == "required strict field missing from candidate"
+    assert results["QVAPOR"].status == "missing_candidate"
+    assert strict["status"] == "failed"
+    assert strict["missing_candidate"] == ["PH", "QVAPOR"]
+    assert strict["numeric_failures"] == []
+    assert strict["first_failure"]["variable"] == "PH"
+    assert strict["first_failure"]["failure_kind"] == "missing_field"
+
+
+def test_compare_files_reports_numeric_first_failure_when_strict_fields_present(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+    candidate_fields = _strict_core_fields()
+    candidate_fields["U"] = np.array([2.0, 3.0, 4.0])
+
+    _write_dataset(reference, _strict_core_fields())
+    _write_dataset(candidate, candidate_fields)
+
+    report = compare_files(reference, candidate, variables=STRICT_CORE_VARIABLES)
+    strict = report.diagnostics["strict_fields"]
+
+    assert report.status == "failed"
+    assert strict["missing_candidate"] == []
+    assert strict["numeric_failures"] == ["U"]
+    assert strict["first_failure"]["variable"] == "U"
+    assert strict["first_failure"]["status"] == "threshold_exceeded"
+    assert strict["first_failure"]["failure_kind"] == "numeric_rmse"
+    assert strict["first_failure"]["rmse"] is not None
+    assert strict["first_failure"]["max_abs_error"] == 1.0
+
+
+def test_compare_files_rejects_marked_diagnostic_oracle_candidate(
+    tmp_path: Path,
+) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+    fields = _strict_core_fields()
+    _write_dataset(reference, fields)
+    _write_dataset(
+        candidate,
+        fields,
+        attrs={
+            "TYWRF_DIAGNOSTIC_ONLY": "true",
+            "TYWRF_CANDIDATE_KIND": "reference_delta_oracle",
+        },
+    )
+
+    report = compare_files(reference, candidate, variables=STRICT_CORE_VARIABLES)
+    metadata = report.diagnostics["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert report.summary["failed"] == 0
+    assert report.summary["candidate_metadata_failed"] == 1
+    assert report.diagnostics["strict_fields"]["status"] == "ok"
+    assert metadata["status"] == "failed"
+    assert "TYWRF_DIAGNOSTIC_ONLY=true" in metadata["disqualifiers"]
+    assert "TYWRF_CANDIDATE_KIND=reference_delta_oracle" in metadata["disqualifiers"]
 
 
 def test_compare_files_ignores_nonfinite_pairs_and_writes_strict_json(tmp_path: Path) -> None:

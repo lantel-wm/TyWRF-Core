@@ -391,6 +391,49 @@ constants `P_TOP`, `C3F`, `C4F`, `C3H`, and `C4H`). A narrowed variable list
 that omits required inputs must fail early rather than refreshing an
 uninitialized or partially staged state.
 
+## Round D33-D34 Compatibility Boundary
+
+Round D33 separates diagnostic accounting from WRF-compatible integrator output.
+Strict gate eligibility now requires positive candidate metadata, not merely the
+absence of a diagnostic marker. A gate candidate must identify itself as real
+TyWRF integrator output with `TYWRF_GATE_CANDIDATE = true` and
+`TYWRF_INTEGRATOR_OUTPUT = true`; artifacts marked as diagnostic, validation
+plumbing, oracle/reference-copy, or non-physical remain incompatible with a
+strict gate pass.
+
+Candidate kinds that describe oracle behavior are rejected by compatibility
+policy. This includes reference copies, WRF end-state copies, WRF end-state
+delta products, diagnostic remap outputs, diagnostic pressure-refresh outputs,
+diagnostic closures, and any other artifact whose fields are copied from or
+corrected by a later WRF truth file. Such files may be useful to test I/O or
+report formatting, but they must not be documented as WRF-compatible physical
+cycle output.
+
+`report_10min_diagnostics` gate-eligibility data is descriptive context only.
+It can explain which metadata would block or allow a strict gate attempt, but
+it does not itself produce a pass/fail acceptance. The strict d02 gate remains
+the normal validation comparison against the `00:10` WRF reference.
+
+`state_exchange` currently records intended nesting exchange accounting only.
+While `performed_interpolation = false`, it means no parent-to-child numerical
+interpolation has been applied. Field lists, cell counts, exchange regions, and
+planned source/target ranges in that block are planning metadata, not evidence
+of a physical d02 parent-fill or a WRF-compatible nesting result.
+
+Round D34 should begin selected-field parent-to-child interpolation as a narrow
+compatibility slice. The allowed source set is the cycle start state plus
+d01-derived parent fields and KROSA constants available at the same valid time.
+The path must not read later d02 restart truth, must not use WRF end-state
+delta fields, and must not copy or blend WRF cycle-end output into the child
+candidate.
+
+The first selected-field interpolation reports should name exactly which
+fields were interpolated, which exposed cells were filled, and whether pressure
+refresh still remains pending. They must preserve d02 `DX/DY = 2000 m`, avoid
+best-track nudging, and avoid any gate-pass claim until the strict
+`2025-07-26_00:10:00` d02 gate passes with a positive-metadata integrator
+candidate.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

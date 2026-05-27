@@ -180,6 +180,33 @@ restart truth, must not promote later restart `ALB` or `PHB` to start-time
 truth, must not lower d02 resolution below 2 km, and must not relax the
 best-track-nudging prohibition.
 
+Round D33 extends the closure boundary to gate metadata. The strict d02 gate now
+requires positive integrator candidate metadata, such as
+`TYWRF_GATE_CANDIDATE = true` and `TYWRF_INTEGRATOR_OUTPUT = true`. A closure,
+oracle, diagnostic pressure-refresh, diagnostic remap, reference-copy, or WRF
+end-state-delta artifact remains rejected even if a report can compute RMSE or
+TC diagnostic numbers from it. Negative or missing gate metadata is a failure,
+and diagnostic-only metadata cannot be reinterpreted as a pass.
+
+`report_10min_diagnostics` may include gate-eligibility context for these
+artifacts, but that context is only an audit trail. It does not satisfy the
+strict gate, does not turn closure-derived `SLP` into an accepted TC diagnostic,
+and does not permit an oracle candidate kind to pass.
+
+`state_exchange` reports are likewise outside closure acceptance. With
+`performed_interpolation = false`, they describe planned or counted
+parent/child exchange only. They do not show that interpolation updated child
+fields, do not close pressure or mass diagnostics, and do not make any closure
+or diagnostic artifact gate-eligible.
+
+Round D34 selected-field parent-to-child interpolation must remain outside the
+diagnostic-closure mechanism. Its allowed inputs are start-state fields,
+d01-derived parent data, and same-time KROSA constants. It must not use later
+restart truth, WRF end-state fields, or WRF end-state deltas as an oracle. Until
+the normal strict `00:10` validation gate passes with positive integrator
+metadata, any selected-field interpolation report is implementation evidence
+only and must not be labeled as a gate pass.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

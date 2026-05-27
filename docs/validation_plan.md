@@ -272,6 +272,44 @@ near validation tooling. It must not use later restart truth, must not use
 later restart `ALB` or `PHB` as start-time truth, and must preserve d02 at
 2 km.
 
+Round D33 tightens the strict-gate metadata boundary. A file is gate-eligible
+only when it carries positive candidate metadata from the TyWRF integrator path,
+including `TYWRF_GATE_CANDIDATE = true` and
+`TYWRF_INTEGRATOR_OUTPUT = true`. Metadata that only says an artifact is near a
+gate, validation-only, diagnostic, or eligible for reporting is not enough.
+Default strict-gate tooling must reject candidate kinds that identify oracle,
+reference-copy, end-state-copy, diagnostic-remap, diagnostic-closure,
+diagnostic-pressure-refresh, or other non-integrator artifacts, even when their
+numeric fields match the WRF reference.
+
+`report_10min_diagnostics` may report a gate-eligibility block to explain why a
+file is or is not suitable for the strict `00:10` gate, but that block is
+diagnostic context only. It must not be described as a gate pass and must not
+override `cycle_gate.py` strict-gate results. If its input is an oracle,
+reference-copy, diagnostic, or metadata-negative candidate, the correct
+interpretation remains non-gate diagnostic evidence.
+
+Round D33 also leaves `state_exchange` as planning and accounting metadata
+only. A report may describe intended parent/child exchange coverage, selected
+fields, exposed-cell counts, or planned interpolation regions, but while
+`performed_interpolation = false` it is not evidence that parent-to-child
+interpolation ran, not a physical d02 update, and not a validation pass.
+
+Round D34 should start the selected-field parent-to-child interpolation path
+from start-state and d01-derived inputs only. The first implementation should
+target an explicit selected field set for newly exposed d02 cells and any
+required staging fields, then report the fields and cells actually
+interpolated. It must not read later d02 restart truth, must not use WRF
+cycle-end differences as a delta oracle, and must not copy or blend WRF
+end-state fields to improve validation metrics.
+
+Selected-field interpolation output remains a candidate under development until
+the strict `2025-07-26_00:10:00` d02 validation gate passes through the normal
+gate toolchain. Before that pass, reports may say that interpolation was
+performed for selected fields, but they must not claim a gate pass, a physical
+10 min forecast acceptance, or full moving-nest compatibility. d02 resolution
+must remain `2 km`, and best-track nudging remains out of scope.
+
 Example:
 
 ```bash
