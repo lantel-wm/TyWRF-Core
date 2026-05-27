@@ -47,6 +47,7 @@ class ForcingApplyError : public std::runtime_error {
 
 struct ForcingApplyReport {
   std::size_t field_count = 0;
+  std::size_t side_count = 0;
   std::size_t point_count = 0;
   ForcingApplyStatus status = ForcingApplyStatus::ok;
   ForcingApplyOperation operation = ForcingApplyOperation::validation_only;
@@ -98,6 +99,12 @@ ForcingApplyReport apply_boundary_copy_skeleton_to_state(
     std::string_view field_name,
     BoundarySide side,
     const PackedForcingField& packed);
+
+ForcingApplyReport apply_krosa_boundary_copy_skeleton_to_state(
+    State<float>& state,
+    const KrosaForcingReader& reader,
+    std::string_view field_name,
+    std::size_t record_index);
 
 ForcingApplyReport apply_synthetic_nudging_delta(
     State<float>& state,

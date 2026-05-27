@@ -6,12 +6,18 @@
 #include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/state.hpp"
 
+#include <netcdf.h>
+
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -31,6 +37,13 @@ void expect_close(
     const float expected,
     const std::string_view message) {
   expect(std::abs(actual - expected) < 1.0e-6F, message);
+}
+
+void check_nc(const int status, const std::string_view message) {
+  if (status != NC_NOERR) {
+    throw std::runtime_error(
+        std::string(message) + ": " + nc_strerror(status));
+  }
 }
 
 std::filesystem::path reference_dir() {
@@ -102,6 +115,12 @@ void zero_state(tywrf::State<float>& state) {
   zero_storage(state.rainnc);
 }
 
+void fill_storage(tywrf::FieldStorage3D<float>& storage, const float value) {
+  for (std::size_t index = 0; index < storage.size(); ++index) {
+    storage.data()[index] = value;
+  }
+}
+
 tywrf::io::PackedForcingField make_i_side_t_boundary_pack() {
   constexpr std::size_t bdy_width = 2;
   constexpr std::size_t nz = 2;
@@ -118,6 +137,142 @@ tywrf::io::PackedForcingField make_i_side_t_boundary_pack() {
 
   const std::vector<std::size_t> shape{bdy_width, nz, ny};
   return tywrf::io::pack_boundary_x_side_raw_to_canonical(raw, shape);
+}
+
+std::vector<float> make_raw_boundary_values(
+    const std::size_t bdy_width,
+    const std::size_t nz,
+    const std::size_t horizontal_extent,
+    const float base) {
+  std::vector<float> raw(bdy_width * nz * horizontal_extent);
+  for (std::size_t bdy = 0; bdy < bdy_width; ++bdy) {
+    for (std::size_t k = 0; k < nz; ++k) {
+      for (std::size_t h = 0; h < horizontal_extent; ++h) {
+        raw[((bdy * nz) + k) * horizontal_extent + h] =
+            base + static_cast<float>(100 * bdy + 10 * k + h);
+      }
+    }
+  }
+  return raw;
+}
+
+int define_float_var(
+    const int file_id,
+    const char* name,
+    const std::array<int, 4> dimensions) {
+  int var_id = -1;
+  check_nc(
+      nc_def_var(file_id, name, NC_FLOAT, 4, dimensions.data(), &var_id),
+      std::string("define ") + name);
+  return var_id;
+}
+
+void create_synthetic_u_wrfbdy_for_apply(const std::filesystem::path& path) {
+  int file_id = -1;
+  check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id),
+           "create synthetic wrfbdy");
+
+  int time_dim = -1;
+  int date_dim = -1;
+  int bdy_width_dim = -1;
+  int bottom_top_dim = -1;
+  int south_north_dim = -1;
+  int west_east_stag_dim = -1;
+  check_nc(nc_def_dim(file_id, "Time", 1, &time_dim), "define Time");
+  check_nc(nc_def_dim(file_id, "DateStrLen", 19, &date_dim),
+           "define DateStrLen");
+  check_nc(nc_def_dim(file_id, "bdy_width", 1, &bdy_width_dim),
+           "define bdy_width");
+  check_nc(nc_def_dim(file_id, "bottom_top", 2, &bottom_top_dim),
+           "define bottom_top");
+  check_nc(nc_def_dim(file_id, "south_north", 3, &south_north_dim),
+           "define south_north");
+  check_nc(nc_def_dim(file_id, "west_east_stag", 5, &west_east_stag_dim),
+           "define west_east_stag");
+
+  const std::array<int, 2> time_dims{time_dim, date_dim};
+  int times_var = -1;
+  check_nc(nc_def_var(file_id, "Times", NC_CHAR, 2, time_dims.data(), &times_var),
+           "define Times");
+  const std::array<int, 4> x_dims{
+      time_dim,
+      bdy_width_dim,
+      bottom_top_dim,
+      south_north_dim,
+  };
+  const std::array<int, 4> y_dims{
+      time_dim,
+      bdy_width_dim,
+      bottom_top_dim,
+      west_east_stag_dim,
+  };
+  const int u_bxs = define_float_var(file_id, "U_BXS", x_dims);
+  const int u_bxe = define_float_var(file_id, "U_BXE", x_dims);
+  const int u_bys = define_float_var(file_id, "U_BYS", y_dims);
+  const int u_bye = define_float_var(file_id, "U_BYE", y_dims);
+  check_nc(nc_enddef(file_id), "end synthetic wrfbdy definitions");
+
+  const char timestamp[] = "2025-07-26_00:00:00";
+  const std::size_t time_start[2] = {0, 0};
+  const std::size_t time_count[2] = {1, 19};
+  check_nc(
+      nc_put_vara_text(file_id, times_var, time_start, time_count, timestamp),
+      "write Times");
+
+  const auto u_bxs_values = make_raw_boundary_values(1, 2, 3, 1000.0F);
+  const auto u_bxe_values = make_raw_boundary_values(1, 2, 3, 2000.0F);
+  const auto u_bys_values = make_raw_boundary_values(1, 2, 5, 3000.0F);
+  const auto u_bye_values = make_raw_boundary_values(1, 2, 5, 4000.0F);
+  check_nc(nc_put_var_float(file_id, u_bxs, u_bxs_values.data()), "write U_BXS");
+  check_nc(nc_put_var_float(file_id, u_bxe, u_bxe_values.data()), "write U_BXE");
+  check_nc(nc_put_var_float(file_id, u_bys, u_bys_values.data()), "write U_BYS");
+  check_nc(nc_put_var_float(file_id, u_bye, u_bye_values.data()), "write U_BYE");
+  check_nc(nc_close(file_id), "close synthetic wrfbdy");
+}
+
+std::size_t expected_active_boundary_point_count(
+    const std::size_t nx,
+    const std::size_t ny,
+    const std::size_t nz,
+    const std::size_t width) {
+  const auto interior_nx = nx > 2 * width ? nx - 2 * width : 0;
+  const auto interior_ny = ny > 2 * width ? ny - 2 * width : 0;
+  return nx * ny * nz - interior_nx * interior_ny * nz;
+}
+
+template <typename Predicate>
+std::size_t count_active_boundary_points_matching(
+    const tywrf::FieldView3D<const float> view,
+    const std::size_t width,
+    Predicate predicate) {
+  const auto active_nx =
+      static_cast<std::size_t>(view.nx - view.halo.i_lower - view.halo.i_upper);
+  const auto active_ny =
+      static_cast<std::size_t>(view.ny - view.halo.j_lower - view.halo.j_upper);
+  const auto active_nz =
+      static_cast<std::size_t>(view.nz - view.halo.k_lower - view.halo.k_upper);
+  const auto upper_i_begin = active_nx > width ? active_nx - width : 0;
+  const auto upper_j_begin = active_ny > width ? active_ny - width : 0;
+
+  std::size_t count = 0;
+  for (std::size_t j = 0; j < active_ny; ++j) {
+    const auto storage_j = view.halo.j_lower + static_cast<std::int32_t>(j);
+    for (std::size_t k = 0; k < active_nz; ++k) {
+      const auto storage_k = view.halo.k_lower + static_cast<std::int32_t>(k);
+      for (std::size_t i = 0; i < active_nx; ++i) {
+        const auto on_boundary =
+            i < width || i >= upper_i_begin || j < width || j >= upper_j_begin;
+        if (!on_boundary) {
+          continue;
+        }
+        const auto storage_i = view.halo.i_lower + static_cast<std::int32_t>(i);
+        if (predicate(view(storage_i, storage_j, storage_k))) {
+          ++count;
+        }
+      }
+    }
+  }
+  return count;
 }
 
 void test_boundary_validation_reports_shape_and_does_not_write_state() {
@@ -295,6 +450,66 @@ void test_direct_boundary_copy_skeleton_writes_j_lower_2d_edge() {
   expect_close(view(1, 0), 0.0F, "j_lower copy leaves j_lower halo unchanged");
 }
 
+void test_krosa_boundary_copy_skeleton_applies_all_u_edges() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "tywrf_forcing_apply_u_wrfbdy.nc";
+  std::filesystem::remove(path);
+  create_synthetic_u_wrfbdy_for_apply(path);
+
+  const tywrf::io::KrosaForcingReader boundary(
+      path,
+      tywrf::io::KrosaForcingKind::boundary);
+  tywrf::State<float> state(make_grid());
+  zero_state(state);
+
+  const auto report = tywrf::io::apply_krosa_boundary_copy_skeleton_to_state(
+      state,
+      boundary,
+      "U",
+      0);
+
+  expect(report.status == tywrf::io::ForcingApplyStatus::ok,
+         "KROSA U batch boundary copy status ok");
+  expect(report.field_count == 1, "KROSA U batch reports one field");
+  expect(report.side_count == 4, "KROSA U batch reports four sides");
+  expect(report.point_count == 32,
+         "KROSA U batch accumulates all side point counts");
+  expect(report.operation ==
+             tywrf::io::ForcingApplyOperation::direct_boundary_copy_skeleton,
+         "KROSA U batch operation is direct boundary copy skeleton");
+  expect(report.would_modify_state, "KROSA U batch reports state write");
+  expect(!report.synthetic, "KROSA U batch is not synthetic nudging");
+  expect(report.detail.find("direct_boundary_copy_skeleton") != std::string::npos,
+         "KROSA U batch detail names direct copy skeleton operation");
+  expect(report.detail.find("not WRF lateral relaxation") != std::string::npos,
+         "KROSA U batch detail rejects WRF relaxation semantics");
+
+  const auto view = state.view().u;
+  expect_close(view(1, 2, 0), 1001.0F, "KROSA U_BXS copied lower i edge");
+  expect_close(view(5, 2, 1), 2011.0F, "KROSA U_BXE copied upper i edge");
+  expect_close(view(3, 1, 0), 3002.0F, "KROSA U_BYS copied lower j edge");
+  expect_close(view(4, 3, 1), 4013.0F, "KROSA U_BYE copied upper j edge");
+  expect_close(view(3, 2, 0), 0.0F, "KROSA U batch leaves interior U point");
+  expect_close(view(0, 2, 0), 0.0F, "KROSA U batch leaves i halo point");
+
+  const auto changed = count_active_boundary_points_matching(
+      tywrf::FieldView3D<const float>{
+          view.data,
+          view.nx,
+          view.ny,
+          view.nz,
+          view.stride_i,
+          view.stride_k,
+          view.stride_j,
+          view.halo},
+      1,
+      [](const float value) { return value != 0.0F; });
+  expect(changed == expected_active_boundary_point_count(5, 3, 2, 1),
+         "KROSA U batch changes the expected active edge point count");
+
+  std::filesystem::remove(path);
+}
+
 int run_krosa_reference_boundary_pack_smoke() {
   const auto root = reference_dir();
   const auto wrfbdy = root / "wrfbdy_d01";
@@ -312,6 +527,10 @@ int run_krosa_reference_boundary_pack_smoke() {
   const tywrf::io::KrosaForcingReader boundary(
       wrfbdy,
       tywrf::io::KrosaForcingKind::boundary);
+  const auto u_bxs_metadata = boundary.variable_metadata("U_BXS");
+  const auto u_bxe_metadata = boundary.variable_metadata("U_BXE");
+  const auto u_bys_metadata = boundary.variable_metadata("U_BYS");
+  const auto u_bye_metadata = boundary.variable_metadata("U_BYE");
   const auto u_bxs_slice = boundary.read_float_time_slice("U_BXS", 0);
   const auto packed =
       tywrf::io::pack_boundary_x_side_raw_to_canonical(
@@ -321,6 +540,7 @@ int run_krosa_reference_boundary_pack_smoke() {
   const auto grid_source =
       std::filesystem::exists(wrfinput_d01) ? wrfinput_d01 : wrfout_d01;
   tywrf::State<float> state(tywrf::io::derive_grid_from_wrf_file(grid_source));
+  fill_storage(state.u, std::numeric_limits<float>::quiet_NaN());
   const auto report = tywrf::io::validate_boundary_pack_for_state(
       state,
       "U",
@@ -335,27 +555,35 @@ int run_krosa_reference_boundary_pack_smoke() {
   expect(!report.would_modify_state, "KROSA U_BXS validation is read-only");
   expect(!report.synthetic, "KROSA U_BXS validation is real forcing, not synthetic");
 
-  const auto copy_report = tywrf::io::apply_boundary_copy_skeleton_to_state(
+  const auto copy_report = tywrf::io::apply_krosa_boundary_copy_skeleton_to_state(
       state,
+      boundary,
       "U",
-      tywrf::io::BoundarySide::i_lower,
-      packed);
+      0);
   expect(copy_report.status == tywrf::io::ForcingApplyStatus::ok,
-         "KROSA U_BXS direct copy skeleton status ok");
+         "KROSA U four-side direct copy skeleton status ok");
+  expect(copy_report.field_count == 1,
+         "KROSA U four-side direct copy reports one field");
+  expect(copy_report.side_count == 4,
+         "KROSA U four-side direct copy reports four sides");
   expect(copy_report.operation ==
              tywrf::io::ForcingApplyOperation::direct_boundary_copy_skeleton,
-         "KROSA U_BXS direct copy skeleton operation");
-  expect(copy_report.point_count == u_bxs_slice.values.size(),
-         "KROSA U_BXS direct copy preserves point count");
+         "KROSA U four-side direct copy skeleton operation");
+  expect(copy_report.point_count ==
+             u_bxs_metadata.values_per_time_slice +
+                 u_bxe_metadata.values_per_time_slice +
+                 u_bys_metadata.values_per_time_slice +
+                 u_bye_metadata.values_per_time_slice,
+         "KROSA U four-side direct copy accumulates point count");
   expect(copy_report.would_modify_state,
-         "KROSA U_BXS direct copy reports state write");
+         "KROSA U four-side direct copy reports state write");
   expect(!copy_report.synthetic,
-         "KROSA U_BXS direct copy is not synthetic nudging");
+         "KROSA U four-side direct copy is not synthetic nudging");
   const auto u_view = state.view().u;
   expect_close(
       u_view(u_view.halo.i_lower, u_view.halo.j_lower, u_view.halo.k_lower),
       packed.at(0, 0, 0),
-      "KROSA U_BXS direct copy writes first active U boundary value");
+      "KROSA U four-side direct copy writes first active U boundary value");
 
   const auto config = state.grid.config();
   expect(config.mass_nx == 265, "KROSA d01 grid mass_nx");
@@ -366,6 +594,30 @@ int run_krosa_reference_boundary_pack_smoke() {
          "KROSA U_BXS y extent matches d01 U state");
   expect(packed.layout.nz == static_cast<std::size_t>(config.mass_nz),
          "KROSA U_BXS z extent matches d01 U state");
+  const auto active_u_nx =
+      static_cast<std::size_t>(u_view.nx - u_view.halo.i_lower - u_view.halo.i_upper);
+  const auto active_u_ny =
+      static_cast<std::size_t>(u_view.ny - u_view.halo.j_lower - u_view.halo.j_upper);
+  const auto active_u_nz =
+      static_cast<std::size_t>(u_view.nz - u_view.halo.k_lower - u_view.halo.k_upper);
+  const auto changed = count_active_boundary_points_matching(
+      tywrf::FieldView3D<const float>{
+          u_view.data,
+          u_view.nx,
+          u_view.ny,
+          u_view.nz,
+          u_view.stride_i,
+          u_view.stride_k,
+          u_view.stride_j,
+          u_view.halo},
+      packed.layout.nx,
+      [](const float value) { return !std::isnan(value); });
+  expect(changed == expected_active_boundary_point_count(
+                        active_u_nx,
+                        active_u_ny,
+                        active_u_nz,
+                        packed.layout.nx),
+         "KROSA U four-side direct copy changes expected active edge points");
   return 0;
 }
 
@@ -378,6 +630,7 @@ int main() {
   test_synthetic_nudging_delta_rejects_out_of_range_window();
   test_direct_boundary_copy_skeleton_writes_i_upper_active_edge();
   test_direct_boundary_copy_skeleton_writes_j_lower_2d_edge();
+  test_krosa_boundary_copy_skeleton_applies_all_u_edges();
   if (const int status = run_krosa_reference_boundary_pack_smoke(); status != 0) {
     return status;
   }

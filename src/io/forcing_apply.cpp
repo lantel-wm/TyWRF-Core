@@ -1,16 +1,37 @@
 #include "tywrf/io/forcing_apply.hpp"
 
+#include <array>
 #include <limits>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace tywrf::io {
 namespace {
+
+struct KrosaBoundarySideMapping {
+  BoundarySide side = BoundarySide::i_lower;
+  std::string_view suffix;
+};
 
 struct ActiveTargetShape {
   std::size_t nx = 0;
   std::size_t ny = 0;
   std::size_t nz = 0;
 };
+
+struct KrosaPackedBoundarySide {
+  BoundarySide side = BoundarySide::i_lower;
+  std::string variable_name;
+  PackedForcingField packed;
+};
+
+constexpr std::array<KrosaBoundarySideMapping, 4> kKrosaBoundarySideMappings{{
+    {BoundarySide::i_lower, "_BXS"},
+    {BoundarySide::i_upper, "_BXE"},
+    {BoundarySide::j_lower, "_BYS"},
+    {BoundarySide::j_upper, "_BYE"},
+}};
 
 [[noreturn]] void fail(
     const ForcingApplyStatus status,
@@ -74,9 +95,11 @@ void validate_packed_field(const PackedForcingField& packed) {
     const ForcingApplyOperation operation,
     const bool would_modify_state,
     const bool synthetic,
-    std::string detail) {
+    std::string detail,
+    const std::size_t side_count = 1) {
   return {
       .field_count = 1,
+      .side_count = side_count,
       .point_count = point_count,
       .status = ForcingApplyStatus::ok,
       .operation = operation,
@@ -338,6 +361,32 @@ ForcingApplyReport copy_boundary_to_view(
   return lhs == rhs;
 }
 
+[[nodiscard]] bool is_x_boundary_side(const BoundarySide side) noexcept {
+  return side == BoundarySide::i_lower || side == BoundarySide::i_upper;
+}
+
+[[nodiscard]] std::string krosa_boundary_variable_name(
+    const std::string_view field_name,
+    const std::string_view suffix) {
+  std::string name(field_name);
+  name += suffix;
+  return name;
+}
+
+[[nodiscard]] PackedForcingField pack_krosa_boundary_slice(
+    const ForcingTimeSlice& slice,
+    const BoundarySide side) {
+  if (is_x_boundary_side(side)) {
+    return pack_boundary_x_side_raw_to_canonical(
+        slice.values,
+        slice.metadata.slice_shape);
+  }
+
+  return pack_boundary_y_side_raw_to_canonical(
+      slice.values,
+      slice.metadata.slice_shape);
+}
+
 }  // namespace
 
 std::string_view forcing_apply_status_name(const ForcingApplyStatus status) noexcept {
@@ -577,6 +626,74 @@ ForcingApplyReport apply_boundary_copy_skeleton_to_state(
 
   fail(ForcingApplyStatus::unsupported_field,
        "forcing apply does not know the requested state field");
+}
+
+ForcingApplyReport apply_krosa_boundary_copy_skeleton_to_state(
+    State<float>& state,
+    const KrosaForcingReader& reader,
+    const std::string_view field_name,
+    const std::size_t record_index) {
+  if (reader.kind() != KrosaForcingKind::boundary) {
+    fail(ForcingApplyStatus::unsupported_field,
+         "KROSA boundary copy skeleton requires a wrfbdy boundary reader");
+  }
+  if (!same_field(field_name, "U")) {
+    fail(ForcingApplyStatus::unsupported_field,
+         "KROSA boundary copy skeleton currently maps U_BXS/U_BXE/U_BYS/U_BYE only");
+  }
+
+  std::array<KrosaPackedBoundarySide, kKrosaBoundarySideMappings.size()> sides{};
+  for (std::size_t index = 0; index < kKrosaBoundarySideMappings.size(); ++index) {
+    const auto mapping = kKrosaBoundarySideMappings.at(index);
+    auto variable_name = krosa_boundary_variable_name(field_name, mapping.suffix);
+    auto slice = reader.read_float_time_slice(variable_name, record_index);
+    sides.at(index) = {
+        .side = mapping.side,
+        .variable_name = std::move(variable_name),
+        .packed = pack_krosa_boundary_slice(slice, mapping.side),
+    };
+  }
+
+  for (const auto& side : sides) {
+    (void)validate_boundary_pack_for_state(
+        state,
+        field_name,
+        side.side,
+        side.packed);
+  }
+
+  std::size_t point_count = 0;
+  for (const auto& side : sides) {
+    const auto report = apply_boundary_copy_skeleton_to_state(
+        state,
+        field_name,
+        side.side,
+        side.packed);
+    point_count += report.point_count;
+  }
+
+  std::string detail = "applied KROSA ";
+  detail += field_name;
+  detail += " wrfbdy sides as direct_boundary_copy_skeleton: ";
+  for (std::size_t index = 0; index < sides.size(); ++index) {
+    if (index != 0) {
+      detail += ", ";
+    }
+    detail += sides.at(index).variable_name;
+  }
+  detail +=
+      "; skeleton direct copy only, not synthetic nudging and not WRF lateral relaxation";
+
+  return {
+      .field_count = 1,
+      .side_count = sides.size(),
+      .point_count = point_count,
+      .status = ForcingApplyStatus::ok,
+      .operation = ForcingApplyOperation::direct_boundary_copy_skeleton,
+      .would_modify_state = true,
+      .synthetic = false,
+      .detail = std::move(detail),
+  };
 }
 
 ForcingApplyReport apply_synthetic_nudging_delta(
