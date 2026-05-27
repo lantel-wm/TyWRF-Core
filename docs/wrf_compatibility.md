@@ -290,6 +290,25 @@ non-gate artifacts even after direct parent-fill and time-level sync, and they
 must not be used as validation passes without a real pressure-refresh compute
 path validated against WRF.
 
+Round D28 narrows the real-file base-state provider probe and I/O reader
+boundary. The probe exists to verify and provide the KROSA start-domain
+base-state pipeline:
+
+```text
+HGT/P_TOP/C3F/C4F/C3H/C4H -> PB/T_INIT/MUB/ALB/PHB
+```
+
+Its report, probe files, and staging metadata must continue to identify the
+artifact as diagnostic, not a gate candidate, and not integrator output. A
+successful provider probe confirms that the required real-file constants and
+derived base-state fields are readable and internally consistent; it does not
+mean the pressure-refresh compute path has been invoked from skeleton/remap,
+and it does not count as a 10 min validation-gate pass.
+
+Later restart-file `ALB` or `PHB` remains limited to smoke/range/probe checks.
+Those fields must not be used as d02 start-time truth, even when they agree
+with the provider within expected ranges.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

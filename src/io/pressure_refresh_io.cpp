@@ -130,6 +130,14 @@ struct NetcdfVariable {
   return joined.str();
 }
 
+void append_missing_unique(
+    std::vector<std::string>& names,
+    const std::string_view name) {
+  if (std::find(names.begin(), names.end(), name) == names.end()) {
+    names.emplace_back(name);
+  }
+}
+
 [[nodiscard]] std::size_t checked_point_count(
     const std::int32_t nx,
     const std::int32_t ny,
@@ -139,6 +147,15 @@ struct NetcdfVariable {
   }
   return static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny) *
          static_cast<std::size_t>(nz);
+}
+
+[[nodiscard]] std::size_t checked_point_count(
+    const std::int32_t nx,
+    const std::int32_t ny) {
+  if (nx <= 0 || ny <= 0) {
+    throw PressureRefreshIoError("pressure-refresh grid dimensions must be positive");
+  }
+  return static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny);
 }
 
 void require_grid(const Grid& grid) {
@@ -441,6 +458,37 @@ void require_alb_shape(
   throw PressureRefreshIoError(message.str());
 }
 
+void require_terrain_shape(
+    const NetcdfReadHandle& file,
+    const std::string_view name,
+    const NetcdfVariable& variable,
+    const Grid& grid,
+    const std::size_t time_index) {
+  require_float_variable(file, name, variable);
+  const auto& config = grid.config();
+  const auto nx = static_cast<std::size_t>(config.mass_nx);
+  const auto ny = static_cast<std::size_t>(config.mass_ny);
+  const bool surface_shape =
+      variable.dimensions == std::vector<std::string>{"south_north", "west_east"} &&
+      variable.shape == std::vector<std::size_t>{ny, nx};
+  const bool time_surface_shape =
+      variable.dimensions ==
+          std::vector<std::string>{"Time", "south_north", "west_east"} &&
+      variable.shape.size() == 3 && variable.shape[0] > time_index &&
+      variable.shape[1] == ny && variable.shape[2] == nx;
+  if (surface_shape || time_surface_shape) {
+    return;
+  }
+
+  std::ostringstream message;
+  message << "pressure-refresh terrain variable " << name << " in " << file.path()
+          << " has dimensions " << join_strings(variable.dimensions) << " shape"
+          << join_shape(variable.shape) << ", expected south_north=" << ny
+          << ",west_east=" << nx << " or Time>=" << (time_index + 1)
+          << ",south_north=" << ny << ",west_east=" << nx;
+  throw PressureRefreshIoError(message.str());
+}
+
 template <typename Real>
 [[nodiscard]] constexpr std::int32_t active_nx(const FieldView3D<Real> field) noexcept {
   return field.nx - field.halo.i_lower - field.halo.i_upper;
@@ -502,6 +550,28 @@ void require_alb_target_view(const FieldView3D<float> alb, const Grid& grid) {
   return true;
 }
 
+[[nodiscard]] bool inspect_terrain(
+    const NetcdfReadHandle& file,
+    const Grid& grid,
+    const std::size_t time_index,
+    KrosaPressureRefreshInputReport& report) {
+  for (const std::string_view name : {"HGT", "HT"}) {
+    NetcdfVariable variable;
+    if (!inquire_variable_if_present(file, name, variable)) {
+      continue;
+    }
+    require_terrain_shape(file, name, variable, grid, time_index);
+    report.terrain_source_name = std::string(name);
+    report.terrain_nx = grid.config().mass_nx;
+    report.terrain_ny = grid.config().mass_ny;
+    report.terrain_point_count = report.expected_terrain_point_count;
+    return true;
+  }
+
+  append_missing_unique(report.missing_base_state_reconstruction_names, "HGT/HT");
+  return false;
+}
+
 void read_alb(
     const NetcdfReadHandle& file,
     const Grid& grid,
@@ -541,6 +611,31 @@ void read_alb(
   }
 }
 
+[[nodiscard]] std::vector<float> read_terrain(
+    const NetcdfReadHandle& file,
+    const std::string_view name,
+    const Grid& grid,
+    const std::size_t time_index) {
+  const auto variable = require_variable(file, name);
+  require_terrain_shape(file, name, variable, grid, time_index);
+
+  const auto& config = grid.config();
+  const auto point_count = checked_point_count(config.mass_nx, config.mass_ny);
+
+  std::vector<std::size_t> start(variable.shape.size(), 0);
+  std::vector<std::size_t> count = variable.shape;
+  if (has_leading_time_dimension(variable)) {
+    start.front() = time_index;
+    count.front() = 1;
+  }
+
+  std::vector<float> buffer(point_count, 0.0F);
+  file.check(
+      nc_get_vara_float(file.id(), variable.id, start.data(), count.data(), buffer.data()),
+      "read terrain");
+  return buffer;
+}
+
 void fill_report_shape(KrosaPressureRefreshInputReport& report, const Grid& grid) {
   const auto& config = grid.config();
   report.expected_mass_level_count = static_cast<std::size_t>(config.mass_nz);
@@ -550,6 +645,28 @@ void fill_report_shape(KrosaPressureRefreshInputReport& report, const Grid& grid
   report.expected_alb_nz = config.mass_nz;
   report.expected_alb_point_count =
       checked_point_count(config.mass_nx, config.mass_ny, config.mass_nz);
+  report.expected_terrain_nx = config.mass_nx;
+  report.expected_terrain_ny = config.mass_ny;
+  report.expected_terrain_point_count =
+      checked_point_count(config.mass_nx, config.mass_ny);
+}
+
+void fill_base_state_missing_from_counts(KrosaPressureRefreshInputReport& report) {
+  if (!report.p_top_present()) {
+    append_missing_unique(report.missing_base_state_reconstruction_names, "P_TOP");
+  }
+  if (report.c3f_count != report.expected_full_level_count) {
+    append_missing_unique(report.missing_base_state_reconstruction_names, "C3F");
+  }
+  if (report.c4f_count != report.expected_full_level_count) {
+    append_missing_unique(report.missing_base_state_reconstruction_names, "C4F");
+  }
+  if (report.c3h_count != report.expected_mass_level_count) {
+    append_missing_unique(report.missing_base_state_reconstruction_names, "C3H");
+  }
+  if (report.c4h_count != report.expected_mass_level_count) {
+    append_missing_unique(report.missing_base_state_reconstruction_names, "C4H");
+  }
 }
 
 }  // namespace
@@ -599,6 +716,8 @@ KrosaPressureRefreshInputReport inspect_krosa_pressure_refresh_inputs(
       report.expected_mass_level_count,
       options.time_index,
       report.missing_names);
+  (void)inspect_terrain(file, grid, options.time_index, report);
+  fill_base_state_missing_from_counts(report);
   (void)inspect_alb(file, grid, options.time_index, report);
   return report;
 }
@@ -616,6 +735,9 @@ KrosaPressureRefreshReadResult read_krosa_pressure_refresh_inputs(
   result.metadata.source_path = path;
   result.metadata.time_index = options.time_index;
   result.metadata.p_top_source = result.report.p_top_source;
+  result.metadata.terrain_source_name = result.report.terrain_source_name;
+  result.metadata.terrain_nx = result.report.terrain_nx;
+  result.metadata.terrain_ny = result.report.terrain_ny;
 
   const NetcdfReadHandle file(path);
   if (result.report.p_top_present()) {
@@ -649,6 +771,12 @@ KrosaPressureRefreshReadResult read_krosa_pressure_refresh_inputs(
       result.report.expected_mass_level_count,
       options.time_index,
       result.report.missing_names);
+
+  if (!result.report.terrain_source_name.empty()) {
+    result.metadata.terrain_height_m =
+        read_terrain(file, result.report.terrain_source_name, grid, options.time_index);
+    result.report.terrain_loaded = true;
+  }
 
   if (std::find(result.report.missing_names.begin(), result.report.missing_names.end(), "ALB") ==
       result.report.missing_names.end()) {

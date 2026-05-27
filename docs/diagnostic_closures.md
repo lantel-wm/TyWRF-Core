@@ -73,6 +73,25 @@ pressure-refresh compute path remains unwired from skeleton/remap, so
 parent-fill, staging, provider-probe, and closure outputs are still
 non-physical and not gate-eligible.
 
+The round D28 real-file provider probe and I/O reader are diagnostic boundary
+checks for the base-state pipeline:
+
+```text
+HGT/P_TOP/C3F/C4F/C3H/C4H -> PB/T_INIT/MUB/ALB/PHB
+```
+
+Their purpose is to verify that KROSA real-file constants can feed the
+provider and that the reconstructed `PB`, `T_INIT`, `MUB`, `ALB`, and `PHB`
+are staged for later pressure-refresh consumers. Probe outputs, JSON reports,
+and staging metadata must stay marked as diagnostic, not gate candidates, and
+not integrator output. Provider success is not a pressure-refresh application,
+because the compute path is still not wired into skeleton/remap, and it is not
+a 10 min validation pass.
+
+Later restart-file `ALB` or `PHB` remains acceptable only for smoke/range probe
+comparisons. It must not be treated as d02 start-time truth or used to bypass
+the provider/recompute path.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

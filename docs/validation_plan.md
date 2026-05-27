@@ -162,6 +162,28 @@ diagnostic parent-fill, provider-probe, and oracle/reference-copy outputs must
 not be counted as gate passes until pressure-refresh compute is truly wired and
 the 10 min gate passes.
 
+Round D28 adds a real-file provider probe and I/O reader boundary for the same
+base-state pipeline:
+
+```text
+HGT/P_TOP/C3F/C4F/C3H/C4H -> PB/T_INIT/MUB/ALB/PHB
+```
+
+The probe/report/staging metadata must remain explicit:
+
+```text
+diagnostic = true
+gate_candidate = false
+integrator_output = false
+```
+
+The provider may prove that KROSA real-file constants can drive the base-state
+reader and reconstruction, but it is still outside the progressive 10 min gate.
+Because pressure-refresh compute is not connected to skeleton/remap yet,
+provider success must not relax strict d02 gate criteria or be reported as a
+10 min pass. Later restart-file `ALB` or `PHB` may be sampled only for
+smoke/range probes and must not become d02 start-time truth.
+
 Example:
 
 ```bash

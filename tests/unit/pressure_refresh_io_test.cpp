@@ -25,6 +25,9 @@ struct SyntheticOptions {
   bool include_coefficients = true;
   bool include_alb = true;
   bool bad_alb_shape = false;
+  bool include_terrain = true;
+  std::string terrain_name = "HGT";
+  bool bad_coefficient_shape = false;
 };
 
 void check_nc(const int status, const std::string_view operation) {
@@ -83,6 +86,29 @@ void write_alb(
   check_nc(nc_put_vara_float(file_id, variable_id, start, counts, values.data()), "write ALB");
 }
 
+void write_terrain(
+    const int file_id,
+    const int variable_id,
+    const int ny,
+    const int nx) {
+  std::vector<float> values(static_cast<std::size_t>(ny * nx), 0.0F);
+  for (int j = 0; j < ny; ++j) {
+    for (int i = 0; i < nx; ++i) {
+      values[static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
+             static_cast<std::size_t>(i)] =
+          1'000.0F + 10.0F * static_cast<float>(j) + static_cast<float>(i);
+    }
+  }
+  const std::size_t start[3] = {0, 0, 0};
+  const std::size_t counts[3] = {
+      1,
+      static_cast<std::size_t>(ny),
+      static_cast<std::size_t>(nx)};
+  check_nc(
+      nc_put_vara_float(file_id, variable_id, start, counts, values.data()),
+      "write terrain");
+}
+
 void create_synthetic_file(const std::filesystem::path& path, const SyntheticOptions& options) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create synthetic file");
@@ -121,11 +147,28 @@ void create_synthetic_file(const std::filesystem::path& path, const SyntheticOpt
   int c4h_var = -1;
   if (options.include_coefficients) {
     const int full_dims[2] = {time_dim, bottom_top_stag_dim};
+    const int bad_full_dims[2] = {time_dim, bottom_top_dim};
     const int mass_dims[2] = {time_dim, bottom_top_dim};
-    check_nc(nc_def_var(file_id, "C3F", NC_FLOAT, 2, full_dims, &c3f_var), "define C3F");
+    check_nc(
+        nc_def_var(
+            file_id,
+            "C3F",
+            NC_FLOAT,
+            2,
+            options.bad_coefficient_shape ? bad_full_dims : full_dims,
+            &c3f_var),
+        "define C3F");
     check_nc(nc_def_var(file_id, "C4F", NC_FLOAT, 2, full_dims, &c4f_var), "define C4F");
     check_nc(nc_def_var(file_id, "C3H", NC_FLOAT, 2, mass_dims, &c3h_var), "define C3H");
     check_nc(nc_def_var(file_id, "C4H", NC_FLOAT, 2, mass_dims, &c4h_var), "define C4H");
+  }
+
+  int terrain_var = -1;
+  if (options.include_terrain) {
+    const int terrain_dims[3] = {time_dim, south_north_dim, west_east_dim};
+    check_nc(
+        nc_def_var(file_id, options.terrain_name.c_str(), NC_FLOAT, 3, terrain_dims, &terrain_var),
+        "define terrain");
   }
 
   int alb_var = -1;
@@ -151,10 +194,13 @@ void create_synthetic_file(const std::filesystem::path& path, const SyntheticOpt
   }
 
   if (options.include_coefficients) {
-    write_vector(file_id, c3f_var, 3, 10.0F);
+    write_vector(file_id, c3f_var, options.bad_coefficient_shape ? 2 : 3, 10.0F);
     write_vector(file_id, c4f_var, 3, 20.0F);
     write_vector(file_id, c3h_var, 2, 30.0F);
     write_vector(file_id, c4h_var, 2, 40.0F);
+  }
+  if (options.include_terrain) {
+    write_terrain(file_id, terrain_var, 3, 4);
   }
   if (options.include_alb) {
     write_alb(file_id, alb_var, 2, 3, options.bad_alb_shape ? 5 : 4);
@@ -192,8 +238,13 @@ int run_success_test() {
   assert(result.metadata.c3f[2] == 12.0F);
   assert(result.metadata.c4h[1] == 41.0F);
   assert(result.report.alb_loaded);
+  assert(result.report.terrain_loaded);
   assert(result.report.source_path == path);
   assert(result.report.alb_point_count == 24);
+  assert(result.report.base_state_reconstruction_inputs_ready());
+  assert(result.metadata.terrain_source_name == "HGT");
+  assert(result.metadata.terrain_height_m.size() == 12);
+  assert(result.metadata.terrain_height_m[11] == 1023.0F);
 
   const auto view = alb.view();
   const auto layout = alb.layout();
@@ -223,15 +274,25 @@ int run_missing_metadata_test() {
   assert(contains_name(report.missing_names, "ALB"));
   assert(report.expected_alb_point_count == 24);
   assert(report.alb_point_count == 0);
+  assert(!report.base_state_reconstruction_inputs_ready());
+  assert(contains_name(report.missing_base_state_reconstruction_names, "P_TOP"));
+  assert(contains_name(report.missing_base_state_reconstruction_names, "C3F"));
 
   std::filesystem::remove(path);
   return 0;
 }
 
-int run_history_without_alb_test() {
+int run_d02_style_reconstruction_inputs_without_alb_test() {
   const auto path = std::filesystem::temp_directory_path() / "tywrf_pressure_refresh_io_no_alb.nc";
   std::filesystem::remove(path);
-  create_synthetic_file(path, {.p_top_mode = PTopMode::time_variable, .include_alb = false});
+  create_synthetic_file(
+      path,
+      {.p_top_mode = PTopMode::time_variable,
+       .include_coefficients = true,
+       .include_alb = false,
+       .bad_alb_shape = false,
+       .include_terrain = true,
+       .terrain_name = "HT"});
 
   tywrf::FieldStorage3D<float> alb(make_grid().mass_layout());
   const auto result = tywrf::io::read_krosa_pressure_refresh_inputs(path, make_grid(), alb);
@@ -239,7 +300,37 @@ int run_history_without_alb_test() {
   assert(contains_name(result.report.missing_names, "ALB"));
   assert(result.metadata.p_top_pa == 5200.0F);
   assert(result.metadata.c3f.size() == 3);
+  assert(result.base_state_reconstruction_inputs_ready());
+  assert(result.report.terrain_loaded);
+  assert(result.report.terrain_source_name == "HT");
+  assert(result.metadata.terrain_source_name == "HT");
+  assert(result.metadata.terrain_nx == 4);
+  assert(result.metadata.terrain_ny == 3);
+  assert(result.metadata.terrain_height_m.size() == 12);
   assert(!result.report.alb_loaded);
+
+  std::filesystem::remove(path);
+  return 0;
+}
+
+int run_missing_terrain_test() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "tywrf_pressure_refresh_io_missing_terrain.nc";
+  std::filesystem::remove(path);
+  create_synthetic_file(
+      path,
+      {.p_top_mode = PTopMode::time_variable,
+       .include_coefficients = true,
+       .include_alb = false,
+       .bad_alb_shape = false,
+       .include_terrain = false});
+
+  tywrf::FieldStorage3D<float> alb(make_grid().mass_layout());
+  const auto result = tywrf::io::read_krosa_pressure_refresh_inputs(path, make_grid(), alb);
+  assert(!result.base_state_reconstruction_inputs_ready());
+  assert(contains_name(result.report.missing_base_state_reconstruction_names, "HGT/HT"));
+  assert(result.report.terrain_source_name.empty());
+  assert(result.metadata.terrain_height_m.empty());
 
   std::filesystem::remove(path);
   return 0;
@@ -258,6 +349,29 @@ int run_bad_alb_shape_test() {
   } catch (const tywrf::io::PressureRefreshIoError& error) {
     if (!message_contains(error, "ALB") || !message_contains(error, "west_east=4")) {
       std::cerr << "bad ALB shape error was not explicit: " << error.what() << '\n';
+      return 1;
+    }
+  }
+
+  std::filesystem::remove(path);
+  return 0;
+}
+
+int run_bad_coefficient_shape_test() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "tywrf_pressure_refresh_io_bad_coeff.nc";
+  std::filesystem::remove(path);
+  create_synthetic_file(path, {.bad_coefficient_shape = true});
+
+  tywrf::FieldStorage3D<float> alb(make_grid().mass_layout());
+  try {
+    (void)tywrf::io::read_krosa_pressure_refresh_inputs(path, make_grid(), alb);
+    std::cerr << "bad coefficient shape did not throw\n";
+    return 1;
+  } catch (const tywrf::io::PressureRefreshIoError& error) {
+    if (!message_contains(error, "C3F") ||
+        !message_contains(error, "bottom_top_stag=3")) {
+      std::cerr << "bad coefficient shape error was not explicit: " << error.what() << '\n';
       return 1;
     }
   }
@@ -304,7 +418,9 @@ int run_p_top_attr_and_scalar_variable_test() {
 int main() {
   try {
     if (run_success_test() != 0 || run_missing_metadata_test() != 0 ||
-        run_history_without_alb_test() != 0 || run_bad_alb_shape_test() != 0 ||
+        run_d02_style_reconstruction_inputs_without_alb_test() != 0 ||
+        run_missing_terrain_test() != 0 || run_bad_alb_shape_test() != 0 ||
+        run_bad_coefficient_shape_test() != 0 ||
         run_p_top_attr_and_scalar_variable_test() != 0) {
       return 1;
     }
