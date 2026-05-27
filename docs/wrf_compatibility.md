@@ -258,6 +258,33 @@ HGT/P_TOP/C3F/C4F/C3H/C4H/WRF base-atmosphere constants
   -> PB/T_INIT/MUB/ALB/PHB
 ```
 
+Round D30 defines the skeleton hook helper boundary as:
+
+```text
+parent-fill/remap -> provider -> base-state sync -> staging -> pressure refresh compute -> report
+```
+
+This hook may synchronize provider-derived `PB`, `MUB`, and `PHB` only into
+newly exposed child cells. Existing overlap cells and all halo cells remain
+owned by the prior remap/halo-update contracts and must not be overwritten by
+the provider sync.
+
+Provider `ALB` is an external pressure-refresh staging input only. It is not a
+`State` field and must not be written back into `State`. Provider `T_INIT` is
+the WRF base-state initial temperature used by the provider path; it is not the
+WRF perturbation potential temperature variable `T` and must never be copied
+into `State::t`.
+
+Calling pressure-refresh compute from the helper only means the skeleton has a
+producer for exposed-cell pressure inputs. It is not by itself validated
+integrator output. Until a real 10 min d02 validation gate passes, hook
+metadata and reports must keep `gate_candidate=false` and
+`integrator_output=false`.
+
+Later restart `ALB` or `PHB` remains limited to probe/smoke comparisons for
+shape, range, and formula checks. It must not be promoted to start-time truth
+or used to bypass the provider and recompute path.
+
 The provider reconstructs `PB`, `T_INIT`, and `MUB` from terrain, hybrid
 coordinate coefficients, model top, and the WRF base-atmosphere constants, then
 derives `ALB` from that reconstructed same-domain base state. For KROSA
@@ -317,17 +344,16 @@ bridge execution does not mean perturbation-pressure refresh was computed.
 Any report or output with `pressure_refresh_applied = false` remains ineligible
 for a validation-gate pass.
 
-Round D30 should only consider the skeleton/remap hook after preserving this
-ordering:
+Round D30 keeps the same skeleton/remap hook helper ordering:
 
 ```text
-parent-fill/remap -> provider -> staging -> pressure refresh compute -> report/write
+parent-fill/remap -> provider -> base-state sync -> staging -> pressure refresh compute -> report
 ```
 
-The hook must keep provider and staging status separate from pressure-refresh
-compute status. Later restart-file `ALB` or `PHB` remains restricted to
-probe/smoke use and must not become start-time truth for the pressure-refresh
-chain.
+The hook must keep provider, exposed-cell base-state sync, staging, and
+pressure-refresh compute status separate in reports. Later restart-file `ALB`
+or `PHB` remains restricted to probe/smoke use and must not become start-time
+truth for the pressure-refresh chain.
 
 ## Physics Bridge Compatibility Notes
 

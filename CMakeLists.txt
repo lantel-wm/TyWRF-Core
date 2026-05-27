@@ -16,6 +16,7 @@ add_library(tywrf_core STATIC
   src/dynamics/cycle_schedule.cpp
   src/dynamics/dynamics_loop.cpp
   src/dynamics/pressure_refresh.cpp
+  src/dynamics/pressure_refresh_hook.cpp
   src/dynamics/pressure_refresh_staging.cpp
   src/dynamics/state_stepper.cpp
   src/dynamics/tendency.cpp
@@ -146,6 +147,13 @@ if(BUILD_TESTING)
   add_test(
     NAME tywrf_pressure_refresh_staging_test
     COMMAND tywrf_pressure_refresh_staging_test)
+
+  add_executable(tywrf_pressure_refresh_hook_test
+    tests/unit/pressure_refresh_hook_test.cpp)
+  target_link_libraries(tywrf_pressure_refresh_hook_test PRIVATE TyWRF::Core)
+  add_test(
+    NAME tywrf_pressure_refresh_hook_test
+    COMMAND tywrf_pressure_refresh_hook_test)
 
   add_executable(tywrf_base_state_test tests/unit/base_state_test.cpp)
   target_link_libraries(tywrf_base_state_test PRIVATE TyWRF::Core)

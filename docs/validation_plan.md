@@ -192,16 +192,27 @@ keep `pressure_refresh_applied` as the deciding marker: if it is `false`, the
 candidate cannot pass the d02 gate, even when provider, adapter, and staging
 all succeeded.
 
-The next hook belongs in round D30 and must preserve this sequence:
+Round D30 defines the hook helper boundary and must preserve this sequence:
 
 ```text
-parent-fill/remap -> provider -> staging -> pressure refresh compute -> report/write
+parent-fill/remap -> provider -> base-state sync -> staging -> pressure refresh compute -> report
 ```
 
-Reports should expose each step separately so diagnostic/staging/provider
-success cannot be confused with a passing pressure-refresh result. Later
-restart-file `ALB` or `PHB` remains usable only for probe/smoke comparisons and
-must not be used as start-time truth.
+The provider may synchronize `PB`, `MUB`, and `PHB` only to exposed child cells.
+The remapped overlap region and halo cells must remain unchanged by this sync.
+Provider `ALB` is only an external staging input for pressure refresh and must
+not be written into `State`; provider `T_INIT` is the WRF base-state initial
+temperature, not perturbation `T`, and must not be written into `State::t`.
+
+Reports should expose parent-fill/remap, provider, base-state sync, staging,
+pressure-refresh compute, and final report status separately. A helper-invoked
+pressure-refresh compute is still only a diagnostic/skeleton milestone until
+the real 10 min d02 gate passes. Before that pass, metadata and reports must
+keep `gate_candidate=false` and `integrator_output=false`, even if provider,
+staging, and compute all ran.
+
+Later restart-file `ALB` or `PHB` remains usable only for probe/smoke
+comparisons and must not be used as start-time truth.
 
 Example:
 

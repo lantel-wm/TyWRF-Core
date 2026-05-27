@@ -100,15 +100,29 @@ make a diagnostic parent-fill or closure artifact gate-eligible. If
 `pressure_refresh_applied = false`, the artifact must remain non-physical and
 excluded from normal gates, regardless of provider or staging success.
 
-Round D30 may consider a skeleton/remap hook only with this explicit ordering:
+Round D30 defines a skeleton/remap hook helper only with this explicit ordering:
 
 ```text
-parent-fill/remap -> provider -> staging -> pressure refresh compute -> report/write
+parent-fill/remap -> provider -> base-state sync -> staging -> pressure refresh compute -> report
 ```
 
-The report/write step must preserve distinct provider, staging, and pressure
-compute markers. Later restart `ALB` or `PHB` may still be used only for
-probe/smoke checks and must never substitute for start-time truth.
+The base-state sync step may copy provider `PB`, `MUB`, and `PHB` only into
+newly exposed child cells. It must not rewrite overlap cells that came from
+remap, and it must not touch halo cells governed by halo-update contracts.
+
+Provider `ALB` is an external staging input for pressure-refresh compute, not a
+normal `State` field. Provider `T_INIT` is base-state initial temperature, not
+perturbation `T`; it must not be copied into `State::t` or treated as a closure
+replacement for prognostic temperature.
+
+The report step must preserve distinct parent-fill/remap, provider,
+base-state-sync, staging, and pressure-compute markers. A helper-invoked compute
+does not make the artifact validated integrator output. Until a real 10 min d02
+gate passes, diagnostic hook reports must keep `gate_candidate=false` and
+`integrator_output=false`.
+
+Later restart `ALB` or `PHB` may still be used only for probe/smoke checks and
+must never substitute for start-time truth.
 
 ## Hard Prohibitions
 
