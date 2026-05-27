@@ -67,6 +67,16 @@ PARENT_FILL_METADATA_ATTRS = (
     "TYWRF_PRESSURE_REFRESH_REQUIRED_INPUTS",
     "TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD",
     "TYWRF_PRESSURE_REFRESH_HELPER_NAME",
+    "TYWRF_PRESSURE_REFRESH_ALB_SOURCE",
+    "TYWRF_PRESSURE_REFRESH_PROVIDER_OK",
+    "TYWRF_PRESSURE_REFRESH_STAGING_OK",
+    "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED",
+    "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS",
+    "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS",
+    "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS",
+    "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS",
+    "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE",
+    "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX",
     "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS",
     "TYWRF_GATE_CANDIDATE",
 )
@@ -303,6 +313,36 @@ def _combined_summary(
         "pressure_refresh_helper_name": parent_fill_metadata.get(
             "pressure_refresh_helper_name"
         ),
+        "pressure_refresh_alb_source": parent_fill_metadata.get(
+            "pressure_refresh_alb_source"
+        ),
+        "pressure_refresh_provider_ok": parent_fill_metadata.get(
+            "pressure_refresh_provider_ok"
+        ),
+        "pressure_refresh_staging_ok": parent_fill_metadata.get(
+            "pressure_refresh_staging_ok"
+        ),
+        "pressure_refresh_compute_called": parent_fill_metadata.get(
+            "pressure_refresh_compute_called"
+        ),
+        "pressure_refresh_synced_pb_points": parent_fill_metadata.get(
+            "pressure_refresh_synced_pb_points"
+        ),
+        "pressure_refresh_synced_mub_points": parent_fill_metadata.get(
+            "pressure_refresh_synced_mub_points"
+        ),
+        "pressure_refresh_synced_phb_points": parent_fill_metadata.get(
+            "pressure_refresh_synced_phb_points"
+        ),
+        "pressure_refresh_refreshed_p_points": parent_fill_metadata.get(
+            "pressure_refresh_refreshed_p_points"
+        ),
+        "pressure_refresh_metadata_source": parent_fill_metadata.get(
+            "pressure_refresh_metadata_source"
+        ),
+        "pressure_refresh_metadata_time_index": parent_fill_metadata.get(
+            "pressure_refresh_metadata_time_index"
+        ),
         "direct_wrf_end_state_oracle_status": parent_fill_metadata.get(
             "direct_wrf_end_state_oracle_status"
         ),
@@ -432,6 +472,36 @@ def _parent_fill_metadata(candidate_metadata: dict[str, Any]) -> dict[str, Any]:
         "pressure_refresh_helper_name": attrs.get(
             "TYWRF_PRESSURE_REFRESH_HELPER_NAME"
         ),
+        "pressure_refresh_alb_source": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_ALB_SOURCE"
+        ),
+        "pressure_refresh_provider_ok": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_PROVIDER_OK")
+        ),
+        "pressure_refresh_staging_ok": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_STAGING_OK")
+        ),
+        "pressure_refresh_compute_called": _coerce_bool(
+            attrs.get("TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED")
+        ),
+        "pressure_refresh_synced_pb_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS")
+        ),
+        "pressure_refresh_synced_mub_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS")
+        ),
+        "pressure_refresh_synced_phb_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS")
+        ),
+        "pressure_refresh_refreshed_p_points": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS")
+        ),
+        "pressure_refresh_metadata_source": attrs.get(
+            "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE"
+        ),
+        "pressure_refresh_metadata_time_index": _coerce_int(
+            attrs.get("TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX")
+        ),
         "direct_wrf_end_state_oracle_status": attrs.get(
             "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS"
         ),
@@ -468,6 +538,24 @@ def _coerce_bool(value: Any) -> bool | None:
     if text in BOOL_FALSE_VALUES:
         return False
     return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def _split_csv_attr(value: Any) -> list[str] | None:

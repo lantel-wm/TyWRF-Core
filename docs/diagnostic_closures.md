@@ -124,6 +124,38 @@ gate passes, diagnostic hook reports must keep `gate_candidate=false` and
 Later restart `ALB` or `PHB` may still be used only for probe/smoke checks and
 must never substitute for start-time truth.
 
+Round D31 defines the opt-in skeleton/remap pressure-refresh diagnostic path.
+`tywrf_skeleton_cycle` may call the D30 hook only when the diagnostic
+parent-fill path is explicitly requested. This path is not a normal closure,
+not a normal skeleton output, and not validated integrator output.
+
+If `pressure_refresh_applied = true`, the only allowed interpretation is that
+the diagnostic pressure-refresh helper compute was invoked and modified the
+artifact's exposed `P` values. The flag does not prove that the full
+parent-child remap, feedback, dynamics, physics, or 10 min validation gate
+passed.
+
+The CLI report and NetCDF attributes for this path must keep:
+
+```text
+TYWRF_GATE_CANDIDATE = false
+TYWRF_INTEGRATOR_OUTPUT = false
+TYWRF_VALIDATION_GATE_ONLY = false
+```
+
+Direct `ALB` remains optional only in the sense that WRF history files usually
+omit it. If direct `ALB` is missing and the same-domain base-state
+reconstruction inputs are available, the provider may stage `ALB` for the
+pressure-refresh helper. Later restart `ALB` or `PHB` may be used only for
+probe/smoke checks and must never substitute for start-time truth.
+
+Any `--variables` narrowing or output-field selection used with this opt-in
+path must retain the pressure-refresh required fields: the exposed `P` target,
+the provider/staging fields needed by the helper (`PB`, `MUB`, `PHB`, staged
+provider `ALB`), and the KROSA vertical/base-state constants (`P_TOP`, `C3F`,
+`C4F`, `C3H`, `C4H`). Omitting one of these must fail before compute starts so
+the helper cannot refresh uninitialized or partially staged state.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

@@ -214,6 +214,39 @@ staging, and compute all ran.
 Later restart-file `ALB` or `PHB` remains usable only for probe/smoke
 comparisons and must not be used as start-time truth.
 
+Round D31 defines the opt-in skeleton/remap pressure-refresh diagnostic path.
+`tywrf_skeleton_cycle` may call the D30 hook only through an explicit
+diagnostic parent-fill mode. That path may produce a report with
+`pressure_refresh_applied = true`, but this flag means only that the diagnostic
+helper compute was invoked and updated the exposed `P` field in that artifact.
+It is not a d02 10 min gate pass and is not validated integrator output.
+
+For this opt-in diagnostic path, CLI/report and NetCDF metadata must remain:
+
+```text
+TYWRF_GATE_CANDIDATE = false
+TYWRF_INTEGRATOR_OUTPUT = false
+TYWRF_VALIDATION_GATE_ONLY = false
+```
+
+The default gate must continue to reject or ignore these artifacts unless a
+future, explicitly documented diagnostic mode is requested. Even then, its
+metrics belong in a diagnostic block and must not satisfy the strict d02 gate.
+
+If direct `ALB` is missing from the source file, but the same-domain
+base-state reconstruction inputs are ready, the provider may supply staged
+`ALB` for the pressure-refresh helper. Later restart-file `ALB` or `PHB` may
+still be sampled only for probe/smoke comparisons; neither field can be used as
+start-time truth.
+
+When an opt-in pressure-refresh diagnostic is requested, the selected
+`--variables` set and output fields must include the pressure-refresh required
+fields. At minimum this covers the exposed `P` target plus the
+provider/staging fields required to compute it (`PB`, `MUB`, `PHB`, staged
+provider `ALB`) and KROSA constants (`P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`).
+Validation tooling should treat missing required fields as a hard diagnostic
+failure instead of allowing refresh from uninitialized state.
+
 Example:
 
 ```bash

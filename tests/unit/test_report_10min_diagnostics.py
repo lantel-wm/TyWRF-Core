@@ -27,7 +27,7 @@ def _write_wrfout(
     dx: float = 2000.0,
     dy: float = 2000.0,
     hgt_offset: float = 0.0,
-    attrs: dict[str, str] | None = None,
+    attrs: dict[str, object] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     y = np.arange(4, dtype=np.float64).reshape(4, 1)
@@ -143,7 +143,7 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
                 "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill"
             ),
             "TYWRF_PRESSURE_REFRESH_REQUIRED": "true",
-            "TYWRF_PRESSURE_REFRESH_APPLIED": "false",
+            "TYWRF_PRESSURE_REFRESH_APPLIED": "true",
             "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS": "required_after_parent_fill",
             "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS": "diagnostic_only_not_integrated",
             "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS": "staged_for_later_kernel",
@@ -153,6 +153,16 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
             "TYWRF_PRESSURE_REFRESH_REQUIRED_INPUTS": "PB,P,MU,MUB,PH,PHB,T",
             "TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD": "P",
             "TYWRF_PRESSURE_REFRESH_HELPER_NAME": "refresh_pressure_after_parent_fill",
+            "TYWRF_PRESSURE_REFRESH_ALB_SOURCE": "test_alb_provider",
+            "TYWRF_PRESSURE_REFRESH_PROVIDER_OK": "true",
+            "TYWRF_PRESSURE_REFRESH_STAGING_OK": "true",
+            "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED": "true",
+            "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS": 42,
+            "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS": "43",
+            "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS": 44,
+            "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS": "45",
+            "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE": "candidate_attrs",
+            "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX": 0,
             "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS": (
                 "diagnostic_only_nonphysical_non_gate"
             ),
@@ -201,6 +211,16 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         payload["candidate_metadata"]["attrs"]["TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD"]
         == "P"
     )
+    assert (
+        payload["candidate_metadata"]["attrs"]["TYWRF_PRESSURE_REFRESH_ALB_SOURCE"]
+        == "test_alb_provider"
+    )
+    assert (
+        payload["candidate_metadata"]["attrs"][
+            "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS"
+        ]
+        == 42
+    )
     assert payload["parent_fill_metadata"]["status"] == "available"
     assert payload["parent_fill_metadata"]["diagnostic_remap_parent_fill"] is True
     assert payload["parent_fill_metadata"]["minimum_static_refresh_fields"] == [
@@ -217,7 +237,7 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         == "diagnostic_only_nonphysical_non_gate"
     )
     assert payload["parent_fill_metadata"]["pressure_refresh_required"] is True
-    assert payload["parent_fill_metadata"]["pressure_refresh_applied"] is False
+    assert payload["parent_fill_metadata"]["pressure_refresh_applied"] is True
     assert (
         payload["parent_fill_metadata"]["pressure_refresh_requirement_status"]
         == "required_after_parent_fill"
@@ -256,6 +276,31 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         payload["parent_fill_metadata"]["pressure_refresh_helper_name"]
         == "refresh_pressure_after_parent_fill"
     )
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_alb_source"]
+        == "test_alb_provider"
+    )
+    assert payload["parent_fill_metadata"]["pressure_refresh_provider_ok"] is True
+    assert payload["parent_fill_metadata"]["pressure_refresh_staging_ok"] is True
+    assert payload["parent_fill_metadata"]["pressure_refresh_compute_called"] is True
+    assert payload["parent_fill_metadata"]["pressure_refresh_synced_pb_points"] == 42
+    assert payload["parent_fill_metadata"]["pressure_refresh_synced_mub_points"] == 43
+    assert payload["parent_fill_metadata"]["pressure_refresh_synced_phb_points"] == 44
+    assert payload["parent_fill_metadata"]["pressure_refresh_refreshed_p_points"] == 45
+    assert (
+        payload["parent_fill_metadata"]["pressure_refresh_metadata_source"]
+        == "candidate_attrs"
+    )
+    assert payload["parent_fill_metadata"]["pressure_refresh_metadata_time_index"] == 0
+    assert isinstance(
+        payload["parent_fill_metadata"]["pressure_refresh_provider_ok"], bool
+    )
+    assert isinstance(
+        payload["parent_fill_metadata"]["pressure_refresh_synced_pb_points"], int
+    )
+    assert isinstance(
+        payload["parent_fill_metadata"]["pressure_refresh_metadata_source"], str
+    )
     assert payload["summary"]["candidate_file"] == str(candidate_file)
     assert payload["summary"]["candidate_metadata_status"] == "available"
     assert payload["summary"]["candidate_gate_candidate"] is False
@@ -267,7 +312,7 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         "HGT",
     ]
     assert payload["summary"]["pressure_refresh_required"] is True
-    assert payload["summary"]["pressure_refresh_applied"] is False
+    assert payload["summary"]["pressure_refresh_applied"] is True
     assert (
         payload["summary"]["pressure_refresh_integration_status"]
         == "diagnostic_only_not_integrated"
@@ -282,8 +327,22 @@ def test_report_surfaces_parent_fill_candidate_metadata_when_supplied(
         "T",
     ]
     assert payload["summary"]["pressure_refresh_output_field"] == "P"
+    assert payload["summary"]["pressure_refresh_alb_source"] == "test_alb_provider"
+    assert payload["summary"]["pressure_refresh_provider_ok"] is True
+    assert payload["summary"]["pressure_refresh_staging_ok"] is True
+    assert payload["summary"]["pressure_refresh_compute_called"] is True
+    assert payload["summary"]["pressure_refresh_synced_pb_points"] == 42
+    assert payload["summary"]["pressure_refresh_synced_mub_points"] == 43
+    assert payload["summary"]["pressure_refresh_synced_phb_points"] == 44
+    assert payload["summary"]["pressure_refresh_refreshed_p_points"] == 45
+    assert payload["summary"]["pressure_refresh_metadata_source"] == "candidate_attrs"
+    assert payload["summary"]["pressure_refresh_metadata_time_index"] == 0
+    assert isinstance(payload["summary"]["pressure_refresh_compute_called"], bool)
+    assert isinstance(payload["summary"]["pressure_refresh_refreshed_p_points"], int)
+    assert isinstance(payload["summary"]["pressure_refresh_alb_source"], str)
     assert payload["summary"]["diagnostic_only"] is True
     assert payload["summary"]["candidate_model_pass"] == "not_applicable"
+    assert payload["disposition"]["creates_model_candidate"] is False
 
 
 def test_resolve_report_files_uses_reference_dir_naming(tmp_path: Path) -> None:

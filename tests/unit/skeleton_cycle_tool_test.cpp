@@ -24,6 +24,8 @@ constexpr std::string_view kPressureRefreshFormulaStagingName =
 constexpr std::string_view kPressureRefreshRegionStagingName = "exposed_mass_cells";
 constexpr std::string_view kPressureRefreshThermodynamicMode = "use_theta_m_1";
 constexpr std::string_view kPressureRefreshIntegrationStatus = "helper_available_not_invoked";
+constexpr std::string_view kPressureRefreshOptInIntegrationStatus =
+    "hook_compute_invoked_diagnostic_non_gate";
 constexpr std::string_view kPressureRefreshRequiredInputsCsv =
     "ALB,C3F,C4F,C3H,C4H,P_TOP,MU,MUB,T,PB,PH,PHB";
 constexpr std::string_view kPressureRefreshRequiredInputsJson =
@@ -112,6 +114,44 @@ void put_2d(
   check_nc(nc_put_vara_float(file_id, variable_id, start, count, values.data()), "write 2D var");
 }
 
+void put_vector(
+    const int file_id,
+    const int variable_id,
+    const std::vector<float>& values) {
+  const std::size_t start[2] = {0, 0};
+  const std::size_t count[2] = {1, values.size()};
+  check_nc(
+      nc_put_vara_float(file_id, variable_id, start, count, values.data()),
+      "write vector var");
+}
+
+void put_alb(
+    const int file_id,
+    const int variable_id,
+    const int nz,
+    const int ny,
+    const int nx) {
+  std::vector<float> values(static_cast<std::size_t>(nz * ny * nx), 0.0F);
+  for (int k = 0; k < nz; ++k) {
+    for (int j = 0; j < ny; ++j) {
+      for (int i = 0; i < nx; ++i) {
+        values[(static_cast<std::size_t>(k) * static_cast<std::size_t>(ny) +
+                static_cast<std::size_t>(j)) *
+                   static_cast<std::size_t>(nx) +
+               static_cast<std::size_t>(i)] =
+            0.8F + 0.01F * static_cast<float>(k + j + i);
+      }
+    }
+  }
+  const std::size_t start[4] = {0, 0, 0, 0};
+  const std::size_t count[4] = {
+      1,
+      static_cast<std::size_t>(nz),
+      static_cast<std::size_t>(ny),
+      static_cast<std::size_t>(nx)};
+  check_nc(nc_put_vara_float(file_id, variable_id, start, count, values.data()), "write ALB");
+}
+
 void create_synthetic_wrfout(
     const std::filesystem::path& path,
     const double dx,
@@ -126,11 +166,22 @@ void create_synthetic_wrfout(
     const int full_nz = 3,
     const float u_offset = 10000.0F,
     const float t_offset = 20000.0F,
-    const float mu_offset = 30000.0F) {
+    const float mu_offset = 30000.0F,
+    const float p_offset = 40000.0F,
+    const float pb_offset = 80000.0F,
+    const float ph_offset = 1000.0F,
+    const float phb_offset = 2000.0F,
+    const float mub_offset = 90000.0F,
+    const bool pressure_refresh_metadata = false,
+    const bool include_direct_alb = false) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create synthetic wrfout");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DY", NC_DOUBLE, 1, &dx), "write DY");
+  if (pressure_refresh_metadata) {
+    const float p_top = 5000.0F;
+    check_nc(nc_put_att_float(file_id, NC_GLOBAL, "P_TOP", NC_FLOAT, 1, &p_top), "write P_TOP");
+  }
 
   int time_dim = -1;
   int date_str_len_dim = -1;
@@ -162,11 +213,24 @@ void create_synthetic_wrfout(
   int u_var = -1;
   int t_var = -1;
   int mu_var = -1;
+  int p_var = -1;
+  int pb_var = -1;
+  int ph_var = -1;
+  int phb_var = -1;
+  int mub_var = -1;
+  int c3f_var = -1;
+  int c4f_var = -1;
+  int c3h_var = -1;
+  int c4h_var = -1;
+  int alb_var = -1;
   const int times_dims[2] = {time_dim, date_str_len_dim};
   const int static_dims[3] = {time_dim, south_north_dim, west_east_dim};
   const int u_dims[4] = {time_dim, bottom_top_dim, south_north_dim, west_east_stag_dim};
+  const int w_dims[4] = {time_dim, bottom_top_stag_dim, south_north_dim, west_east_dim};
   const int t_dims[4] = {time_dim, bottom_top_dim, south_north_dim, west_east_dim};
   const int mu_dims[3] = {time_dim, south_north_dim, west_east_dim};
+  const int full_coeff_dims[2] = {time_dim, bottom_top_stag_dim};
+  const int mass_coeff_dims[2] = {time_dim, bottom_top_dim};
   check_nc(nc_def_var(file_id, "Times", NC_CHAR, 2, times_dims, &times_var), "define Times");
   check_nc(nc_def_var(file_id, "XLAT", NC_FLOAT, 3, static_dims, &xlat_var), "define XLAT");
   check_nc(nc_def_var(file_id, "XLONG", NC_FLOAT, 3, static_dims, &xlong_var), "define XLONG");
@@ -175,6 +239,20 @@ void create_synthetic_wrfout(
     check_nc(nc_def_var(file_id, "U", NC_FLOAT, 4, u_dims, &u_var), "define U");
     check_nc(nc_def_var(file_id, "T", NC_FLOAT, 4, t_dims, &t_var), "define T");
     check_nc(nc_def_var(file_id, "MU", NC_FLOAT, 3, mu_dims, &mu_var), "define MU");
+    check_nc(nc_def_var(file_id, "P", NC_FLOAT, 4, t_dims, &p_var), "define P");
+    check_nc(nc_def_var(file_id, "PB", NC_FLOAT, 4, t_dims, &pb_var), "define PB");
+    check_nc(nc_def_var(file_id, "PH", NC_FLOAT, 4, w_dims, &ph_var), "define PH");
+    check_nc(nc_def_var(file_id, "PHB", NC_FLOAT, 4, w_dims, &phb_var), "define PHB");
+    check_nc(nc_def_var(file_id, "MUB", NC_FLOAT, 3, mu_dims, &mub_var), "define MUB");
+  }
+  if (pressure_refresh_metadata) {
+    check_nc(nc_def_var(file_id, "C3F", NC_FLOAT, 2, full_coeff_dims, &c3f_var), "define C3F");
+    check_nc(nc_def_var(file_id, "C4F", NC_FLOAT, 2, full_coeff_dims, &c4f_var), "define C4F");
+    check_nc(nc_def_var(file_id, "C3H", NC_FLOAT, 2, mass_coeff_dims, &c3h_var), "define C3H");
+    check_nc(nc_def_var(file_id, "C4H", NC_FLOAT, 2, mass_coeff_dims, &c4h_var), "define C4H");
+    if (include_direct_alb) {
+      check_nc(nc_def_var(file_id, "ALB", NC_FLOAT, 4, t_dims, &alb_var), "define ALB");
+    }
   }
   check_nc(nc_enddef(file_id), "end definitions");
 
@@ -186,6 +264,20 @@ void create_synthetic_wrfout(
     put_3d(file_id, u_var, mass_nz, mass_ny, mass_nx + 1, u_offset);
     put_3d(file_id, t_var, mass_nz, mass_ny, mass_nx, t_offset);
     put_2d(file_id, mu_var, mass_ny, mass_nx, mu_offset);
+    put_3d(file_id, p_var, mass_nz, mass_ny, mass_nx, p_offset);
+    put_3d(file_id, pb_var, mass_nz, mass_ny, mass_nx, pb_offset);
+    put_3d(file_id, ph_var, full_nz, mass_ny, mass_nx, ph_offset);
+    put_3d(file_id, phb_var, full_nz, mass_ny, mass_nx, phb_offset);
+    put_2d(file_id, mub_var, mass_ny, mass_nx, mub_offset);
+  }
+  if (pressure_refresh_metadata) {
+    put_vector(file_id, c3f_var, {1.0F, 0.5F, 0.0F});
+    put_vector(file_id, c4f_var, {0.0F, 0.0F, 0.0F});
+    put_vector(file_id, c3h_var, {0.75F, 0.25F});
+    put_vector(file_id, c4h_var, {0.0F, 0.0F});
+    if (include_direct_alb) {
+      put_alb(file_id, alb_var, mass_nz, mass_ny, mass_nx);
+    }
   }
 
   check_nc(nc_close(file_id), "close synthetic wrfout");
@@ -361,6 +453,53 @@ void assert_parent_fill_pressure_refresh_report(const std::string& report) {
       std::string::npos);
 }
 
+void assert_parent_fill_pressure_refresh_opt_in_attrs(
+    const int file_id,
+    const std::filesystem::path& metadata_source) {
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_REQUIRED") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS") ==
+      std::string(kPressureRefreshOptInIntegrationStatus));
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_ALB_SOURCE") ==
+      "base_state_reconstruction_provider");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_PROVIDER_OK") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_STAGING_OK") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED") == "true");
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS") > 0.0);
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE") == metadata_source.string());
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX") == 0.0);
+}
+
+void assert_parent_fill_pressure_refresh_opt_in_report(
+    const std::string& report,
+    const std::filesystem::path& metadata_source) {
+  assert(report.find("\"pressure_refresh_required\": true") != std::string::npos);
+  assert(report.find("\"pressure_refresh_applied\": true") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_integration_status\": \"" +
+          std::string(kPressureRefreshOptInIntegrationStatus) + "\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_alb_source\": "
+          "\"base_state_reconstruction_provider\"") != std::string::npos);
+  assert(report.find("\"pressure_refresh_provider_ok\": true") != std::string::npos);
+  assert(report.find("\"pressure_refresh_staging_ok\": true") != std::string::npos);
+  assert(report.find("\"pressure_refresh_compute_called\": true") != std::string::npos);
+  assert(report.find("\"pressure_refresh_synced_pb_points\":") != std::string::npos);
+  assert(report.find("\"pressure_refresh_synced_mub_points\":") != std::string::npos);
+  assert(report.find("\"pressure_refresh_synced_phb_points\":") != std::string::npos);
+  assert(report.find("\"pressure_refresh_refreshed_p_points\":") != std::string::npos);
+  assert(report.find("\"pressure_refresh_metadata_source\": \"" + metadata_source.string()) !=
+         std::string::npos);
+  assert(report.find("\"pressure_refresh_metadata_time_index\": 0") != std::string::npos);
+}
+
 void assert_output(const std::filesystem::path& output) {
   int file_id = -1;
   check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open output");
@@ -506,6 +645,42 @@ void assert_parent_fill_output(
   assert(report.find("\"remap_parent_fill_point_count\":") != std::string::npos);
 }
 
+void assert_parent_fill_pressure_refresh_output(
+    const std::filesystem::path& output,
+    const std::filesystem::path& parent_fill_state,
+    const std::filesystem::path& metadata_source,
+    const std::filesystem::path& report_path) {
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open pressure-refresh output");
+  assert(
+      read_text_attr(file_id, "TYWRF_CANDIDATE_KIND") ==
+      "cpp_skeleton_remap_parent_fill_diagnostic");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_REMAP_PARENT_FILL") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ONLY") == "true");
+  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "false");
+  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
+  assert(read_text_attr(file_id, "TYWRF_PARENT_FILL_SOURCE") == parent_fill_state.string());
+  assert_parent_fill_pressure_refresh_opt_in_attrs(file_id, metadata_source);
+
+  assert(read_3d_value(file_id, "P", 0, 0, 0) == value_3d(0, 0, 0, 5, 40000.0F));
+  const auto exposed_parent_fill_p = value_3d(0, 0, 0, 209, 240000.0F);
+  const auto exposed_refreshed_p = read_3d_value(file_id, "P", 0, 0, 209);
+  assert(std::isfinite(exposed_refreshed_p));
+  assert(exposed_refreshed_p != exposed_parent_fill_p);
+  assert(read_3d_value(file_id, "PB", 0, 0, 209) != value_3d(0, 0, 0, 209, 280000.0F));
+  assert(read_2d_value(file_id, "MUB", 0, 209) != value_2d(0, 0, 209, 290000.0F));
+  check_nc(nc_close(file_id), "close pressure-refresh output");
+
+  std::ifstream report_file(report_path);
+  std::ostringstream report_buffer;
+  report_buffer << report_file.rdbuf();
+  const auto report = report_buffer.str();
+  assert(report.find("\"gate_candidate\": false") != std::string::npos);
+  assert(report.find("\"integrator_output\": false") != std::string::npos);
+  assert_parent_fill_pressure_refresh_opt_in_report(report, metadata_source);
+}
+
 std::string base_command(
     const std::filesystem::path& executable,
     const std::filesystem::path& state,
@@ -641,6 +816,37 @@ void run_real_krosa_smoke_if_available(
       parent_fill_report_text.find(
           "\"direct_wrf_end_state_oracle_status\": "
           "\"diagnostic_only_nonphysical_non_gate\"") != std::string::npos);
+
+  const auto pressure_candidate_dir = root / "real_krosa_pressure_refresh_candidate";
+  const auto pressure_output =
+      pressure_candidate_dir / "wrfout_d02_2025-07-26_00:10:00_pressure_refresh";
+  const auto pressure_report = root / "real_krosa_pressure_refresh_report.json";
+  std::filesystem::create_directories(pressure_candidate_dir);
+  std::filesystem::remove(pressure_output);
+  std::filesystem::remove(pressure_report);
+
+  run_command(
+      base_command(executable, state, reference_end, pressure_output) +
+      " --diagnostic-remap-parent-fill --diagnostic-remap-pressure-refresh "
+      "--from-parent-start 114,96 --to-parent-start 126,103 --parent-fill-state " +
+      shell_quote(state) + " > " + shell_quote(pressure_report));
+
+  check_nc(
+      nc_open(pressure_output.string().c_str(), NC_NOWRITE, &file_id),
+      "open real KROSA pressure-refresh output");
+  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "false");
+  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "false");
+  assert_parent_fill_pressure_refresh_opt_in_attrs(file_id, reference_end);
+  check_nc(nc_close(file_id), "close real KROSA pressure-refresh output");
+
+  std::ifstream pressure_report_file(pressure_report);
+  std::ostringstream pressure_report_buffer;
+  pressure_report_buffer << pressure_report_file.rdbuf();
+  const auto pressure_report_text = pressure_report_buffer.str();
+  assert(pressure_report_text.find("\"gate_candidate\": false") != std::string::npos);
+  assert(pressure_report_text.find("\"integrator_output\": false") != std::string::npos);
+  assert_parent_fill_pressure_refresh_opt_in_report(pressure_report_text, reference_end);
 }
 
 }  // namespace
@@ -665,6 +871,11 @@ int main(const int argc, char** argv) {
     const auto parent_fill_template = root / "wrfout_d02_parent_fill_template";
     const auto parent_fill_output = root / "tywrf_cpp_skeleton_parent_fill_wrfout_d02";
     const auto parent_fill_report = root / "tywrf_cpp_skeleton_parent_fill_report.json";
+    const auto pressure_template = root / "wrfout_d02_pressure_refresh_template";
+    const auto pressure_output =
+        root / "tywrf_cpp_skeleton_parent_fill_pressure_refresh_wrfout_d02";
+    const auto pressure_report =
+        root / "tywrf_cpp_skeleton_parent_fill_pressure_refresh_report.json";
     std::filesystem::remove(state);
     std::filesystem::remove(end_template);
     std::filesystem::remove(output);
@@ -675,6 +886,9 @@ int main(const int argc, char** argv) {
     std::filesystem::remove(parent_fill_template);
     std::filesystem::remove(parent_fill_output);
     std::filesystem::remove(parent_fill_report);
+    std::filesystem::remove(pressure_template);
+    std::filesystem::remove(pressure_output);
+    std::filesystem::remove(pressure_report);
     create_synthetic_wrfout(state, 2000.0, "2025-07-26_00:00:00", true);
     create_synthetic_wrfout(
         end_template,
@@ -720,7 +934,12 @@ int main(const int argc, char** argv) {
         3,
         110000.0F,
         120000.0F,
-        130000.0F);
+        130000.0F,
+        240000.0F,
+        280000.0F,
+        2000.0F,
+        3000.0F,
+        290000.0F);
     create_synthetic_wrfout(
         parent_fill_template,
         2000.0,
@@ -740,6 +959,40 @@ int main(const int argc, char** argv) {
         shell_quote(parent_fill_state) + " --parent-fill-time-index 0 > " +
         shell_quote(parent_fill_report));
     assert_parent_fill_output(parent_fill_output, parent_fill_state, parent_fill_report);
+
+    create_synthetic_wrfout(
+        pressure_template,
+        2000.0,
+        "2025-07-26_00:10:00",
+        false,
+        240000.0F,
+        250000.0F,
+        20.0F,
+        210,
+        210,
+        2,
+        3,
+        10000.0F,
+        20000.0F,
+        30000.0F,
+        40000.0F,
+        80000.0F,
+        1000.0F,
+        2000.0F,
+        90000.0F,
+        true,
+        false);
+    run_command(
+        base_command(executable, remap_state, pressure_template, pressure_output) +
+        " --diagnostic-remap-parent-fill --diagnostic-remap-pressure-refresh "
+        "--from-parent-start 114,96 --to-parent-start 115,96 --parent-fill-state " +
+        shell_quote(parent_fill_state) + " --parent-fill-time-index 0 > " +
+        shell_quote(pressure_report));
+    assert_parent_fill_pressure_refresh_output(
+        pressure_output,
+        parent_fill_state,
+        pressure_template,
+        pressure_report);
 
     const auto bad_state = root / "wrfout_d02_bad_dx";
     const auto bad_output = root / "tywrf_bad_dx_output";

@@ -355,6 +355,42 @@ pressure-refresh compute status separate in reports. Later restart-file `ALB`
 or `PHB` remains restricted to probe/smoke use and must not become start-time
 truth for the pressure-refresh chain.
 
+Round D31 narrows the opt-in skeleton/remap diagnostic path. When
+`tywrf_skeleton_cycle` is invoked in the diagnostic parent-fill mode, it may
+call the D30 hook and run:
+
+```text
+parent-fill/remap -> provider -> base-state sync -> staging -> pressure refresh compute -> report
+```
+
+This is still a diagnostic helper path, not validated TyWRF integrator output.
+If the report says `pressure_refresh_applied = true`, that means only that the
+pressure-refresh helper compute was called and modified exposed-cell `P` in the
+generated artifact. It does not imply that the d02 10 min gate passed, that the
+full integrator ran, or that the file is physically accepted.
+
+The CLI report and NetCDF metadata for this opt-in path must keep:
+
+```text
+TYWRF_GATE_CANDIDATE = false
+TYWRF_INTEGRATOR_OUTPUT = false
+TYWRF_VALIDATION_GATE_ONLY = false
+```
+
+Direct `ALB` is not required from a history-output file. If direct `ALB` is
+missing but same-domain base-state reconstruction inputs are available, the
+path may use the provider to stage `ALB` for pressure refresh. Later restart
+`ALB` or `PHB` remains limited to probe/smoke comparisons and must not become
+start-time truth.
+
+When pressure refresh is requested, any `--variables` selection and the output
+field list must include the fields required by the pressure-refresh path,
+including the exposed `P` target and the provider/staging fields used to
+refresh it (`PB`, `MUB`, `PHB`, and staged provider `ALB`, plus the KROSA
+constants `P_TOP`, `C3F`, `C4F`, `C3H`, and `C4H`). A narrowed variable list
+that omits required inputs must fail early rather than refreshing an
+uninitialized or partially staged state.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

@@ -1,5 +1,7 @@
 #include "tywrf/field_view.hpp"
+#include "tywrf/dynamics/pressure_refresh_hook.hpp"
 #include "tywrf/io/netcdf_schema.hpp"
+#include "tywrf/io/pressure_refresh_io.hpp"
 #include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/nest/nest_interface.hpp"
 #include "tywrf/nest/state_remap.hpp"
@@ -72,6 +74,7 @@ struct Options {
   std::filesystem::path template_path;
   std::filesystem::path output_path;
   std::filesystem::path parent_fill_state_path;
+  std::filesystem::path pressure_refresh_source_path;
   std::string domain = "d02";
   std::string cycle_start;
   std::string cycle_end;
@@ -80,11 +83,15 @@ struct Options {
   std::size_t template_time_index = 0;
   std::size_t output_time_index = 0;
   std::size_t parent_fill_time_index = 0;
+  std::size_t pressure_refresh_time_index = 0;
   std::vector<std::string> variables;
   bool pretty = false;
   bool diagnostic_remap_overlap = false;
   bool diagnostic_remap_parent_fill = false;
+  bool diagnostic_remap_pressure_refresh = false;
   bool parent_fill_time_index_set = false;
+  bool pressure_refresh_source_set = false;
+  bool pressure_refresh_time_index_set = false;
   std::optional<tywrf::nest::ParentChildPosition> from_parent_start;
   std::optional<tywrf::nest::ParentChildPosition> to_parent_start;
 };
@@ -98,6 +105,8 @@ struct DiagnosticRemapResult {
   DiagnosticRemapKind kind = DiagnosticRemapKind::overlap_only;
   tywrf::nest::RemapPlan plan;
   tywrf::nest::ChildStateRemapReport report;
+  std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh_report;
+  std::filesystem::path pressure_refresh_metadata_source;
 };
 
 struct Resolution {
@@ -162,6 +171,12 @@ Options:
   --variables A,B,C               Combined State/template variables to write.
   --diagnostic-remap-overlap      Remap d02 state overlap only; leaves exposed cells unfilled.
   --diagnostic-remap-parent-fill  Remap overlap and fill exposed cells from a child-shaped parent-fill state.
+  --diagnostic-remap-pressure-refresh
+                                  After parent-fill remap, opt in to the diagnostic
+                                  KROSA pressure-refresh hook. Requires
+                                  --diagnostic-remap-parent-fill.
+  --pressure-refresh-source PATH   Metadata source for pressure refresh; default --template.
+  --pressure-refresh-time-index N  Time index read from --pressure-refresh-source; default --template-time-index.
   --from-parent-start I,J         One-based d02 parent start before diagnostic remap.
   --to-parent-start I,J           One-based d02 parent start after diagnostic remap.
   --parent-fill-state PATH        Child-shaped parent-fill state for --diagnostic-remap-parent-fill.
@@ -291,6 +306,14 @@ validation-gate candidate.
       options.diagnostic_remap_overlap = true;
     } else if (arg == "--diagnostic-remap-parent-fill") {
       options.diagnostic_remap_parent_fill = true;
+    } else if (arg == "--diagnostic-remap-pressure-refresh") {
+      options.diagnostic_remap_pressure_refresh = true;
+    } else if (arg == "--pressure-refresh-source") {
+      options.pressure_refresh_source_path = require_value(arg);
+      options.pressure_refresh_source_set = true;
+    } else if (arg == "--pressure-refresh-time-index") {
+      options.pressure_refresh_time_index = parse_size(require_value(arg), arg);
+      options.pressure_refresh_time_index_set = true;
     } else if (arg == "--from-parent-start") {
       options.from_parent_start = parse_parent_start(require_value(arg), arg);
     } else if (arg == "--to-parent-start") {
@@ -337,10 +360,36 @@ validation-gate candidate.
     throw std::invalid_argument(
         "--parent-fill-time-index requires --diagnostic-remap-parent-fill");
   }
+  if (options.diagnostic_remap_pressure_refresh && !options.diagnostic_remap_parent_fill) {
+    throw std::invalid_argument(
+        "--diagnostic-remap-pressure-refresh requires --diagnostic-remap-parent-fill");
+  }
+  if (!options.diagnostic_remap_pressure_refresh && options.pressure_refresh_source_set) {
+    throw std::invalid_argument(
+        "--pressure-refresh-source requires --diagnostic-remap-pressure-refresh");
+  }
+  if (!options.diagnostic_remap_pressure_refresh && options.pressure_refresh_time_index_set) {
+    throw std::invalid_argument(
+        "--pressure-refresh-time-index requires --diagnostic-remap-pressure-refresh");
+  }
+  if (options.diagnostic_remap_pressure_refresh && !options.pressure_refresh_source_set) {
+    options.pressure_refresh_source_path = options.template_path;
+  }
+  if (options.diagnostic_remap_pressure_refresh && !options.pressure_refresh_time_index_set) {
+    options.pressure_refresh_time_index = options.template_time_index;
+  }
   if (options.variables.empty()) {
     options.variables = template_variable_names();
     const auto state_variables = tywrf::io::wrf_state_writable_field_names();
     options.variables.insert(options.variables.end(), state_variables.begin(), state_variables.end());
+  }
+  if (options.diagnostic_remap_pressure_refresh) {
+    for (const std::string_view name : {"P", "PB", "PHB", "MUB"}) {
+      if (std::find(options.variables.begin(), options.variables.end(), name) ==
+          options.variables.end()) {
+        options.variables.emplace_back(name);
+      }
+    }
   }
   return options;
 }
@@ -473,9 +522,98 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
   return value ? "true" : "false";
 }
 
+void append_unique(
+    std::vector<std::string>& values,
+    const std::string_view value) {
+  if (std::find(values.begin(), values.end(), value) == values.end()) {
+    values.emplace_back(value);
+  }
+}
+
+[[nodiscard]] std::string nest_result_label(
+    const tywrf::nest::NestResult& result) {
+  std::ostringstream label;
+  label << tywrf::nest::nest_status_name(result.status) << ":" << result.message;
+  return label.str();
+}
+
 [[nodiscard]] std::string pressure_refresh_requirement_status(const bool required) {
   return required ? "required_for_exposed_parent_fill_cells"
                   : "not_required_no_exposed_mass_cells";
+}
+
+[[nodiscard]] bool pressure_refresh_applied(
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  return remap_result.has_value() &&
+         remap_result->pressure_refresh_report.has_value() &&
+         remap_result->pressure_refresh_report->pressure_refresh_applied;
+}
+
+[[nodiscard]] std::string pressure_refresh_integration_status(
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  if (!remap_result.has_value() ||
+      !remap_result->pressure_refresh_report.has_value()) {
+    return std::string(kPressureRefreshIntegrationStatus);
+  }
+  const auto& report = *remap_result->pressure_refresh_report;
+  if (!report.provider_ok) {
+    return "hook_provider_failed:" + nest_result_label(report.result);
+  }
+  if (!report.staging_ok) {
+    return "hook_staging_failed:" + nest_result_label(report.result);
+  }
+  if (!report.calls_pressure_refresh_compute) {
+    return "hook_compute_not_called:" + nest_result_label(report.result);
+  }
+  if (!report.ok() || !report.pressure_refresh_applied) {
+    return "hook_compute_failed:" + nest_result_label(report.result);
+  }
+  return "hook_compute_invoked_diagnostic_non_gate";
+}
+
+[[nodiscard]] std::string pressure_refresh_alb_source(
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  if (!remap_result.has_value() ||
+      !remap_result->pressure_refresh_report.has_value()) {
+    return "not_invoked";
+  }
+  return remap_result->pressure_refresh_report->staging_report.alb_source_name;
+}
+
+[[nodiscard]] std::uint64_t pressure_refresh_synced_pb_points(
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  if (!remap_result.has_value() ||
+      !remap_result->pressure_refresh_report.has_value()) {
+    return 0;
+  }
+  return remap_result->pressure_refresh_report->synced_pb_point_count;
+}
+
+[[nodiscard]] std::uint64_t pressure_refresh_synced_mub_points(
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  if (!remap_result.has_value() ||
+      !remap_result->pressure_refresh_report.has_value()) {
+    return 0;
+  }
+  return remap_result->pressure_refresh_report->synced_mub_point_count;
+}
+
+[[nodiscard]] std::uint64_t pressure_refresh_synced_phb_points(
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  if (!remap_result.has_value() ||
+      !remap_result->pressure_refresh_report.has_value()) {
+    return 0;
+  }
+  return remap_result->pressure_refresh_report->synced_phb_point_count;
+}
+
+[[nodiscard]] std::uint64_t pressure_refresh_refreshed_p_points(
+    const std::optional<DiagnosticRemapResult>& remap_result) {
+  if (!remap_result.has_value() ||
+      !remap_result->pressure_refresh_report.has_value()) {
+    return 0;
+  }
+  return remap_result->pressure_refresh_report->compute_report.refreshed_point_count;
 }
 
 [[nodiscard]] bool diagnostic_parent_fill(
@@ -717,7 +855,10 @@ void mark_skeleton_output(
           file,
           "TYWRF_PRESSURE_REFRESH_REQUIRED",
           bool_string(report.needs_derived_pressure_refresh));
-      write_text_attr(file, "TYWRF_PRESSURE_REFRESH_APPLIED", "false");
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_APPLIED",
+          bool_string(pressure_refresh_applied(remap_result)));
       write_text_attr(
           file,
           "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS",
@@ -725,7 +866,57 @@ void mark_skeleton_output(
       write_text_attr(
           file,
           "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS",
-          kPressureRefreshIntegrationStatus);
+          pressure_refresh_integration_status(remap_result));
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_ALB_SOURCE",
+          pressure_refresh_alb_source(remap_result));
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_PROVIDER_OK",
+          bool_string(
+              remap_result->pressure_refresh_report.has_value() &&
+              remap_result->pressure_refresh_report->provider_ok));
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_STAGING_OK",
+          bool_string(
+              remap_result->pressure_refresh_report.has_value() &&
+              remap_result->pressure_refresh_report->staging_ok));
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED",
+          bool_string(
+              remap_result->pressure_refresh_report.has_value() &&
+              remap_result->pressure_refresh_report->calls_pressure_refresh_compute));
+      write_double_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS",
+          static_cast<double>(pressure_refresh_synced_pb_points(remap_result)));
+      write_double_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS",
+          static_cast<double>(pressure_refresh_synced_mub_points(remap_result)));
+      write_double_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS",
+          static_cast<double>(pressure_refresh_synced_phb_points(remap_result)));
+      write_double_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS",
+          static_cast<double>(pressure_refresh_refreshed_p_points(remap_result)));
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE",
+          remap_result->pressure_refresh_metadata_source.empty()
+              ? "none"
+              : remap_result->pressure_refresh_metadata_source.string());
+      write_double_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_METADATA_TIME_INDEX",
+          remap_result->pressure_refresh_report.has_value()
+              ? static_cast<double>(options.pressure_refresh_time_index)
+              : 0.0);
       write_text_attr(
           file,
           "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS",
@@ -1048,7 +1239,12 @@ void print_report(
           report.needs_derived_pressure_refresh,
           true,
           pretty);
-      write_json_bool(std::cout, "pressure_refresh_applied", false, true, pretty);
+      write_json_bool(
+          std::cout,
+          "pressure_refresh_applied",
+          pressure_refresh_applied(remap_result),
+          true,
+          pretty);
       write_json_string(
           std::cout,
           "pressure_refresh_requirement_status",
@@ -1058,7 +1254,74 @@ void print_report(
       write_json_string(
           std::cout,
           "pressure_refresh_integration_status",
-          kPressureRefreshIntegrationStatus,
+          pressure_refresh_integration_status(remap_result),
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_alb_source",
+          pressure_refresh_alb_source(remap_result),
+          true,
+          pretty);
+      write_json_bool(
+          std::cout,
+          "pressure_refresh_provider_ok",
+          remap_result->pressure_refresh_report.has_value() &&
+              remap_result->pressure_refresh_report->provider_ok,
+          true,
+          pretty);
+      write_json_bool(
+          std::cout,
+          "pressure_refresh_staging_ok",
+          remap_result->pressure_refresh_report.has_value() &&
+              remap_result->pressure_refresh_report->staging_ok,
+          true,
+          pretty);
+      write_json_bool(
+          std::cout,
+          "pressure_refresh_compute_called",
+          remap_result->pressure_refresh_report.has_value() &&
+              remap_result->pressure_refresh_report->calls_pressure_refresh_compute,
+          true,
+          pretty);
+      write_json_uint64(
+          std::cout,
+          "pressure_refresh_synced_pb_points",
+          pressure_refresh_synced_pb_points(remap_result),
+          true,
+          pretty);
+      write_json_uint64(
+          std::cout,
+          "pressure_refresh_synced_mub_points",
+          pressure_refresh_synced_mub_points(remap_result),
+          true,
+          pretty);
+      write_json_uint64(
+          std::cout,
+          "pressure_refresh_synced_phb_points",
+          pressure_refresh_synced_phb_points(remap_result),
+          true,
+          pretty);
+      write_json_uint64(
+          std::cout,
+          "pressure_refresh_refreshed_p_points",
+          pressure_refresh_refreshed_p_points(remap_result),
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_metadata_source",
+          remap_result->pressure_refresh_metadata_source.empty()
+              ? "none"
+              : remap_result->pressure_refresh_metadata_source.string(),
+          true,
+          pretty);
+      write_json_uint64(
+          std::cout,
+          "pressure_refresh_metadata_time_index",
+          remap_result->pressure_refresh_report.has_value()
+              ? options.pressure_refresh_time_index
+              : 0U,
           true,
           pretty);
       write_json_string(
@@ -1223,6 +1486,65 @@ void require_nest_result_ok(
   return result;
 }
 
+void require_pressure_refresh_inputs_ready(
+    const tywrf::io::KrosaPressureRefreshReadResult& inputs) {
+  if (inputs.ok() || inputs.base_state_reconstruction_inputs_ready()) {
+    return;
+  }
+  std::ostringstream message;
+  message << "pressure refresh metadata source is not ready for provider hook";
+  if (!inputs.report.missing_names.empty()) {
+    message << "; missing direct inputs=" << comma_join(inputs.report.missing_names);
+  }
+  if (!inputs.report.missing_base_state_reconstruction_names.empty()) {
+    message << "; missing provider inputs="
+            << comma_join(inputs.report.missing_base_state_reconstruction_names);
+  }
+  throw std::runtime_error(message.str());
+}
+
+void apply_diagnostic_pressure_refresh(
+    const Options& options,
+    tywrf::State<float>& remapped_state,
+    DiagnosticRemapResult& remap_result) {
+  tywrf::FieldStorage3D<float> direct_alb(remapped_state.grid.mass_layout());
+  const auto metadata = tywrf::io::read_krosa_pressure_refresh_inputs(
+      options.pressure_refresh_source_path,
+      remapped_state.grid,
+      direct_alb,
+      {.time_index = options.pressure_refresh_time_index});
+  require_pressure_refresh_inputs_ready(metadata);
+
+  auto hook_report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          remap_result.plan,
+          remapped_state,
+          metadata.metadata);
+  remap_result.pressure_refresh_metadata_source = options.pressure_refresh_source_path;
+  remap_result.pressure_refresh_report = hook_report;
+  if (!hook_report.ok() || !hook_report.provider_ok || !hook_report.staging_ok ||
+      !hook_report.calls_pressure_refresh_compute ||
+      !hook_report.pressure_refresh_applied) {
+    std::ostringstream message;
+    message << "diagnostic pressure refresh hook failed at "
+            << pressure_refresh_integration_status(
+                   std::optional<DiagnosticRemapResult>{remap_result});
+    throw std::runtime_error(message.str());
+  }
+}
+
+[[nodiscard]] std::vector<std::string> load_variables_for_options(
+    const std::vector<std::string>& output_state_variables,
+    const Options& options) {
+  auto load_variables = output_state_variables;
+  if (options.diagnostic_remap_pressure_refresh) {
+    for (const std::string_view name : {"P", "PB", "T", "PH", "PHB", "MU", "MUB"}) {
+      append_unique(load_variables, name);
+    }
+  }
+  return load_variables;
+}
+
 int run(const Options& options) {
   if (!std::filesystem::exists(options.state_path)) {
     throw std::runtime_error("state input does not exist: " + options.state_path.string());
@@ -1247,14 +1569,24 @@ int run(const Options& options) {
     const auto parent_fill_resolution = read_resolution(options.parent_fill_state_path);
     require_d02_resolution(options.parent_fill_state_path, parent_fill_resolution);
   }
+  if (options.diagnostic_remap_pressure_refresh) {
+    if (!std::filesystem::exists(options.pressure_refresh_source_path)) {
+      throw std::runtime_error(
+          "pressure-refresh metadata source does not exist: " +
+          options.pressure_refresh_source_path.string());
+    }
+    const auto pressure_refresh_resolution = read_resolution(options.pressure_refresh_source_path);
+    require_d02_resolution(options.pressure_refresh_source_path, pressure_refresh_resolution);
+  }
 
   const auto state_variables = state_variables_from_selection(options.variables);
+  const auto load_variables = load_variables_for_options(state_variables, options);
   const auto grid = tywrf::io::derive_grid_from_wrf_file(options.state_path, tywrf::uniform_halo_3d(0));
   tywrf::State<float> state(grid);
   tywrf::io::load_wrf_state(
       options.state_path,
       state,
-      {.time_index = options.state_time_index, .variables = state_variables});
+      {.time_index = options.state_time_index, .variables = load_variables});
 
   std::optional<DiagnosticRemapResult> remap_result;
   if (options.diagnostic_remap_overlap) {
@@ -1275,10 +1607,13 @@ int run(const Options& options) {
     tywrf::io::load_wrf_state(
         options.parent_fill_state_path,
         parent_fill_state,
-        {.time_index = options.parent_fill_time_index, .variables = state_variables});
+        {.time_index = options.parent_fill_time_index, .variables = load_variables});
     tywrf::State<float> remapped_state(grid);
     remap_result =
         apply_diagnostic_remap_parent_fill(options, state, parent_fill_state, remapped_state);
+    if (options.diagnostic_remap_pressure_refresh) {
+      apply_diagnostic_pressure_refresh(options, remapped_state, *remap_result);
+    }
     tywrf::io::write_wrf_state(
         options.output_path,
         remapped_state,
@@ -1302,8 +1637,8 @@ int run(const Options& options) {
         });
   }
 
-  mark_skeleton_output(options, template_resolution, state_variables, remap_result);
-  print_report(options, template_resolution, state_variables, remap_result);
+  mark_skeleton_output(options, template_resolution, load_variables, remap_result);
+  print_report(options, template_resolution, load_variables, remap_result);
   return 0;
 }
 
