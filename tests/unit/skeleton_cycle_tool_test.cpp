@@ -17,6 +17,18 @@ namespace {
 
 constexpr std::string_view kCycleStart = "2025-07-26_00:00:00";
 constexpr std::string_view kTenMinuteEnd = "2025-07-26_00:10:00";
+constexpr std::string_view kPressureRefreshFormulaStatus =
+    "staged_helper_available_not_applied";
+constexpr std::string_view kPressureRefreshFormulaStagingName =
+    "krosa_hypsometric_opt2_use_theta_m";
+constexpr std::string_view kPressureRefreshRegionStagingName = "exposed_mass_cells";
+constexpr std::string_view kPressureRefreshThermodynamicMode = "use_theta_m_1";
+constexpr std::string_view kPressureRefreshIntegrationStatus = "helper_available_not_invoked";
+constexpr std::string_view kPressureRefreshRequiredInputsCsv =
+    "ALB,C3F,C4F,C3H,C4H,P_TOP,MU,MUB,T,PB,PH,PHB";
+constexpr std::string_view kPressureRefreshRequiredInputsJson =
+    "[\"ALB\", \"C3F\", \"C4F\", \"C3H\", \"C4H\", \"P_TOP\", \"MU\", \"MUB\", "
+    "\"T\", \"PB\", \"PH\", \"PHB\"]";
 const std::filesystem::path kKrosaTenMinuteReferenceDir =
     "/home/zzy/Projects/tc_sim/pgwrf_2025wp12_d0110km/PGWRF/output_gfs_analysis/2025wp12/2025072600/WRF_1h_10min_20260527_172838";
 
@@ -281,6 +293,74 @@ void run_command_capture_expect_failure(
   return value;
 }
 
+void assert_parent_fill_pressure_refresh_attrs(const int file_id) {
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_REQUIRED") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED") == "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS") ==
+      "required_for_exposed_parent_fill_cells");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS") ==
+      std::string(kPressureRefreshIntegrationStatus));
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS") ==
+      std::string(kPressureRefreshFormulaStatus));
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_FORMULA_STAGING_NAME") ==
+      std::string(kPressureRefreshFormulaStagingName));
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_REGION_STAGING_NAME") ==
+      std::string(kPressureRefreshRegionStagingName));
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_THERMODYNAMIC_MODE") ==
+      std::string(kPressureRefreshThermodynamicMode));
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_REQUIRED_INPUTS") ==
+      std::string(kPressureRefreshRequiredInputsCsv));
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD") == "P");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_HELPER_NAME") ==
+      "refresh_krosa_moving_nest_pressure");
+}
+
+void assert_parent_fill_pressure_refresh_report(const std::string& report) {
+  assert(report.find("\"pressure_refresh_required\": true") != std::string::npos);
+  assert(report.find("\"pressure_refresh_applied\": false") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_requirement_status\": "
+          "\"required_for_exposed_parent_fill_cells\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_integration_status\": \"" +
+          std::string(kPressureRefreshIntegrationStatus) + "\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_formula_status\": \"" +
+          std::string(kPressureRefreshFormulaStatus) + "\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_formula_staging_name\": \"" +
+          std::string(kPressureRefreshFormulaStagingName) + "\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_region_staging_name\": \"" +
+          std::string(kPressureRefreshRegionStagingName) + "\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_thermodynamic_mode\": \"" +
+          std::string(kPressureRefreshThermodynamicMode) + "\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_required_inputs\": " +
+          std::string(kPressureRefreshRequiredInputsJson)) != std::string::npos);
+  assert(report.find("\"pressure_refresh_output_field\": \"P\"") != std::string::npos);
+  assert(
+      report.find(
+          "\"pressure_refresh_helper_name\": \"refresh_krosa_moving_nest_pressure\"") !=
+      std::string::npos);
+}
+
 void assert_output(const std::filesystem::path& output) {
   int file_id = -1;
   check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open output");
@@ -371,6 +451,7 @@ void assert_parent_fill_output(
   assert(
       read_text_attr(file_id, "TYWRF_P_DERIVED_REFRESH_STATUS") ==
       "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill");
+  assert_parent_fill_pressure_refresh_attrs(file_id);
   assert(
       read_text_attr(file_id, "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS") ==
       "diagnostic_only_nonphysical_non_gate");
@@ -415,6 +496,7 @@ void assert_parent_fill_output(
           "\"p_derived_refresh_status\": "
           "\"pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill\"") !=
       std::string::npos);
+  assert_parent_fill_pressure_refresh_report(report);
   assert(
       report.find(
           "\"direct_wrf_end_state_oracle_status\": "
@@ -525,6 +607,7 @@ void run_real_krosa_smoke_if_available(
   assert(
       read_text_attr(file_id, "TYWRF_P_DERIVED_REFRESH_STATUS") ==
       "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill");
+  assert_parent_fill_pressure_refresh_attrs(file_id);
   assert(
       read_text_attr(file_id, "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS") ==
       "diagnostic_only_nonphysical_non_gate");
@@ -553,6 +636,7 @@ void run_real_krosa_smoke_if_available(
           "\"p_derived_refresh_status\": "
           "\"pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill\"") !=
       std::string::npos);
+  assert_parent_fill_pressure_refresh_report(parent_fill_report_text);
   assert(
       parent_fill_report_text.find(
           "\"direct_wrf_end_state_oracle_status\": "

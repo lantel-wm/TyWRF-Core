@@ -20,6 +20,7 @@ add_library(tywrf_core STATIC
   src/io/forcing_apply.cpp
   src/io/forcing_io.cpp
   src/io/netcdf_schema.cpp
+  src/io/pressure_refresh_io.cpp
   src/io/wrf_state_io.cpp
   src/nest/nest_interface.cpp
   src/nest/state_remap.cpp
@@ -119,6 +120,10 @@ if(BUILD_TESTING)
   add_executable(tywrf_pressure_refresh_test tests/unit/pressure_refresh_test.cpp)
   target_link_libraries(tywrf_pressure_refresh_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_pressure_refresh_test COMMAND tywrf_pressure_refresh_test)
+
+  add_executable(tywrf_pressure_refresh_io_test tests/unit/pressure_refresh_io_test.cpp)
+  target_link_libraries(tywrf_pressure_refresh_io_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_pressure_refresh_io_test COMMAND tywrf_pressure_refresh_io_test)
 
   add_executable(tywrf_wrf_state_io_test tests/unit/wrf_state_io_test.cpp)
   target_link_libraries(tywrf_wrf_state_io_test PRIVATE TyWRF::Core)

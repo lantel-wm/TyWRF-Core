@@ -40,6 +40,33 @@ const std::vector<std::string>& minimum_static_refresh_fields() {
   return names;
 }
 
+const std::vector<std::string>& pressure_refresh_required_inputs() {
+  static const std::vector<std::string> names = {
+      "ALB",
+      "C3F",
+      "C4F",
+      "C3H",
+      "C4H",
+      "P_TOP",
+      "MU",
+      "MUB",
+      "T",
+      "PB",
+      "PH",
+      "PHB"};
+  return names;
+}
+
+constexpr std::string_view kPressureRefreshFormulaStatus =
+    "staged_helper_available_not_applied";
+constexpr std::string_view kPressureRefreshFormulaStagingName =
+    "krosa_hypsometric_opt2_use_theta_m";
+constexpr std::string_view kPressureRefreshRegionStagingName = "exposed_mass_cells";
+constexpr std::string_view kPressureRefreshThermodynamicMode = "use_theta_m_1";
+constexpr std::string_view kPressureRefreshIntegrationStatus = "helper_available_not_invoked";
+constexpr std::string_view kPressureRefreshHelperName = "refresh_krosa_moving_nest_pressure";
+constexpr std::string_view kPressureRefreshOutputField = "P";
+
 struct Options {
   std::filesystem::path state_path;
   std::filesystem::path template_path;
@@ -446,6 +473,11 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
   return value ? "true" : "false";
 }
 
+[[nodiscard]] std::string pressure_refresh_requirement_status(const bool required) {
+  return required ? "required_for_exposed_parent_fill_cells"
+                  : "not_required_no_exposed_mass_cells";
+}
+
 [[nodiscard]] bool diagnostic_parent_fill(
     const std::optional<DiagnosticRemapResult>& remap_result) {
   return remap_result.has_value() &&
@@ -480,8 +512,9 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
   }
   if (diagnostic_parent_fill(remap_result)) {
     return "C++ diagnostic remap parent-fill candidate; overlap cells copied from old d02 "
-           "state and exposed cells filled from a child-shaped parent-fill state. Not "
-           "physical and not a validation-gate candidate.";
+           "state and exposed cells filled from a child-shaped parent-fill state. P refresh "
+           "is required for exposed cells but not applied in skeleton mode. Not physical and "
+           "not a validation-gate candidate.";
   }
   return "C++ diagnostic remap-overlap candidate; overlap cells copied from old d02 state, "
          "exposed cells require parent fill and may contain NaN. Not physical and not a "
@@ -496,8 +529,8 @@ void write_double_attr(const NetcdfHandle& file, const std::string_view name, co
   }
   if (diagnostic_parent_fill(remap_result)) {
     return "C++ diagnostic parent-fill remap only; overlap comes from the old child state, "
-           "exposed cells come from a child-shaped parent-fill state, and output is not "
-           "physical.";
+           "exposed cells come from a child-shaped parent-fill state, P refresh is not "
+           "applied in skeleton mode, and output is not physical.";
   }
   return "C++ diagnostic overlap remap only; exposed cells require parent fill before any "
          "physical validation.";
@@ -680,6 +713,44 @@ void mark_skeleton_output(
           file,
           "TYWRF_P_DERIVED_REFRESH_STATUS",
           "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill");
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_REQUIRED",
+          bool_string(report.needs_derived_pressure_refresh));
+      write_text_attr(file, "TYWRF_PRESSURE_REFRESH_APPLIED", "false");
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_REQUIREMENT_STATUS",
+          pressure_refresh_requirement_status(report.needs_derived_pressure_refresh));
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS",
+          kPressureRefreshIntegrationStatus);
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_FORMULA_STATUS",
+          kPressureRefreshFormulaStatus);
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_FORMULA_STAGING_NAME",
+          kPressureRefreshFormulaStagingName);
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_REGION_STAGING_NAME",
+          kPressureRefreshRegionStagingName);
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_THERMODYNAMIC_MODE",
+          kPressureRefreshThermodynamicMode);
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_REQUIRED_INPUTS",
+          comma_join(pressure_refresh_required_inputs()));
+      write_text_attr(
+          file,
+          "TYWRF_PRESSURE_REFRESH_OUTPUT_FIELD",
+          kPressureRefreshOutputField);
+      write_text_attr(file, "TYWRF_PRESSURE_REFRESH_HELPER_NAME", kPressureRefreshHelperName);
       write_text_attr(
           file,
           "TYWRF_DIRECT_WRF_END_STATE_ORACLE_STATUS",
@@ -969,6 +1040,67 @@ void print_report(
           std::cout,
           "p_derived_refresh_status",
           "pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill",
+          true,
+          pretty);
+      write_json_bool(
+          std::cout,
+          "pressure_refresh_required",
+          report.needs_derived_pressure_refresh,
+          true,
+          pretty);
+      write_json_bool(std::cout, "pressure_refresh_applied", false, true, pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_requirement_status",
+          pressure_refresh_requirement_status(report.needs_derived_pressure_refresh),
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_integration_status",
+          kPressureRefreshIntegrationStatus,
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_formula_status",
+          kPressureRefreshFormulaStatus,
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_formula_staging_name",
+          kPressureRefreshFormulaStagingName,
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_region_staging_name",
+          kPressureRefreshRegionStagingName,
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_thermodynamic_mode",
+          kPressureRefreshThermodynamicMode,
+          true,
+          pretty);
+      write_json_array(
+          std::cout,
+          "pressure_refresh_required_inputs",
+          pressure_refresh_required_inputs(),
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_output_field",
+          kPressureRefreshOutputField,
+          true,
+          pretty);
+      write_json_string(
+          std::cout,
+          "pressure_refresh_helper_name",
+          kPressureRefreshHelperName,
           true,
           pretty);
       write_json_string(
