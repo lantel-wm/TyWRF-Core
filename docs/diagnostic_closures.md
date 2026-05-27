@@ -322,6 +322,31 @@ storm-center error `43.483 km`. It does not copy reference-end static truth and
 does not make the `00:10` gate pass; `U`, `V`, `MU`, `P`, and storm-center
 thresholds still fail.
 
+Round D39 keeps the post-D38 blockers out of closure scope:
+
+- D38 static refresh, committed as `517ad28`, is a real coordinate/static
+  producer improvement but not a gate pass. The improved `XLAT`, `XLONG`, and
+  `HGT` metrics and the storm-center reduction to `43.483 km` must not be used
+  to justify a closure patch for the still-failed `U`, `V`, `MU`, `P`, or
+  storm-center thresholds.
+- `--pressure-refresh` cannot be promoted into a closure or default fix. D37
+  worsened `P` normalized RMSE to `5.806413`, and P38 showed around 10%
+  same-source wrfout self-consistency error for the current refresh
+  formula/staging. Any candidate-facing refresh needs an explicit readiness
+  guard and self-consistency probe. A failed guard must stop or skip refresh,
+  not route through pressure_mu_closure, reference-end deltas, later restart
+  truth, or a metadata-only success marker.
+- Exposed-cell `T`/`PH`/`P` same-pose analysis may diagnose whether the
+  parent-fill, interpolation, base-state, or pressure path is inconsistent, but
+  a closure must not provide the missing producer. The accepted fix must use
+  non-oracle parent-child interpolation or recompute logic from cycle-start and
+  same-time inputs. It must not copy, blend, or bias-correct with `00:10` WRF
+  d02 truth.
+- Surface ABI v2 is a scaffold until the SFCLAY or physics-wrapper producer
+  actually runs. Closures must not treat ABI v2 structs, staging buffers,
+  interface reports, or preserved cycle-start `U10`, `V10`, `T2`, `Q2`,
+  `RAINC`, and `RAINNC` as executed physics or as a surface producer.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

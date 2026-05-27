@@ -578,6 +578,44 @@ still fails, but storm-center error drops from `150.622 km` to `43.483 km`.
 This validates the stale-coordinate fix while keeping the remaining state and
 pressure errors visible.
 
+## Round D39 Compatibility Boundary
+
+D38 commit `517ad28` (`Refresh selected-field moving nest statics`) is an
+effective shifted-d02 coordinate/static fix, not a validation pass. The current
+real KROSA selected-field candidate preserves d02 `DX/DY = 2000 m` and improves
+static fields to `XLAT` RMSE `0.000287 deg`, `XLONG` RMSE `0.000195 deg`, and
+`HGT` RMSE `0.541 m` with maximum absolute `HGT` error `20.789 m`. Storm-center
+distance improves from `150.622 km` to `43.483 km`, but the `00:10` strict gate
+still fails on storm-center distance and on `U` `0.117875`, `V` `0.134244`,
+`MU` `0.133382`, and `P` `0.907405` normalized RMSE. `T`, `PH`, and `QVAPOR`
+passing their thresholds does not close the moving-nest producer gap for the
+failed fields.
+
+`--pressure-refresh` is currently not a compatibility improvement and must stay
+guarded/off by default. D37 showed that the opt-in path worsened `P` normalized
+RMSE to `5.806413`; P38 pressure diagnostics also found same-source wrfout
+self-consistency error around 10% for the current refresh formula/staging. A
+candidate-facing pressure refresh therefore needs an explicit readiness guard
+and self-consistency probe before it can run as a producer. Failing that guard
+must abort or leave the candidate on the non-refresh path; it must not silently
+enable refresh, relabel helper telemetry as success, or claim improved
+compatibility.
+
+The exposed-cell `T`/`PH`/`P` same-pose issue is a producer/interpolation
+problem, not a reference-truth problem. Analysis may compare exposed cells at a
+common reconstructed child pose to understand which field family is inconsistent,
+but the production path must use cycle-start fields, d01-derived parent data,
+same-time KROSA constants, and documented interpolation/recompute rules. It
+must not read or blend `00:10` WRF d02 truth for `T`, `PH`, `P`, statics, or
+storm position.
+
+The surface ABI v2 work is a scaffold boundary only until a real SFCLAY or
+physics-wrapper surface producer is invoked. ABI definitions, staging buffers,
+or report fields may describe planned `U10`, `V10`, `T2`, `Q2`, `RAINC`, and
+`RAINNC` ownership, but they must not claim executed WRF physics, executed
+surface diagnostics, or a closed surface producer while the values remain
+cycle-start-preserved or scaffold-only.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

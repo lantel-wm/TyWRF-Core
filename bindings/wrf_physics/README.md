@@ -100,6 +100,15 @@ keeps the TyWRF core layout independent from WRF's Fortran ABI.
 That is enough for the current no-op validation stub. It is not enough for real
 WRF physics drivers.
 
+The header now keeps that v1 struct and `tywrf_wrf_physics_step` behavior
+frozen, and adds an ABI v2 sidecar scaffold for the first SFCLAY leaf smoke.
+The new `_ex` entry point accepts the unchanged v1 staging pointer plus a chain
+of v2 blocks beginning with `TywrfPhysicsBlockHeader`. The implemented v2
+validator requires driver context, derived state, static/mask, and SFCLAY
+surface blocks and can distinguish a complete sidecar from missing required
+field pointers. `_ex` still reports `wrapper_unavailable` with
+`executed_physics = 0`; it is not a real WRF physics producer.
+
 ABI v2 needs either a new struct or an extension block for these staging groups:
 
 The detailed field inventory, capability grouping, and backward-compatible ABI

@@ -56,7 +56,8 @@ typedef enum TywrfPhysicsStatus {
   TYWRF_PHYSICS_STATUS_INVALID_DIMENSIONS = 6,
   TYWRF_PHYSICS_STATUS_INVALID_STRIDES = 7,
   TYWRF_PHYSICS_STATUS_INVALID_ELEMENT_SIZE = 8,
-  TYWRF_PHYSICS_STATUS_MISSING_REQUIRED_FIELD = 9
+  TYWRF_PHYSICS_STATUS_MISSING_REQUIRED_FIELD = 9,
+  TYWRF_PHYSICS_STATUS_WRAPPER_UNAVAILABLE = 10
 } TywrfPhysicsStatus;
 
 typedef enum TywrfPhysicsDomain {
@@ -90,7 +91,27 @@ typedef enum TywrfPhysicsFieldId {
   TYWRF_PHYSICS_FIELD_T2 = 22,
   TYWRF_PHYSICS_FIELD_Q2 = 23,
   TYWRF_PHYSICS_FIELD_RAINC = 24,
-  TYWRF_PHYSICS_FIELD_RAINNC = 25
+  TYWRF_PHYSICS_FIELD_RAINNC = 25,
+  TYWRF_PHYSICS_FIELD_TSK = 26,
+  TYWRF_PHYSICS_FIELD_ZNT = 27,
+  TYWRF_PHYSICS_FIELD_UST = 28,
+  TYWRF_PHYSICS_FIELD_PBLH = 29,
+  TYWRF_PHYSICS_FIELD_HFX = 30,
+  TYWRF_PHYSICS_FIELD_QFX = 31,
+  TYWRF_PHYSICS_FIELD_LH = 32,
+  TYWRF_PHYSICS_FIELD_TH2 = 33,
+  TYWRF_PHYSICS_FIELD_XLAND = 34,
+  TYWRF_PHYSICS_FIELD_LAKEMASK = 35,
+  TYWRF_PHYSICS_FIELD_LU_INDEX = 36,
+  TYWRF_PHYSICS_FIELD_HGT = 37,
+  TYWRF_PHYSICS_FIELD_XLAT = 38,
+  TYWRF_PHYSICS_FIELD_XLONG = 39,
+  TYWRF_PHYSICS_FIELD_U_PHY = 40,
+  TYWRF_PHYSICS_FIELD_V_PHY = 41,
+  TYWRF_PHYSICS_FIELD_T_PHY = 42,
+  TYWRF_PHYSICS_FIELD_QV_CURR = 43,
+  TYWRF_PHYSICS_FIELD_P_PHY = 44,
+  TYWRF_PHYSICS_FIELD_DZ8W = 45
 } TywrfPhysicsFieldId;
 
 typedef struct TywrfPhysicsField2D {
@@ -191,6 +212,107 @@ typedef struct TywrfPhysicsDiagnostics {
   int32_t executed_physics;
 } TywrfPhysicsDiagnostics;
 
+typedef struct TywrfPhysicsConstantsV2 {
+  double g;
+  double cp;
+  double r_d;
+  double r_v;
+  double p1000mb;
+  double t0;
+} TywrfPhysicsConstantsV2;
+
+typedef struct TywrfPhysicsDriverContextV2 {
+  TywrfPhysicsBlockHeader header;
+  int32_t domain_id;
+  int32_t mass_nx;
+  int32_t mass_ny;
+  int32_t mass_nz;
+  int32_t full_nz;
+  int32_t ids;
+  int32_t ide;
+  int32_t jds;
+  int32_t jde;
+  int32_t kds;
+  int32_t kde;
+  int32_t ims;
+  int32_t ime;
+  int32_t jms;
+  int32_t jme;
+  int32_t kms;
+  int32_t kme;
+  int32_t its;
+  int32_t ite;
+  int32_t jts;
+  int32_t jte;
+  int32_t kts;
+  int32_t kte;
+  int32_t enable_sfclay;
+  int32_t enable_surface_driver;
+  int32_t enable_pbl_driver;
+  int32_t enable_cumulus_driver;
+  int32_t enable_microphysics_driver;
+  int32_t enable_radiation_driver;
+  int64_t step_index;
+  double dx_m;
+  double dy_m;
+  double dt_s;
+  double start_seconds;
+  double end_seconds;
+  double xtime_minutes;
+  TywrfPhysicsSuiteConfig suite;
+  const TywrfPhysicsConstantsV2* constants;
+} TywrfPhysicsDriverContextV2;
+
+typedef struct TywrfPhysicsDerivedStateV2 {
+  TywrfPhysicsBlockHeader header;
+  TywrfPhysicsField3D u_phy;
+  TywrfPhysicsField3D v_phy;
+  TywrfPhysicsField3D t_phy;
+  TywrfPhysicsField3D qv_curr;
+  TywrfPhysicsField3D p_phy;
+  TywrfPhysicsField3D dz8w;
+} TywrfPhysicsDerivedStateV2;
+
+typedef struct TywrfPhysicsStaticMaskV2 {
+  TywrfPhysicsBlockHeader header;
+  TywrfPhysicsField2D xland;
+  TywrfPhysicsField2D lakemask;
+  TywrfPhysicsField2D lu_index;
+  TywrfPhysicsField2D hgt;
+  TywrfPhysicsField2D xlat;
+  TywrfPhysicsField2D xlong;
+} TywrfPhysicsStaticMaskV2;
+
+typedef struct TywrfPhysicsSfclaySurfaceV2 {
+  TywrfPhysicsBlockHeader header;
+  TywrfPhysicsField2D psfc;
+  TywrfPhysicsField2D tsk;
+  TywrfPhysicsField2D znt;
+  TywrfPhysicsField2D ust;
+  TywrfPhysicsField2D pblh;
+  TywrfPhysicsField2D hfx;
+  TywrfPhysicsField2D qfx;
+  TywrfPhysicsField2D lh;
+  TywrfPhysicsField2D u10;
+  TywrfPhysicsField2D v10;
+  TywrfPhysicsField2D t2;
+  TywrfPhysicsField2D q2;
+  TywrfPhysicsField2D th2;
+  TywrfPhysicsField2D scratch_1;
+  TywrfPhysicsField2D scratch_2;
+} TywrfPhysicsSfclaySurfaceV2;
+
+#define TYWRF_PHYSICS_CONSTANTS_V2_STRUCT_SIZE \
+  ((uint32_t)sizeof(TywrfPhysicsConstantsV2))
+#define TYWRF_PHYSICS_DRIVER_CONTEXT_V2_STRUCT_SIZE \
+  ((uint32_t)sizeof(TywrfPhysicsDriverContextV2))
+#define TYWRF_PHYSICS_DERIVED_STATE_V2_STRUCT_SIZE \
+  ((uint32_t)sizeof(TywrfPhysicsDerivedStateV2))
+#define TYWRF_PHYSICS_STATIC_MASK_V2_STRUCT_SIZE \
+  ((uint32_t)sizeof(TywrfPhysicsStaticMaskV2))
+#define TYWRF_PHYSICS_SFCLAY_SURFACE_V2_STRUCT_SIZE \
+  ((uint32_t)sizeof(TywrfPhysicsSfclaySurfaceV2))
+
 /*
  * Stable C entry point for the future WRF physics wrapper.
  *
@@ -203,6 +325,26 @@ typedef struct TywrfPhysicsDiagnostics {
  */
 int32_t tywrf_wrf_physics_step(
     const TywrfPhysicsStaging* staging,
+    TywrfPhysicsDiagnostics* diagnostics);
+
+/*
+ * ABI v2 sidecar validation and future extended entry point.
+ *
+ * The sidecar chain is additive to the frozen v1 staging struct. Every v2 block
+ * starts with TywrfPhysicsBlockHeader and is linked through header.next. The
+ * current implementation validates a minimal SFCLAY-ready sidecar set but does
+ * not call WRF. A valid tywrf_wrf_physics_step_ex request returns
+ * TYWRF_PHYSICS_STATUS_WRAPPER_UNAVAILABLE with diagnostics.executed_physics
+ * set to zero.
+ */
+int32_t tywrf_physics_validate_sidecar_v2(
+    const TywrfPhysicsStaging* staging,
+    const TywrfPhysicsBlockHeader* sidecars,
+    TywrfPhysicsDiagnostics* diagnostics);
+
+int32_t tywrf_wrf_physics_step_ex(
+    const TywrfPhysicsStaging* staging,
+    const TywrfPhysicsBlockHeader* sidecars,
     TywrfPhysicsDiagnostics* diagnostics);
 
 const char* tywrf_physics_status_name(int32_t status);

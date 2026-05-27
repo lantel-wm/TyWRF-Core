@@ -446,6 +446,39 @@ diagnostic improves from `150.622 km` to `43.483 km`, but remains above the
 `20 km` threshold. Strict field failures remain `U`, `V`, `MU`, and `P`; this
 is not a pass and should stop at the `00:10` gate.
 
+Round D39 validation keeps the D38 static-refresh result in the candidate
+evidence column but not in the pass column. Commit `517ad28` fixed stale
+shifted-d02 static coordinates well enough to reduce the storm-center error,
+yet the strict `00:10` gate remains failed with `U` normalized RMSE `0.117875`,
+`V` `0.134244`, `MU` `0.133382`, `P` `0.907405`, and storm-center distance
+`43.483 km`. `T`, `PH`, and `QVAPOR` passing does not allow validation to
+advance to `00:20`; the first failed endpoint is still `00:10`.
+
+`--pressure-refresh` must be treated as guarded experimental plumbing. It is
+not a default validation mode and not an improvement claim. D37 worsened `P`
+normalized RMSE to `5.806413`, and the P38 same-source wrfout probe showed
+about 10% pressure-refresh self-consistency error. Validation tooling and
+reports should require a readiness guard that checks required inputs, same-pose
+base-state/static consistency, finite staging, and self-consistency before
+refresh is allowed to affect a gate-eligible candidate. If the guard fails, the
+run should abort or report pressure refresh as skipped; it must not fall back
+to reference-end truth, an oracle correction, or a silently refreshed default.
+
+Exposed-cell same-pose analysis for `T`, `PH`, and `P` is diagnostic only
+unless it produces values from non-oracle inputs. A valid future producer may
+use cycle-start d02 remap state, d01-derived parent fields, same-time KROSA
+constants, and documented parent-child interpolation or recompute formulas.
+The validation path must not use `00:10` WRF d02 truth as an exposed-cell
+source, delta, bias correction, or storm-position guide.
+
+Surface ABI v2 validation must distinguish scaffold readiness from executed
+physics. A report may say that ABI v2 staging or SFCLAY call boundaries are
+present, but it cannot count `U10`, `V10`, `T2`, `Q2`, `RAINC`, or `RAINNC` as
+real surface-producer output until the ABI path actually invokes the documented
+surface/physics wrapper and writes those fields from that producer. Preserved
+cycle-start values and scaffold-only outputs remain producer gaps for field and
+Vmax validation.
+
 Example:
 
 ```bash

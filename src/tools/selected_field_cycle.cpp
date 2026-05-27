@@ -156,8 +156,10 @@ Options:
   --output-time-index N          Time index written in --output; default 0.
   --variables A,B,C              Output variables; default strict fields, Times/XLAT/XLONG/HGT,
                                   plus available d02 PB/PHB/MUB/PSFC/U10/V10/T2/Q2/RAINC/RAINNC.
-  --pressure-refresh             Opt in to provider-backed KROSA pressure refresh for exposed d02
-                                  mass cells using --template metadata before writing output.
+  --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
+                                  Current selected-field state aborts before output because T/PH
+                                  and provider base-state terrain are not yet refreshed by the
+                                  same moved-pose producer.
   --pretty                       Pretty-print JSON report.
   --help                         Show this help.
 
@@ -621,6 +623,54 @@ void require_finite_static_fields(const StaticFieldSet& fields) {
 }
 
 [[nodiscard]] std::string join_variables(const std::vector<std::string>& variables);
+
+struct PressureRefreshReadiness {
+  bool static_refresh_applied = false;
+  bool static_refresh_uses_reference_end = false;
+  bool thermodynamic_base_state_consistency_ready = false;
+  bool provider_terrain_uses_moved_candidate_hgt = false;
+
+  [[nodiscard]] bool ready() const noexcept {
+    return static_refresh_applied && !static_refresh_uses_reference_end &&
+           thermodynamic_base_state_consistency_ready &&
+           provider_terrain_uses_moved_candidate_hgt;
+  }
+};
+
+[[nodiscard]] PressureRefreshReadiness evaluate_pressure_refresh_readiness(
+    const CandidateReport& report) {
+  PressureRefreshReadiness readiness;
+  readiness.static_refresh_applied =
+      report.static_refresh.ok() && report.changed_static_template_points > 0;
+  readiness.static_refresh_uses_reference_end = false;
+  readiness.thermodynamic_base_state_consistency_ready = false;
+  readiness.provider_terrain_uses_moved_candidate_hgt = false;
+  return readiness;
+}
+
+[[nodiscard]] std::string pressure_refresh_not_ready_message(
+    const PressureRefreshReadiness readiness) {
+  std::ostringstream message;
+  message << "pressure_refresh_not_ready: static refreshed but thermodynamic/base-state "
+             "consistency missing";
+  message << "; static_refresh_applied="
+          << (readiness.static_refresh_applied ? "true" : "false");
+  message << "; static_refresh_uses_reference_end="
+          << (readiness.static_refresh_uses_reference_end ? "true" : "false");
+  message << "; exposed T/PH are preserved d02 start fields and have not been refreshed by the "
+             "same moved-pose producer/interpolation";
+  message << "; provider terrain would still come from template HGT because moved candidate HGT "
+             "is not injectable into the pressure-refresh provider yet";
+  return message.str();
+}
+
+void require_pressure_refresh_ready_for_compute(const CandidateReport& report) {
+  const auto readiness = evaluate_pressure_refresh_readiness(report);
+  if (readiness.ready()) {
+    return;
+  }
+  throw std::runtime_error(pressure_refresh_not_ready_message(readiness));
+}
 
 void require_pressure_refresh_inputs_ready(
     const tywrf::io::KrosaPressureRefreshReadResult& inputs) {
@@ -1164,6 +1214,7 @@ int run(Options options) {
       output_static,
       report);
   if (options.pressure_refresh) {
+    require_pressure_refresh_ready_for_compute(report);
     apply_pressure_refresh(options, candidate, report);
   }
 

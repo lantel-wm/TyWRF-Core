@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -333,6 +334,16 @@ int run_command_status(const std::string& command) {
   return std::system(command.c_str());
 }
 
+[[nodiscard]] std::string read_file(const std::filesystem::path& path) {
+  std::ifstream stream(path);
+  if (!stream) {
+    throw std::runtime_error("failed to read file: " + path.string());
+  }
+  std::ostringstream buffer;
+  buffer << stream.rdbuf();
+  return buffer.str();
+}
+
 void run_command(const std::string& command) {
   const int status = run_command_status(command);
   if (status != 0) {
@@ -558,6 +569,31 @@ void assert_successful_candidate(
   check_nc(nc_close(file_id), "close output");
 }
 
+void assert_pressure_refresh_not_ready(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path) {
+  std::filesystem::remove(output);
+  assert(!std::filesystem::exists(output));
+  const auto status = run_command_status(
+      base_command(executable, d01_start, d02_start, template_path, output) +
+      " --pressure-refresh >" + shell_quote(log_path) + " 2>&1");
+  assert(status != 0);
+  assert(!std::filesystem::exists(output));
+  const auto log = read_file(log_path);
+  assert(
+      log.find(
+          "pressure_refresh_not_ready: static refreshed but thermodynamic/base-state "
+          "consistency missing") != std::string::npos);
+  assert(log.find("static_refresh_applied=true") != std::string::npos);
+  assert(log.find("static_refresh_uses_reference_end=false") != std::string::npos);
+  assert(log.find("exposed T/PH are preserved d02 start fields") != std::string::npos);
+  assert(log.find("moved candidate HGT is not injectable") != std::string::npos);
+}
+
 void run_rejection_tests(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
@@ -633,8 +669,7 @@ int main(const int argc, char** argv) {
     const auto output = root / "tywrf_selected_field_d02_2025-07-26_00:10:00";
     const auto pressure_output =
         root / "tywrf_selected_field_pressure_d02_2025-07-26_00:10:00";
-    const auto missing_pressure_output =
-        root / "tywrf_selected_field_missing_pressure_d02_2025-07-26_00:10:00";
+    const auto pressure_log = root / "pressure_refresh_not_ready.log";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
     create_wrf_fixture(d02_start, 2000.0, FixtureShape{10, 10}, true, false, true);
     create_wrf_fixture(template_path, 2000.0, FixtureShape{10, 10}, false, false);
@@ -650,16 +685,13 @@ int main(const int argc, char** argv) {
     run_command(base_command(executable, d01_start, d02_start, template_path, output));
     assert_successful_candidate(output);
 
-    run_command(
-        base_command(executable, d01_start, d02_start, pressure_template_path, pressure_output) +
-        " --pressure-refresh");
-    assert_successful_candidate(pressure_output, true, pressure_template_path);
-
-    const auto missing_pressure_status = run_command_status(
-        base_command(executable, d01_start, d02_start, template_path, missing_pressure_output) +
-        " --pressure-refresh >/dev/null 2>&1");
-    assert(missing_pressure_status != 0);
-    assert(!std::filesystem::exists(missing_pressure_output));
+    assert_pressure_refresh_not_ready(
+        executable,
+        d01_start,
+        d02_start,
+        pressure_template_path,
+        pressure_output,
+        pressure_log);
     run_rejection_tests(executable, d01_start, d02_start, template_path, root);
 
     std::filesystem::remove_all(root);

@@ -26,6 +26,7 @@ enum class Status : std::int32_t {
   invalid_strides = TYWRF_PHYSICS_STATUS_INVALID_STRIDES,
   invalid_element_size = TYWRF_PHYSICS_STATUS_INVALID_ELEMENT_SIZE,
   missing_required_field = TYWRF_PHYSICS_STATUS_MISSING_REQUIRED_FIELD,
+  wrapper_unavailable = TYWRF_PHYSICS_STATUS_WRAPPER_UNAVAILABLE,
 };
 
 [[nodiscard]] constexpr TywrfPhysicsSuiteConfig make_krosa_suite_config(
@@ -163,8 +164,18 @@ template <typename Real>
     const TywrfPhysicsStaging& staging,
     TywrfPhysicsDiagnostics* diagnostics = nullptr) noexcept;
 
+[[nodiscard]] Status validate_sidecar_v2(
+    const TywrfPhysicsStaging& staging,
+    const TywrfPhysicsBlockHeader* sidecars,
+    TywrfPhysicsDiagnostics* diagnostics = nullptr) noexcept;
+
 [[nodiscard]] Status run_stub_bridge(
     const TywrfPhysicsStaging& staging,
+    TywrfPhysicsDiagnostics* diagnostics = nullptr) noexcept;
+
+[[nodiscard]] Status run_stub_bridge_ex(
+    const TywrfPhysicsStaging& staging,
+    const TywrfPhysicsBlockHeader* sidecars,
     TywrfPhysicsDiagnostics* diagnostics = nullptr) noexcept;
 
 [[nodiscard]] std::string_view status_name(Status status) noexcept;
