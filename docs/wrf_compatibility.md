@@ -859,6 +859,34 @@ substitute, direct parent interpolation of `P`, diagnostic artifact gate
 evidence, and treating scratch telemetry or unreachable apply plumbing as a
 gate pass.
 
+## Round D51 Hook Postcondition And Controlled Apply Seam Boundary
+
+D51 still must not open the selected-field pressure-refresh guard by default.
+For normal use, `thermodynamic_base_state_consistency_ready=false` remains the
+contract: `selected_field_cycle --pressure-refresh` must fail closed with a
+nonzero exit, produce no output file, make no candidate writes, and report no
+`pressure_refresh_applied=true`. The default selected-field candidate numerical
+path remains unchanged.
+
+The hook postcondition hardening target is narrow. If a controlled path reaches
+real pressure-refresh apply, a successful apply may change only `P`, `PB`,
+`MUB`, and `PHB`. It must prove zero writes to remapped overlap cells and all
+halo cells. Invalid compute, non-finite compute, inconsistent counts, or any
+partial compute/write sequence cannot be reported as a successful apply.
+
+The controlled selected-field seam is a test boundary only. Its purpose is to
+prove that the tool-level apply call consumes the moved candidate `HGT` terrain
+used by the selected-field candidate, not metadata terrain from the template or
+source file. Seam and experiment outputs are not gate-eligible, are not
+compatibility passes, and must not be promoted into normal CLI behavior.
+
+D51 keeps the same shortcut bans as D50: no `00:10` reference-end truth, no
+restart `PHB`/`ALB` provider substitute, no direct parent interpolation of `P`,
+and no diagnostic artifact gate evidence. A postcondition test or controlled
+seam proof is readiness evidence only until a real selected-field
+`--pressure-refresh` candidate is produced by the normal guarded path and
+passes the progressive `00:10` gate.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

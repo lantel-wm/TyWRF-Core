@@ -691,6 +691,31 @@ provider substitutes, direct parent interpolation of `P`, diagnostic artifact
 gate evidence, scratch telemetry, and unreachable guarded apply plumbing as
 gate evidence.
 
+Round D51 adds safety validation for the hook and a controlled selected-field
+apply seam, but it does not change selected-field gate status. The default
+`--pressure-refresh` path must still fail closed while
+`thermodynamic_base_state_consistency_ready=false`: nonzero exit, no output
+file, no writes to the candidate, no `pressure_refresh_applied=true`, and no
+change to the default selected-field candidate numerical path.
+
+Hook postcondition tests should verify that a real apply, when reached only
+through an explicit controlled path, can be accepted only if the changed-field
+set is limited to `P`, `PB`, `MUB`, and `PHB`. They must also verify zero
+overlap/halo writes and reject invalid compute, non-finite compute,
+inconsistent requested/computed/applied/changed counts, or any partial compute
+as a failure rather than a successful pressure refresh.
+
+The selected-field controlled seam is allowed only to prove tool-level terrain
+provenance: apply must use the moved candidate `HGT`, not metadata terrain.
+The seam output, any experimental candidate, and any hook-only report remain
+non-gate evidence. They cannot satisfy the strict d02 gate, cannot be reported
+as a `00:10` pass, and cannot replace the future normal guarded validation run.
+
+Validation must continue rejecting `00:10` reference-end truth, restart
+`PHB`/`ALB` provider substitutes, direct parent interpolation of `P`, diagnostic
+artifact gate evidence, scratch telemetry, unreachable guarded apply plumbing,
+and controlled-seam outputs presented as gate evidence.
+
 Example:
 
 ```bash

@@ -463,13 +463,26 @@ void expect_close(const float actual, const float expected, const std::string_vi
 void assert_successful_candidate(
     const std::filesystem::path& output,
     const bool pressure_refresh = false,
-    const std::filesystem::path& pressure_refresh_metadata_source = {}) {
+    const std::filesystem::path& pressure_refresh_metadata_source = {},
+    const bool experimental_pressure_refresh = false) {
   int file_id = -1;
   check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open output");
-  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") == "true");
-  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ONLY") ==
+         (experimental_pressure_refresh ? "true" : "false"));
+  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") ==
+         (experimental_pressure_refresh ? "false" : "true"));
+  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") ==
+         (experimental_pressure_refresh ? "false" : "true"));
   assert(read_text_attr(file_id, "TYWRF_VALIDATION_GATE_ONLY") == "false");
-  assert(read_text_attr(file_id, "TYWRF_CANDIDATE_KIND") == "selected_field_integrator_v0");
+  assert(
+      read_text_attr(file_id, "TYWRF_CANDIDATE_KIND") ==
+      (experimental_pressure_refresh ? "selected_field_pressure_refresh_experimental_apply_v0"
+                                     : "selected_field_integrator_v0"));
+  if (experimental_pressure_refresh) {
+    assert(read_text_attr(file_id, "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY") == "true");
+  } else {
+    assert(!has_text_attr(file_id, "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY"));
+  }
   assert(read_text_attr(file_id, "TYWRF_D02_RESOLUTION_CHECK") == "d02_2km");
   assert(!has_text_attr(file_id, "TYWRF_NOT_PHYSICAL"));
   assert(read_double_attr(file_id, "DX") == 2000.0);
@@ -493,15 +506,28 @@ void assert_successful_candidate(
   if (pressure_refresh) {
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN") == "true");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED") == "true");
+    assert(
+        read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS") ==
+        (experimental_pressure_refresh ? "experimental_apply_test_only" : "applied_to_candidate"));
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY") ==
+           (experimental_pressure_refresh ? "true" : "false"));
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_PROVIDER_OK") == "true");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_STAGING_OK") == "true");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TERRAIN_OVERRIDE_USED") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TERRAIN_SOURCE") ==
+           "moved_candidate_HGT");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TERRAIN_PROVENANCE") ==
+           "override:moved_candidate_HGT");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE") == pressure_refresh_metadata_source.string());
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_P_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS") > 0.0);
   } else {
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
@@ -525,10 +551,22 @@ void assert_successful_candidate(
   assert(contains_csv_value(interpolated_variables, "QVAPOR"));
   assert(!contains_csv_value(interpolated_variables, "P"));
   const auto candidate_message = read_text_attr(file_id, "TYWRF_CANDIDATE_MESSAGE");
-  assert(candidate_message.find("U/V/T/PH/MU/QVAPOR exposed cells are parent interpolated") !=
-         std::string::npos);
-  assert(candidate_message.find("P/PB/PHB/MUB remain finite d02 start-state ownership") !=
-         std::string::npos);
+  if (experimental_pressure_refresh) {
+    assert(candidate_message.find("Experimental selected-field pressure-refresh apply seam") !=
+           std::string::npos);
+    assert(candidate_message.find("not a validation gate pass or normal integrator output") !=
+           std::string::npos);
+    assert(candidate_message.find("moved_candidate_HGT terrain override") != std::string::npos);
+    assert(candidate_message.find("refreshed exposed P/PB/PHB/MUB") != std::string::npos);
+  } else if (pressure_refresh) {
+    assert(candidate_message.find("pressure refresh applied to exposed P/PB/PHB/MUB") !=
+           std::string::npos);
+  } else {
+    assert(candidate_message.find("U/V/T/PH/MU/QVAPOR exposed cells are parent interpolated") !=
+           std::string::npos);
+    assert(candidate_message.find("P/PB/PHB/MUB remain finite d02 start-state ownership") !=
+           std::string::npos);
+  }
   assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
 
   expect_close(read_2d_value(file_id, "XLAT", 2, 0), linear_2d(2, 5, 40'000.0F, 1.0F, 10.0F), "XLAT overlap");
@@ -544,6 +582,11 @@ void assert_successful_candidate(
   expect_close(exposed_xlat, linear_2d(0, 14, 40'000.0F, 1.0F, 10.0F), "XLAT exposed");
   expect_close(read_2d_value(file_id, "XLONG", 0, 9), linear_2d(0, 14, 50'000.0F, 1.0F, 10.0F), "XLONG exposed");
   expect_close(read_2d_value(file_id, "HGT", 0, 9), 613.8F, "HGT parent exposed");
+  if (experimental_pressure_refresh) {
+    const auto moved_candidate_hgt = read_2d_value(file_id, "HGT", 0, 9);
+    const auto metadata_hgt = linear_2d(0, 9, 20.0F, 1.0F, 5.0F);
+    assert(std::fabs(moved_candidate_hgt - metadata_hgt) > kTolerance);
+  }
 
   expect_close(read_3d_value(file_id, "U", 1, 2, 0), linear_3d(1, 2, 5, 10'000.0F, 1.0F, 10.0F, 100.0F), "U overlap");
   expect_close(read_3d_value(file_id, "V", 1, 2, 0), linear_3d(1, 2, 5, 20'000.0F, 1.0F, 10.0F, 100.0F), "V overlap");
@@ -667,6 +710,58 @@ void assert_pressure_refresh_not_ready(
   assert(log.find("pressure_refresh_applied=false") != std::string::npos);
 }
 
+void assert_hidden_apply_flag_absent_from_help(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& root) {
+  const auto help_log = root / "help.log";
+  const auto status = run_command_status(
+      shell_quote(executable) + " --help >" + shell_quote(help_log) + " 2>&1");
+  assert(status == 0);
+  const auto help = read_file(help_log);
+  assert(help.find("--pressure-refresh") != std::string::npos);
+  assert(help.find("--experimental-pressure-refresh-apply") == std::string::npos);
+}
+
+void assert_experimental_pressure_refresh_apply(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path) {
+  std::filesystem::remove(output);
+  assert(!std::filesystem::exists(output));
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, output) +
+      " --pressure-refresh --experimental-pressure-refresh-apply >" + shell_quote(log_path) +
+      " 2>&1");
+  assert(std::filesystem::exists(output));
+  const auto log = read_file(log_path);
+  assert(
+      log.find("\"status\": \"selected_field_pressure_refresh_experimental_apply_generated\"") !=
+      std::string::npos);
+  assert(log.find("\"candidate_kind\": \"selected_field_pressure_refresh_experimental_apply_v0\"") !=
+         std::string::npos);
+  assert(log.find("\"gate_candidate\": false") != std::string::npos);
+  assert(log.find("\"integrator_output\": false") != std::string::npos);
+  assert(log.find("\"experimental_pressure_refresh_apply\": true") != std::string::npos);
+  assert(log.find("\"pressure_refresh_applied\": true") != std::string::npos);
+  assert(log.find("\"pressure_refresh_experimental_apply\": true") != std::string::npos);
+  assert(log.find("\"pressure_refresh_integration_status\": \"experimental_apply_test_only\"") !=
+         std::string::npos);
+  assert(log.find("\"pressure_refresh_terrain_override_used\": true") != std::string::npos);
+  assert(log.find("\"pressure_refresh_terrain_source\": \"moved_candidate_HGT\"") !=
+         std::string::npos);
+  assert(log.find("\"pressure_refresh_terrain_source\": \"HGT\"") == std::string::npos);
+  assert(log.find("\"pressure_refresh_terrain_provenance\": \"override:moved_candidate_HGT\"") !=
+         std::string::npos);
+  assert(log.find("\"pressure_refresh_changed_p_points\": ") != std::string::npos);
+  assert(log.find("\"pressure_refresh_changed_pb_points\": ") != std::string::npos);
+  assert(log.find("\"pressure_refresh_changed_mub_points\": ") != std::string::npos);
+  assert(log.find("\"pressure_refresh_changed_phb_points\": ") != std::string::npos);
+  assert_successful_candidate(output, true, template_path, true);
+}
+
 void run_rejection_tests(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
@@ -720,6 +815,24 @@ void run_rejection_tests(
       " --to-parent-start 2,2 >/dev/null 2>&1");
   assert(no_change_status != 0);
   assert(!std::filesystem::exists(no_change_output));
+
+  const auto hidden_without_pressure_output = root / "hidden_without_pressure_output";
+  const auto hidden_without_pressure_log = root / "hidden_without_pressure.log";
+  const auto hidden_without_pressure_status = run_command_status(
+      base_command(
+          executable,
+          d01_start,
+          d02_start,
+          template_path,
+          hidden_without_pressure_output) +
+      " --experimental-pressure-refresh-apply >" + shell_quote(hidden_without_pressure_log) +
+      " 2>&1");
+  assert(hidden_without_pressure_status != 0);
+  assert(!std::filesystem::exists(hidden_without_pressure_output));
+  const auto hidden_without_pressure = read_file(hidden_without_pressure_log);
+  assert(hidden_without_pressure.find(
+             "--experimental-pressure-refresh-apply requires --pressure-refresh") !=
+         std::string::npos);
 }
 
 }  // namespace
@@ -742,7 +855,10 @@ int main(const int argc, char** argv) {
     const auto output = root / "tywrf_selected_field_d02_2025-07-26_00:10:00";
     const auto pressure_output =
         root / "tywrf_selected_field_pressure_d02_2025-07-26_00:10:00";
+    const auto experimental_pressure_output =
+        root / "tywrf_selected_field_experimental_pressure_d02_2025-07-26_00:10:00";
     const auto pressure_log = root / "pressure_refresh_not_ready.log";
+    const auto experimental_pressure_log = root / "pressure_refresh_experimental_apply.log";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
     create_wrf_fixture(d02_start, 2000.0, FixtureShape{10, 10}, true, false, true);
     create_wrf_fixture(template_path, 2000.0, FixtureShape{10, 10}, false, false);
@@ -755,6 +871,8 @@ int main(const int argc, char** argv) {
         false,
         true);
 
+    assert_hidden_apply_flag_absent_from_help(executable, root);
+
     run_command(base_command(executable, d01_start, d02_start, template_path, output));
     assert_successful_candidate(output);
 
@@ -765,6 +883,14 @@ int main(const int argc, char** argv) {
         pressure_template_path,
         pressure_output,
         pressure_log);
+    assert(!std::filesystem::exists(pressure_output));
+    assert_experimental_pressure_refresh_apply(
+        executable,
+        d01_start,
+        d02_start,
+        pressure_template_path,
+        experimental_pressure_output,
+        experimental_pressure_log);
     run_rejection_tests(executable, d01_start, d02_start, template_path, root);
 
     std::filesystem::remove_all(root);

@@ -13,6 +13,8 @@ namespace {
 
 constexpr float kSentinel = -9'999.0F;
 constexpr float kInitialT = 7.0F;
+constexpr std::int32_t kInvalidExposedI = 3;
+constexpr std::int32_t kInvalidExposedJ = 2;
 
 tywrf::Grid make_grid() {
   return tywrf::Grid({4, 3, 2, 3, tywrf::uniform_halo_3d(1)});
@@ -279,6 +281,158 @@ void assert_state_unchanged(
   assert_unchanged(state.rainnc, before.rainnc, "RAINNC");
 }
 
+void assert_state_unchanged_except_pressure_apply_outputs(
+    const tywrf::State<float>& state,
+    const StateSnapshot& before) {
+  assert_unchanged(state.u, before.u, "U");
+  assert_unchanged(state.v, before.v, "V");
+  assert_unchanged(state.w, before.w, "W");
+  assert_unchanged(state.ph, before.ph, "PH");
+  assert_unchanged(state.t, before.t, "T");
+  assert_unchanged(state.qvapor, before.qvapor, "QVAPOR");
+  assert_unchanged(state.qcloud, before.qcloud, "QCLOUD");
+  assert_unchanged(state.qrain, before.qrain, "QRAIN");
+  assert_unchanged(state.qice, before.qice, "QICE");
+  assert_unchanged(state.qsnow, before.qsnow, "QSNOW");
+  assert_unchanged(state.qgraup, before.qgraup, "QGRAUP");
+  assert_unchanged(state.qnice, before.qnice, "QNICE");
+  assert_unchanged(state.qnrain, before.qnrain, "QNRAIN");
+  assert_unchanged(state.mu, before.mu, "MU");
+  assert_unchanged(state.psfc, before.psfc, "PSFC");
+  assert_unchanged(state.u10, before.u10, "U10");
+  assert_unchanged(state.v10, before.v10, "V10");
+  assert_unchanged(state.t2, before.t2, "T2");
+  assert_unchanged(state.q2, before.q2, "Q2");
+  assert_unchanged(state.rainc, before.rainc, "RAINC");
+  assert_unchanged(state.rainnc, before.rainnc, "RAINNC");
+}
+
+void assert_same_snapshot_value(
+    const float actual,
+    const std::vector<float>& before,
+    const std::size_t index,
+    const std::string_view label) {
+  if (actual != before[index]) {
+    std::cerr << label << " changed unexpectedly\n";
+    assert(false);
+  }
+}
+
+void assert_overlap_unchanged(
+    const tywrf::FieldStorage3D<float>& field,
+    const std::vector<float>& before,
+    const tywrf::nest::RemapWindow& window,
+    const std::string_view label) {
+  assert(field.size() == before.size());
+  const auto layout = field.layout();
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
+    for (std::int32_t k = 0; k < layout.active_nz(); ++k) {
+      for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
+        if (!in_window(window, i, j)) {
+          continue;
+        }
+        const auto ii = layout.i_begin() + i;
+        const auto jj = layout.j_begin() + j;
+        const auto kk = layout.k_begin() + k;
+        assert_same_snapshot_value(
+            view(ii, jj, kk),
+            before,
+            layout.index(ii, jj, kk),
+            label);
+      }
+    }
+  }
+}
+
+void assert_overlap_unchanged(
+    const tywrf::FieldStorage2D<float>& field,
+    const std::vector<float>& before,
+    const tywrf::nest::RemapWindow& window,
+    const std::string_view label) {
+  assert(field.size() == before.size());
+  const auto layout = field.layout();
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
+    for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
+      if (!in_window(window, i, j)) {
+        continue;
+      }
+      const auto ii = layout.i_begin() + i;
+      const auto jj = layout.j_begin() + j;
+      assert_same_snapshot_value(
+          view(ii, jj),
+          before,
+          layout.index(ii, jj),
+          label);
+    }
+  }
+}
+
+void assert_halo_unchanged_from_snapshot(
+    const tywrf::FieldStorage3D<float>& field,
+    const std::vector<float>& before,
+    const std::string_view label) {
+  assert(field.size() == before.size());
+  const auto layout = field.layout();
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.ny; ++j) {
+    for (std::int32_t k = 0; k < layout.nz; ++k) {
+      for (std::int32_t i = 0; i < layout.nx; ++i) {
+        const bool halo =
+            i < layout.i_begin() || i >= layout.i_end() ||
+            j < layout.j_begin() || j >= layout.j_end() ||
+            k < layout.k_begin() || k >= layout.k_end();
+        if (halo) {
+          assert_same_snapshot_value(
+              view(i, j, k),
+              before,
+              layout.index(i, j, k),
+              label);
+        }
+      }
+    }
+  }
+}
+
+void assert_halo_unchanged_from_snapshot(
+    const tywrf::FieldStorage2D<float>& field,
+    const std::vector<float>& before,
+    const std::string_view label) {
+  assert(field.size() == before.size());
+  const auto layout = field.layout();
+  const auto view = field.view();
+  for (std::int32_t j = 0; j < layout.ny; ++j) {
+    for (std::int32_t i = 0; i < layout.nx; ++i) {
+      const bool halo =
+          i < layout.i_begin() || i >= layout.i_end() ||
+          j < layout.j_begin() || j >= layout.j_end();
+      if (halo) {
+        assert_same_snapshot_value(
+            view(i, j),
+            before,
+            layout.index(i, j),
+            label);
+      }
+    }
+  }
+}
+
+void assert_pressure_apply_overlap_and_halo_unchanged(
+    const tywrf::State<float>& state,
+    const StateSnapshot& before,
+    const tywrf::nest::RemapPlan& plan) {
+  assert_overlap_unchanged(state.p, before.p, plan.mass, "P overlap");
+  assert_overlap_unchanged(state.pb, before.pb, plan.mass, "PB overlap");
+  assert_overlap_unchanged(state.mub, before.mub, plan.surface, "MUB overlap");
+  assert_overlap_unchanged(state.phb, before.phb, plan.w_full, "PHB overlap");
+
+  assert_halo_unchanged_from_snapshot(state.p, before.p, "P halo");
+  assert_halo_unchanged_from_snapshot(state.pb, before.pb, "PB halo");
+  assert_halo_unchanged_from_snapshot(state.mub, before.mub, "MUB halo");
+  assert_halo_unchanged_from_snapshot(state.phb, before.phb, "PHB halo");
+}
+
 template <typename Storage>
 float max_abs_difference(const Storage& lhs, const Storage& rhs) {
   assert(lhs.size() == rhs.size());
@@ -348,12 +502,23 @@ void assert_no_pressure_compute_dry_run_call(
   assert(report.pressure_compute_dry_run_report.invalid_point_count == 0);
 }
 
+void make_one_exposed_pressure_column_invalid(
+    tywrf::State<float>& state,
+    const tywrf::nest::RemapPlan& plan) {
+  assert(!in_window(plan.surface, kInvalidExposedI, kInvalidExposedJ));
+  auto mu_view = state.mu.view();
+  mu_view(
+      mu_view.halo.i_lower + kInvalidExposedI,
+      mu_view.halo.j_lower + kInvalidExposedJ) = -1.0e9F;
+}
+
 void test_success_syncs_provider_base_state_and_refreshes_exposed_pressure() {
   const auto grid = make_grid();
   auto metadata = make_metadata();
   auto plan = make_plan();
   tywrf::State<float> state(grid);
   fill_state(state);
+  const auto before = snapshot_state(state);
 
   tywrf::dynamics::KrosaBaseStateProvider provider;
   const auto provider_report = provider.reconstruct(grid, metadata);
@@ -389,6 +554,10 @@ void test_success_syncs_provider_base_state_and_refreshes_exposed_pressure() {
   assert(report.sync_halo_write_count == 0);
   assert(report.compute_report.target_column_count == 10);
   assert(report.compute_report.refreshed_point_count == 20);
+  assert(report.compute_report.invalid_point_count == 0);
+  assert(report.compute_report.skipped_point_count == 0);
+  assert(!report.compute_report.touched_overlap_cells);
+  assert(!report.compute_report.touched_halo_cells);
   assert(!report.touched_overlap_cells);
   assert(!report.touched_halo_cells);
   assert_provider_reports_are_non_gate(report);
@@ -460,6 +629,8 @@ void test_success_syncs_provider_base_state_and_refreshes_exposed_pressure() {
   assert_halo_unchanged(state.pb);
   assert_halo_unchanged(state.phb);
   assert_halo_unchanged(state.mub);
+  assert_state_unchanged_except_pressure_apply_outputs(state, before);
+  assert_pressure_apply_overlap_and_halo_unchanged(state, before, plan);
   for (std::size_t index = 0; index < state.qvapor.size(); ++index) {
     assert(state.qvapor.data()[index] == kSentinel);
   }
@@ -584,6 +755,7 @@ void test_pressure_compute_scratch_dry_run_reports_would_refresh_without_modifyi
   assert(
       dry_run_report.pressure_compute_dry_run_report.invalid_point_count ==
       applied_report.compute_report.invalid_point_count);
+  assert(dry_run_report.pressure_compute_dry_run_report.skipped_point_count == 0);
   assert(dry_run_report.compute_report.refreshed_point_count == 0);
   assert(!dry_run_report.pressure_compute_dry_run_report.touched_overlap_cells);
   assert(!dry_run_report.pressure_compute_dry_run_report.touched_halo_cells);
@@ -595,6 +767,102 @@ void test_pressure_compute_scratch_dry_run_reports_would_refresh_without_modifyi
       tywrf::dynamics::PressureRefreshAlbSource::
           base_state_reconstruction_provider);
   assert_state_unchanged(dry_run_state, before);
+}
+
+void test_pressure_compute_dry_run_invalid_points_fail_closed_without_modifying_state() {
+  const auto metadata = make_metadata();
+  const auto plan = make_plan();
+
+  tywrf::dynamics::KrosaPressureRefreshHookOptions options{};
+  options.base_state_sync_dry_run = true;
+  options.pressure_compute_dry_run = true;
+
+  tywrf::State<float> state(make_grid());
+  fill_state(state);
+  make_one_exposed_pressure_column_invalid(state, plan);
+  const auto before = snapshot_state(state);
+
+  const auto report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          state,
+          metadata,
+          options);
+
+  assert(!report.ok());
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(report.provider_ok);
+  assert(report.staging_ok);
+  assert(!report.pressure_refresh_applied);
+  assert(!report.calls_pressure_refresh_compute);
+  assert(report.base_state_sync_dry_run);
+  assert(report.pressure_compute_dry_run);
+  assert(report.pressure_compute_dry_run_called);
+  assert(!report.pressure_compute_dry_run_ok);
+  assert(report.base_state_sync_contract_ok);
+  assert(!report.base_state_sync_applied);
+  assert(report.would_refresh_p_point_count == 18);
+  assert(report.dry_run_invalid_p_point_count == 2);
+  assert(report.pressure_compute_dry_run_report.target_column_count == 10);
+  assert(report.pressure_compute_dry_run_report.refreshed_point_count == 18);
+  assert(report.pressure_compute_dry_run_report.invalid_point_count == 2);
+  assert(report.pressure_compute_dry_run_report.skipped_point_count == 2);
+  assert(!report.pressure_compute_dry_run_report.touched_overlap_cells);
+  assert(!report.pressure_compute_dry_run_report.touched_halo_cells);
+  assert(!report.touched_overlap_cells);
+  assert(!report.touched_halo_cells);
+  assert_provider_reports_are_non_gate(report);
+  assert_state_unchanged(state, before);
+}
+
+void test_real_apply_invalid_points_fail_closed_and_preserve_write_boundary() {
+  const auto metadata = make_metadata();
+  const auto plan = make_plan();
+
+  tywrf::State<float> state(make_grid());
+  fill_state(state);
+  make_one_exposed_pressure_column_invalid(state, plan);
+  const auto before = snapshot_state(state);
+
+  const auto report =
+      tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
+          plan,
+          state,
+          metadata);
+
+  assert(!report.ok());
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(report.provider_ok);
+  assert(report.staging_ok);
+  assert(!report.pressure_refresh_applied);
+  assert(report.calls_pressure_refresh_compute);
+  assert(!report.base_state_sync_dry_run);
+  assert(!report.pressure_compute_dry_run);
+  assert_no_pressure_compute_dry_run_call(report);
+  assert(report.base_state_sync_contract_ok);
+  assert(report.base_state_sync_applied);
+  assert(report.compute_report.target_column_count == 10);
+  assert(report.compute_report.refreshed_point_count == 18);
+  assert(report.compute_report.invalid_point_count == 2);
+  assert(report.compute_report.skipped_point_count == 2);
+  assert(!report.compute_report.touched_overlap_cells);
+  assert(!report.compute_report.touched_halo_cells);
+  assert(!report.touched_overlap_cells);
+  assert(!report.touched_halo_cells);
+  assert_provider_reports_are_non_gate(report);
+  assert_state_unchanged_except_pressure_apply_outputs(state, before);
+  assert_pressure_apply_overlap_and_halo_unchanged(state, before, plan);
+
+  const auto p_layout = state.p.layout();
+  const auto p_view = state.p.view();
+  for (std::int32_t k = 0; k < p_layout.active_nz(); ++k) {
+    const auto ii = p_layout.i_begin() + kInvalidExposedI;
+    const auto jj = p_layout.j_begin() + kInvalidExposedJ;
+    const auto kk = p_layout.k_begin() + k;
+    assert(
+        p_view(ii, jj, kk) ==
+        before.p[p_layout.index(ii, jj, kk)]);
+  }
 }
 
 void test_pressure_compute_dry_run_requires_base_state_dry_run_without_modifying_state() {
@@ -962,6 +1230,8 @@ int main() {
   test_success_syncs_provider_base_state_and_refreshes_exposed_pressure();
   test_dry_run_reports_contract_without_modifying_state_or_compute();
   test_pressure_compute_scratch_dry_run_reports_would_refresh_without_modifying_state();
+  test_pressure_compute_dry_run_invalid_points_fail_closed_without_modifying_state();
+  test_real_apply_invalid_points_fail_closed_and_preserve_write_boundary();
   test_pressure_compute_dry_run_requires_base_state_dry_run_without_modifying_state();
   test_dry_run_with_terrain_override_reports_source_without_modifying_state();
   test_pressure_compute_scratch_dry_run_with_terrain_override_reports_source();

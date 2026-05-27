@@ -250,6 +250,36 @@ void copy_storage(const Storage& source, Storage& target) {
   std::copy(source.data(), source.data() + source.size(), target.data());
 }
 
+[[nodiscard]] constexpr nest::NestResult
+pressure_compute_postcondition_result(
+    const PressureRefreshReport& compute_report) noexcept {
+  if (!compute_report.ok()) {
+    return compute_report.result;
+  }
+
+  if (compute_report.refreshed_point_count == 0) {
+    return result(
+        nest::NestStatus::invalid_contract,
+        "pressure refresh hook requires at least one refreshed pressure point");
+  }
+
+  if (compute_report.invalid_point_count != 0 ||
+      compute_report.skipped_point_count != 0) {
+    return result(
+        nest::NestStatus::invalid_contract,
+        "pressure refresh hook rejected partial or invalid pressure compute");
+  }
+
+  if (compute_report.touched_overlap_cells ||
+      compute_report.touched_halo_cells) {
+    return result(
+        nest::NestStatus::invalid_contract,
+        "pressure refresh hook rejected overlap or halo pressure writes");
+  }
+
+  return ok_result();
+}
+
 }  // namespace
 
 KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
@@ -347,9 +377,9 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
             plan,
             staging.inputs,
             options.pressure_refresh);
-    report.result = report.pressure_compute_dry_run_report.result;
-    report.pressure_compute_dry_run_ok =
-        report.pressure_compute_dry_run_report.ok();
+    report.result = pressure_compute_postcondition_result(
+        report.pressure_compute_dry_run_report);
+    report.pressure_compute_dry_run_ok = report.result.ok();
     report.would_refresh_p_point_count =
         report.pressure_compute_dry_run_report.refreshed_point_count;
     report.dry_run_invalid_p_point_count =
@@ -389,9 +419,8 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
           plan,
           staging.inputs,
           options.pressure_refresh);
-  report.result = report.compute_report.result;
-  report.pressure_refresh_applied =
-      report.compute_report.ok() && report.compute_report.refreshed_point_count > 0;
+  report.result = pressure_compute_postcondition_result(report.compute_report);
+  report.pressure_refresh_applied = report.result.ok();
   report.touched_overlap_cells = report.compute_report.touched_overlap_cells;
   report.touched_halo_cells = report.compute_report.touched_halo_cells;
   return report;

@@ -70,6 +70,7 @@ struct Options {
   bool has_from_parent_start = false;
   bool has_to_parent_start = false;
   bool pressure_refresh = false;
+  bool experimental_pressure_refresh_apply = false;
   bool pretty = false;
   std::vector<std::string> variables;
 };
@@ -95,6 +96,9 @@ struct CandidateReport {
   std::filesystem::path pressure_refresh_metadata_source;
   std::size_t pressure_refresh_metadata_time_index = 0;
   std::uint64_t pressure_refresh_changed_p_points = 0;
+  std::uint64_t pressure_refresh_changed_pb_points = 0;
+  std::uint64_t pressure_refresh_changed_mub_points = 0;
+  std::uint64_t pressure_refresh_changed_phb_points = 0;
   double cen_lat = 0.0;
   double cen_lon = 0.0;
 };
@@ -301,6 +305,8 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       options.variables = split_variables(require_value(arg));
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
+    } else if (arg == "--experimental-pressure-refresh-apply") {
+      options.experimental_pressure_refresh_apply = true;
     } else if (arg == "--pretty") {
       options.pretty = true;
     } else {
@@ -334,6 +340,10 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
   }
   if (!options.has_to_parent_start) {
     throw std::invalid_argument("--to-parent-start is required");
+  }
+  if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
+    throw std::invalid_argument(
+        "--experimental-pressure-refresh-apply requires --pressure-refresh");
   }
   return options;
 }
@@ -973,9 +983,14 @@ void probe_pressure_refresh_dry_run_contract(
 
 void require_pressure_refresh_hook_success(
     const tywrf::dynamics::KrosaPressureRefreshHookReport& report) {
+  const bool uses_moved_candidate_hgt =
+      report.provider_report.terrain_override_used &&
+      report.provider_report.terrain_source_name == "moved_candidate_HGT" &&
+      report.provider_report.terrain_provenance == "override:moved_candidate_HGT";
   if (report.ok() && report.provider_ok && report.staging_ok &&
       report.calls_pressure_refresh_compute && report.pressure_refresh_applied &&
-      !report.touched_overlap_cells && !report.touched_halo_cells) {
+      !report.touched_overlap_cells && !report.touched_halo_cells &&
+      uses_moved_candidate_hgt) {
     return;
   }
 
@@ -989,7 +1004,11 @@ void require_pressure_refresh_hook_success(
           << " compute_called=" << (report.calls_pressure_refresh_compute ? "true" : "false")
           << " applied=" << (report.pressure_refresh_applied ? "true" : "false")
           << " touched_overlap=" << (report.touched_overlap_cells ? "true" : "false")
-          << " touched_halo=" << (report.touched_halo_cells ? "true" : "false");
+          << " touched_halo=" << (report.touched_halo_cells ? "true" : "false")
+          << " terrain_override_used="
+          << (report.provider_report.terrain_override_used ? "true" : "false")
+          << " terrain_source=" << report.provider_report.terrain_source_name
+          << " terrain_provenance=" << report.provider_report.terrain_provenance;
   throw std::runtime_error(message.str());
 }
 
@@ -1008,6 +1027,12 @@ void apply_pressure_refresh(
 
   const std::vector<float> p_before(
       candidate.p.data(), candidate.p.data() + candidate.p.size());
+  const std::vector<float> pb_before(
+      candidate.pb.data(), candidate.pb.data() + candidate.pb.size());
+  const std::vector<float> mub_before(
+      candidate.mub.data(), candidate.mub.data() + candidate.mub.size());
+  const std::vector<float> phb_before(
+      candidate.phb.data(), candidate.phb.data() + candidate.phb.size());
   const auto terrain_override = make_moved_candidate_hgt_terrain_override(output_static);
   tywrf::dynamics::KrosaPressureRefreshHookOptions hook_options{};
   hook_options.terrain_override = &terrain_override;
@@ -1020,6 +1045,9 @@ void apply_pressure_refresh(
   require_finite_strict_fields(candidate);
 
   report.pressure_refresh_changed_p_points = changed_points(p_before, candidate.p);
+  report.pressure_refresh_changed_pb_points = changed_points(pb_before, candidate.pb);
+  report.pressure_refresh_changed_mub_points = changed_points(mub_before, candidate.mub);
+  report.pressure_refresh_changed_phb_points = changed_points(phb_before, candidate.phb);
   if (report.pressure_refresh_changed_p_points == 0) {
     throw std::runtime_error("selected-field pressure refresh did not change any P point");
   }
@@ -1177,15 +1205,34 @@ void stamp_gate_metadata(
     const Resolution resolution,
     const tywrf::nest::ParentChildDescriptor& descriptor,
     const CandidateReport& report) {
+  const bool experimental_pressure_refresh_apply =
+      options.experimental_pressure_refresh_apply && report.pressure_refresh.has_value();
   const NetcdfHandle file(options.output_path, NetcdfHandle::Mode::write);
   file.check(nc_redef(file.id()), "enter define mode");
   write_double_attr(file, "DX", resolution.dx);
   write_double_attr(file, "DY", resolution.dy);
-  write_text_attr(file, "TYWRF_DIAGNOSTIC_ONLY", "false");
-  write_text_attr(file, "TYWRF_GATE_CANDIDATE", "true");
-  write_text_attr(file, "TYWRF_INTEGRATOR_OUTPUT", "true");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ONLY",
+      experimental_pressure_refresh_apply ? "true" : "false");
+  write_text_attr(
+      file,
+      "TYWRF_GATE_CANDIDATE",
+      experimental_pressure_refresh_apply ? "false" : "true");
+  write_text_attr(
+      file,
+      "TYWRF_INTEGRATOR_OUTPUT",
+      experimental_pressure_refresh_apply ? "false" : "true");
   write_text_attr(file, "TYWRF_VALIDATION_GATE_ONLY", "false");
-  write_text_attr(file, "TYWRF_CANDIDATE_KIND", "selected_field_integrator_v0");
+  write_text_attr(
+      file,
+      "TYWRF_CANDIDATE_KIND",
+      experimental_pressure_refresh_apply
+          ? "selected_field_pressure_refresh_experimental_apply_v0"
+          : "selected_field_integrator_v0");
+  if (experimental_pressure_refresh_apply) {
+    write_text_attr(file, "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY", "true");
+  }
   write_text_attr(file, "TYWRF_CANDIDATE_DOMAIN", "d02");
   write_text_attr(file, "TYWRF_D02_RESOLUTION_CHECK", "d02_2km");
   write_text_attr(file, "TYWRF_CYCLE_START", options.cycle_start);
@@ -1250,10 +1297,30 @@ void stamp_gate_metadata(
     const auto& pressure = *report.pressure_refresh;
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_OPT_IN", "true");
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_APPLIED", "true");
-    write_text_attr(file, "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS", "applied_to_candidate");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS",
+        experimental_pressure_refresh_apply ? "experimental_apply_test_only"
+                                            : "applied_to_candidate");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY",
+        experimental_pressure_refresh_apply ? "true" : "false");
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_PROVIDER_OK", "true");
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_STAGING_OK", "true");
     write_text_attr(file, "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED", "true");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_TERRAIN_OVERRIDE_USED",
+        pressure.provider_report.terrain_override_used ? "true" : "false");
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_TERRAIN_SOURCE",
+        pressure.provider_report.terrain_source_name);
+    write_text_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_TERRAIN_PROVENANCE",
+        pressure.provider_report.terrain_provenance);
     write_text_attr(
         file,
         "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE",
@@ -1283,13 +1350,41 @@ void stamp_gate_metadata(
         file,
         "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS",
         static_cast<double>(report.pressure_refresh_changed_p_points));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS",
+        static_cast<double>(report.pressure_refresh_changed_pb_points));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS",
+        static_cast<double>(report.pressure_refresh_changed_mub_points));
+    write_double_attr(
+        file,
+        "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS",
+        static_cast<double>(report.pressure_refresh_changed_phb_points));
   }
-  write_text_attr(
-      file,
-      "TYWRF_CANDIDATE_MESSAGE",
-      "Selected-field moving-nest candidate from start states only; U/V/T/PH/MU/QVAPOR "
-      "exposed cells are parent interpolated, XLAT/XLONG/HGT are refreshed from "
-      "start-state pose data, and P/PB/PHB/MUB remain finite d02 start-state ownership.");
+  if (experimental_pressure_refresh_apply) {
+    write_text_attr(
+        file,
+        "TYWRF_CANDIDATE_MESSAGE",
+        "Experimental selected-field pressure-refresh apply seam output for tool tests only; "
+        "not a validation gate pass or normal integrator output. The apply path used "
+        "moved_candidate_HGT terrain override and refreshed exposed P/PB/PHB/MUB.");
+  } else if (report.pressure_refresh.has_value()) {
+    write_text_attr(
+        file,
+        "TYWRF_CANDIDATE_MESSAGE",
+        "Selected-field moving-nest candidate from start states only; U/V/T/PH/MU/QVAPOR "
+        "exposed cells are parent interpolated, XLAT/XLONG/HGT are refreshed from "
+        "start-state pose data, and pressure refresh applied to exposed P/PB/PHB/MUB.");
+  } else {
+    write_text_attr(
+        file,
+        "TYWRF_CANDIDATE_MESSAGE",
+        "Selected-field moving-nest candidate from start states only; U/V/T/PH/MU/QVAPOR "
+        "exposed cells are parent interpolated, XLAT/XLONG/HGT are refreshed from "
+        "start-state pose data, and P/PB/PHB/MUB remain finite d02 start-state ownership.");
+  }
   file.check(nc_enddef(file.id()), "leave define mode");
 }
 
@@ -1365,12 +1460,33 @@ void print_report(
     const tywrf::nest::ParentChildDescriptor& descriptor,
     const CandidateReport& report) {
   const bool pretty = options.pretty;
+  const bool experimental_pressure_refresh_apply =
+      options.experimental_pressure_refresh_apply && report.pressure_refresh.has_value();
   std::cout << "{" << (pretty ? "\n" : "");
-  write_json_string(std::cout, "status", "selected_field_candidate_generated", true, pretty);
-  write_json_string(std::cout, "candidate_kind", "selected_field_integrator_v0", true, pretty);
-  write_json_bool(std::cout, "gate_candidate", true, true, pretty);
-  write_json_bool(std::cout, "integrator_output", true, true, pretty);
+  write_json_string(
+      std::cout,
+      "status",
+      experimental_pressure_refresh_apply
+          ? "selected_field_pressure_refresh_experimental_apply_generated"
+          : "selected_field_candidate_generated",
+      true,
+      pretty);
+  write_json_string(
+      std::cout,
+      "candidate_kind",
+      experimental_pressure_refresh_apply
+          ? "selected_field_pressure_refresh_experimental_apply_v0"
+          : "selected_field_integrator_v0",
+      true,
+      pretty);
+  write_json_bool(
+      std::cout, "gate_candidate", !experimental_pressure_refresh_apply, true, pretty);
+  write_json_bool(
+      std::cout, "integrator_output", !experimental_pressure_refresh_apply, true, pretty);
   write_json_bool(std::cout, "validation_gate_only", false, true, pretty);
+  if (experimental_pressure_refresh_apply) {
+    write_json_bool(std::cout, "experimental_pressure_refresh_apply", true, true, pretty);
+  }
   write_json_string(std::cout, "d01_start_state", options.d01_start_state_path.string(), true, pretty);
   write_json_string(std::cout, "d02_start_state", options.d02_start_state_path.string(), true, pretty);
   write_json_string(std::cout, "candidate", options.output_path.string(), true, pretty);
@@ -1422,6 +1538,37 @@ void print_report(
     write_json_bool(std::cout, "pressure_refresh_provider_ok", true, true, pretty);
     write_json_bool(std::cout, "pressure_refresh_staging_ok", true, true, pretty);
     write_json_bool(std::cout, "pressure_refresh_compute_called", true, true, pretty);
+    write_json_bool(
+        std::cout,
+        "pressure_refresh_experimental_apply",
+        experimental_pressure_refresh_apply,
+        true,
+        pretty);
+    write_json_string(
+        std::cout,
+        "pressure_refresh_integration_status",
+        experimental_pressure_refresh_apply ? "experimental_apply_test_only"
+                                            : "applied_to_candidate",
+        true,
+        pretty);
+    write_json_bool(
+        std::cout,
+        "pressure_refresh_terrain_override_used",
+        pressure.provider_report.terrain_override_used,
+        true,
+        pretty);
+    write_json_string(
+        std::cout,
+        "pressure_refresh_terrain_source",
+        pressure.provider_report.terrain_source_name,
+        true,
+        pretty);
+    write_json_string(
+        std::cout,
+        "pressure_refresh_terrain_provenance",
+        pressure.provider_report.terrain_provenance,
+        true,
+        pretty);
     write_json_string(
         std::cout,
         "pressure_refresh_metadata_source",
@@ -1444,6 +1591,24 @@ void print_report(
         std::cout,
         "pressure_refresh_changed_p_points",
         static_cast<double>(report.pressure_refresh_changed_p_points),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_changed_pb_points",
+        static_cast<double>(report.pressure_refresh_changed_pb_points),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_changed_mub_points",
+        static_cast<double>(report.pressure_refresh_changed_mub_points),
+        true,
+        pretty);
+    write_json_number(
+        std::cout,
+        "pressure_refresh_changed_phb_points",
+        static_cast<double>(report.pressure_refresh_changed_phb_points),
         false,
         pretty);
   }
@@ -1511,7 +1676,9 @@ int run(Options options) {
   if (options.pressure_refresh) {
     probe_pressure_refresh_provider_readiness(options, candidate, output_static, report);
     probe_pressure_refresh_dry_run_contract(options, candidate, output_static, report);
-    require_pressure_refresh_ready_for_compute(report);
+    if (!options.experimental_pressure_refresh_apply) {
+      require_pressure_refresh_ready_for_compute(report);
+    }
     apply_pressure_refresh(options, candidate, output_static, report);
   }
 

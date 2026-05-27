@@ -544,6 +544,27 @@ scope:
   gate evidence, and scratch or unreachable-apply telemetry presented as gate
   evidence.
 
+Round D51 keeps hook postcondition and selected-field controlled seam evidence
+outside closure scope:
+
+- D51 does not open the default selected-field `--pressure-refresh` guard. The
+  normal path must still fail closed with nonzero exit, no output file, no
+  candidate writes, no `pressure_refresh_applied=true`, and no change to the
+  default selected-field numerical path.
+- Hook postcondition hardening is an apply safety check, not a closure. If real
+  apply is reached in a controlled path, only `P`, `PB`, `MUB`, and `PHB` may
+  change; overlap cells and halo cells must have zero writes; invalid,
+  non-finite, inconsistent, or partial compute/write results must fail instead
+  of being reported as successful apply.
+- The controlled selected-field seam may prove only that tool-level apply uses
+  moved candidate `HGT` rather than metadata terrain. A closure must not convert
+  that seam, its reports, or experimental output into a pressure producer or
+  gate evidence.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  provider substitutes, direct parent interpolation of `P`, diagnostic artifact
+  gate evidence, scratch telemetry, unreachable apply plumbing, and controlled
+  seam outputs presented as gate evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
