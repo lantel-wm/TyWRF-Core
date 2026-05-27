@@ -38,8 +38,9 @@ Spectral nudging is fixed to the KROSA `wrffdda_d01` contract:
   and `MU_NDG_OLD/MU_NDG_NEW`.
 
 The current C++ nest module validates these constants and exchange contracts
-only. Parent-child interpolation and two-way feedback return explicit
-`not_implemented` statuses until the numerical kernels are added.
+and now stages selected moving-nest remap helpers. Full parent-child
+interpolation and two-way feedback still return explicit `not_implemented`
+statuses until the numerical kernels are added.
 
 ## Minimum Output Variables
 
@@ -209,6 +210,31 @@ and apply the diagnostic overlap copy for a meaningful moving-nest shift.
 Newly exposed d02 cells remain intentionally marked with NaN until parent-fill
 interpolation is implemented, so this output must not be used as a physical
 6 h candidate or as a validation-gate pass.
+
+## Moving-Nest Parent Fill And Pressure Refresh
+
+TyWRF now stages the WRF-style moving-nest start sequence as:
+
+1. overlap remap from the old child state;
+2. direct parent-fill for WRF direct-fill fields in newly exposed cells;
+3. post-`start_domain` time-level sync for exposed cells;
+4. a future derived/recomputed perturbation-pressure refresh.
+
+The direct parent-fill field set intentionally excludes `P`. It fills exposed
+cells for `U`, `V`, `W`, `PH`, `PHB`, `T`, `PB`, water species, `MU`, `MUB`,
+`PSFC`, `U10`, `V10`, `T2`, `Q2`, `RAINC`, and `RAINNC`; exposed `P` remains
+pending with `TYWRF_P_DERIVED_REFRESH_STATUS =
+pending_derive_or_recompute_after_parent_fill_not_direct_wrf_parent_fill`.
+
+`time_level_sync` is a standalone helper for the WRF post-`start_domain`
+exposed-cell `_2 -> _1` copy. It takes POD field views for `U`, `V`, `T`, `W`,
+`PH`, `MU`, and optional `TKE`; it is not a `State` expansion and does not
+refresh pressure.
+
+Diagnostic parent-fill candidates remain marked `not_physical`,
+`diagnostic_only`, and `gate_candidate = false`. A second-stage pressure
+refresh helper should stay KROSA-scoped and explicitly labeled until its `P`
+producer is validated against WRF.
 
 ## Physics Bridge Compatibility Notes
 

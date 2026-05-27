@@ -71,6 +71,13 @@ integrator result. The skeleton metadata/report records `--interval-minutes 10`
 when `--cycle-start` and `--cycle-end` imply a 10 min segment. d02 `DX` and `DY`
 must remain `2000 m`.
 
+Diagnostic moving-nest parent-fill outputs and 10-minute diagnostic reports are
+also non-physical and non-gate, even when exposed cells have direct parent-fill
+values. The current staged sequence is overlap remap, direct parent-fill fields,
+post-start-domain time-level sync, then future `P` refresh. Because direct
+parent-fill intentionally excludes exposed-cell `P`, these reports must not
+relax the d02 strict gate or count as a validation pass.
+
 ## Broader Field Thresholds
 
 These thresholds remain the broader validation target for later reports:
@@ -105,6 +112,12 @@ temperature, the bottom staggered geopotential level from `PH + PHB` supplies
 surface height, and `PSFC` supplies surface pressure. This is an approximation
 for validation plumbing, but it is not a `PSFC` proxy and it fails clearly if
 any required input field is missing or shape-incompatible.
+
+Because the derivation depends on finite `P + PB`, validation tools must not
+hide sentinel or pending exposed-cell `P`. A parent-fill candidate with pending
+pressure refresh should fail derivation or gate checks until the pressure
+producer is fixed. Any second-stage pressure-refresh helper remains
+KROSA-scoped and explicitly labeled until validated against WRF.
 
 Example:
 

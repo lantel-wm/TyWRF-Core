@@ -20,6 +20,18 @@ The closure may produce candidate `MU`, `P`, `PSFC`, or derived `SLP` fields for
 diagnostic reports only. These fields must be treated as `not_physical` and
 `diagnostic_closure` data even when their names match WRF core variable names.
 
+## Moving-Nest Pressure Refresh Boundary
+
+Moving-nest parent-fill staging is not a pressure closure. Its direct
+parent-fill fields intentionally exclude exposed-cell `P`; that field must be
+derived or recomputed by a real pressure producer before a physical gate can use
+it. Diagnostic parent-fill files and 10-minute reports may surface the pending
+refresh metadata, but they must remain non-physical and non-gate artifacts.
+
+A second-stage pressure-refresh helper may be introduced only as a
+KROSA-scoped, explicitly labeled producer until validated against WRF. It must
+not hide sentinel `P`, rename `PSFC` as pressure, or patch validation metrics.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
