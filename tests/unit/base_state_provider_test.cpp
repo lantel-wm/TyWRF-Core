@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -42,6 +43,35 @@ tywrf::io::KrosaPressureRefreshMetadata make_metadata() {
   return metadata;
 }
 
+tywrf::FieldStorage2D<float> make_override_terrain(
+    const tywrf::ActiveShape2D active,
+    const float offset_m) {
+  tywrf::FieldStorage2D<float> terrain(
+      active,
+      tywrf::horizontal_halo(make_grid().config().halo));
+  auto view = terrain.view();
+  for (std::int32_t j = 0; j < active.ny; ++j) {
+    for (std::int32_t i = 0; i < active.nx; ++i) {
+      view(view.halo.i_lower + i, view.halo.j_lower + j) =
+          25.0F + offset_m + 10.0F * static_cast<float>(j) +
+          static_cast<float>(i);
+    }
+  }
+  return terrain;
+}
+
+tywrf::FieldStorage2D<float> make_override_terrain(const float offset_m) {
+  return make_override_terrain({4, 3}, offset_m);
+}
+
+tywrf::dynamics::KrosaBaseStateProviderTerrainOverride moved_terrain_override(
+    const tywrf::FieldStorage2D<float>& terrain) {
+  return {
+      terrain.view(),
+      "moved_candidate_HGT",
+      "override:moved_candidate_HGT"};
+}
+
 template <typename Real>
 std::int32_t active_nx(const tywrf::FieldView3D<Real>& view) {
   return view.nx - view.halo.i_lower - view.halo.i_upper;
@@ -75,6 +105,15 @@ void assert_report_flags(const tywrf::dynamics::KrosaBaseStateProviderReport& re
   assert(!report.calls_pressure_refresh_compute);
 }
 
+void assert_views_empty(const tywrf::dynamics::KrosaBaseStateProvider& provider) {
+  const auto views = provider.views();
+  assert(views.pb.nx == 0);
+  assert(views.t_init.nx == 0);
+  assert(views.mub.nx == 0);
+  assert(views.alb.nx == 0);
+  assert(views.phb.nx == 0);
+}
+
 void test_success_reconstructs_and_holds_views() {
   tywrf::dynamics::KrosaBaseStateProvider provider;
   const auto report = provider.reconstruct(make_grid(), make_metadata());
@@ -94,6 +133,9 @@ void test_success_reconstructs_and_holds_views() {
   assert(report.full_nz == 3);
   assert(report.expected_terrain_point_count == 12);
   assert(report.terrain_point_count == 12);
+  assert(!report.terrain_override_used);
+  assert(report.terrain_source_name == "HGT");
+  assert(report.terrain_provenance == "metadata:HGT");
 
   const auto views = provider.views();
   assert(views.pb.data != nullptr);
@@ -127,6 +169,50 @@ void test_success_reconstructs_and_holds_views() {
       views.phb(views.phb.halo.i_lower, views.phb.halo.j_lower, views.phb.halo.k_lower)));
 }
 
+void test_override_terrain_reconstructs_and_changes_output() {
+  tywrf::dynamics::KrosaBaseStateProvider metadata_provider;
+  const auto metadata_report =
+      metadata_provider.reconstruct(make_grid(), make_metadata());
+  assert(metadata_report.ok());
+  const auto metadata_views = metadata_provider.views();
+  const auto i = metadata_views.mub.halo.i_lower;
+  const auto j = metadata_views.mub.halo.j_lower;
+  const auto metadata_mub = metadata_views.mub(i, j);
+  const auto metadata_phb_surface = metadata_views.phb(
+      metadata_views.phb.halo.i_lower,
+      metadata_views.phb.halo.j_lower,
+      metadata_views.phb.halo.k_lower);
+
+  const auto moved_terrain = make_override_terrain(150.0F);
+  tywrf::dynamics::KrosaBaseStateProvider override_provider;
+  const auto report = override_provider.reconstruct(
+      make_grid(),
+      make_metadata(),
+      moved_terrain_override(moved_terrain));
+  assert(report.ok());
+  assert_report_flags(report);
+  assert(report.allocated_buffers);
+  assert(report.terrain_override_used);
+  assert(report.terrain_source_name == "moved_candidate_HGT");
+  assert(report.terrain_provenance == "override:moved_candidate_HGT");
+  assert(report.terrain_nx == 4);
+  assert(report.terrain_ny == 3);
+  assert(report.expected_terrain_point_count == 12);
+  assert(report.terrain_point_count == 12);
+
+  const auto override_views = override_provider.views();
+  const auto override_mub = override_views.mub(
+      override_views.mub.halo.i_lower,
+      override_views.mub.halo.j_lower);
+  const auto override_phb_surface = override_views.phb(
+      override_views.phb.halo.i_lower,
+      override_views.phb.halo.j_lower,
+      override_views.phb.halo.k_lower);
+  assert(std::isfinite(override_mub));
+  assert(std::fabs(override_mub - metadata_mub) > 1.0F);
+  assert(std::fabs(override_phb_surface - metadata_phb_surface) > 100.0F);
+}
+
 void test_missing_terrain_is_rejected_before_allocation() {
   auto metadata = make_metadata();
   metadata.terrain_nx = 0;
@@ -142,6 +228,87 @@ void test_missing_terrain_is_rejected_before_allocation() {
   assert(std::string_view(report.result.message).find("terrain") != std::string_view::npos);
 }
 
+void test_bad_override_shape_is_rejected_before_allocation() {
+  const auto bad_terrain = make_override_terrain({5, 3}, 0.0F);
+
+  tywrf::dynamics::KrosaBaseStateProvider provider;
+  const auto report = provider.reconstruct(
+      make_grid(),
+      make_metadata(),
+      moved_terrain_override(bad_terrain));
+  assert(!report.ok());
+  assert_report_flags(report);
+  assert(report.terrain_override_used);
+  assert(!report.allocated_buffers);
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(std::string_view(report.result.message).find("override") !=
+         std::string_view::npos);
+  assert_views_empty(provider);
+}
+
+void test_bad_override_stride_is_rejected_before_allocation() {
+  const auto terrain = make_override_terrain(0.0F);
+  auto bad_view = terrain.view();
+  bad_view.stride_j = bad_view.nx + 1;
+  const tywrf::dynamics::KrosaBaseStateProviderTerrainOverride bad_override{
+      bad_view,
+      "moved_candidate_HGT",
+      "override:moved_candidate_HGT"};
+
+  tywrf::dynamics::KrosaBaseStateProvider provider;
+  const auto report =
+      provider.reconstruct(make_grid(), make_metadata(), bad_override);
+  assert(!report.ok());
+  assert_report_flags(report);
+  assert(report.terrain_override_used);
+  assert(!report.allocated_buffers);
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(std::string_view(report.result.message).find("canonical") !=
+         std::string_view::npos);
+  assert_views_empty(provider);
+}
+
+void test_nonfinite_override_value_is_rejected_before_allocation() {
+  auto terrain = make_override_terrain(0.0F);
+  auto view = terrain.view();
+  view(view.halo.i_lower + 1, view.halo.j_lower + 1) =
+      std::numeric_limits<float>::quiet_NaN();
+
+  tywrf::dynamics::KrosaBaseStateProvider provider;
+  const auto report = provider.reconstruct(
+      make_grid(),
+      make_metadata(),
+      moved_terrain_override(terrain));
+  assert(!report.ok());
+  assert_report_flags(report);
+  assert(report.terrain_override_used);
+  assert(!report.allocated_buffers);
+  assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+  assert(std::string_view(report.result.message).find("finite") !=
+         std::string_view::npos);
+  assert_views_empty(provider);
+}
+
+void test_failed_override_reconstruct_clears_previous_views() {
+  tywrf::dynamics::KrosaBaseStateProvider provider;
+  const auto success = provider.reconstruct(make_grid(), make_metadata());
+  assert(success.ok());
+  assert(provider.views().pb.nx > 0);
+
+  auto terrain = make_override_terrain(0.0F);
+  auto view = terrain.view();
+  view(view.halo.i_lower, view.halo.j_lower) =
+      std::numeric_limits<float>::quiet_NaN();
+  const auto failure = provider.reconstruct(
+      make_grid(),
+      make_metadata(),
+      moved_terrain_override(terrain));
+  assert(!failure.ok());
+  assert(!failure.allocated_buffers);
+  assert(failure.terrain_override_used);
+  assert_views_empty(provider);
+}
+
 void test_failed_reconstruct_clears_previous_views() {
   tywrf::dynamics::KrosaBaseStateProvider provider;
   const auto success = provider.reconstruct(make_grid(), make_metadata());
@@ -154,12 +321,7 @@ void test_failed_reconstruct_clears_previous_views() {
   assert(!failure.ok());
   assert(!failure.allocated_buffers);
 
-  const auto views = provider.views();
-  assert(views.pb.nx == 0);
-  assert(views.t_init.nx == 0);
-  assert(views.mub.nx == 0);
-  assert(views.alb.nx == 0);
-  assert(views.phb.nx == 0);
+  assert_views_empty(provider);
 }
 
 void test_bad_coefficient_count_is_rejected_before_allocation() {
@@ -242,7 +404,12 @@ void test_real_krosa_smoke_if_configured() {
 int main() {
   try {
     test_success_reconstructs_and_holds_views();
+    test_override_terrain_reconstructs_and_changes_output();
     test_missing_terrain_is_rejected_before_allocation();
+    test_bad_override_shape_is_rejected_before_allocation();
+    test_bad_override_stride_is_rejected_before_allocation();
+    test_nonfinite_override_value_is_rejected_before_allocation();
+    test_failed_override_reconstruct_clears_previous_views();
     test_failed_reconstruct_clears_previous_views();
     test_bad_coefficient_count_is_rejected_before_allocation();
     test_missing_p_top_source_is_rejected();

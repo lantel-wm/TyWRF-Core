@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace tywrf::dynamics {
@@ -18,6 +19,12 @@ struct KrosaBaseStateProviderViews {
   FieldView2D<const float> mub;
   FieldView3D<const float> alb;
   FieldView3D<const float> phb;
+};
+
+struct KrosaBaseStateProviderTerrainOverride {
+  FieldView2D<const float> terrain_height_m{};
+  std::string_view source_name = "moved_candidate_HGT";
+  std::string_view provenance = "override:moved_candidate_HGT";
 };
 
 struct KrosaBaseStateProviderReport {
@@ -42,6 +49,9 @@ struct KrosaBaseStateProviderReport {
   std::int32_t terrain_ny = 0;
   std::size_t expected_terrain_point_count = 0;
   std::size_t terrain_point_count = 0;
+  bool terrain_override_used = false;
+  std::string terrain_source_name;
+  std::string terrain_provenance;
   bool p_top_present = false;
   bool allocated_buffers = false;
   bool wrote_pb = false;
@@ -65,9 +75,26 @@ class KrosaBaseStateProvider {
       const io::KrosaPressureRefreshMetadata& metadata,
       KrosaMassBaseStateReconstructionOptions options = {});
 
+  [[nodiscard]] KrosaBaseStateProviderReport reconstruct(
+      const Grid& grid,
+      const io::KrosaPressureRefreshMetadata& metadata,
+      const KrosaBaseStateProviderTerrainOverride& terrain_override,
+      KrosaMassBaseStateReconstructionOptions options = {});
+
   [[nodiscard]] KrosaBaseStateProviderViews views() const noexcept;
 
  private:
+  [[nodiscard]] KrosaBaseStateProviderReport reconstruct_with_terrain(
+      const Grid& grid,
+      const io::KrosaPressureRefreshMetadata& metadata,
+      FieldView2D<const float> terrain_height_m,
+      bool terrain_override_used,
+      std::string_view terrain_source_name,
+      std::string_view terrain_provenance,
+      KrosaMassBaseStateReconstructionOptions options);
+
+  void clear_views() noexcept;
+
   FieldStorage3D<float> pb_;
   FieldStorage3D<float> t_init_;
   FieldStorage2D<float> mub_;

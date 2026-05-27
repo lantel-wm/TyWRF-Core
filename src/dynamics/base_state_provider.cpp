@@ -39,6 +39,32 @@ namespace {
          config.halo.k_upper >= 0;
 }
 
+template <typename Real>
+[[nodiscard]] constexpr std::int32_t active_nx(
+    const FieldView2D<Real>& field) noexcept {
+  return field.nx - field.halo.i_lower - field.halo.i_upper;
+}
+
+template <typename Real>
+[[nodiscard]] constexpr std::int32_t active_ny(
+    const FieldView2D<Real>& field) noexcept {
+  return field.ny - field.halo.j_lower - field.halo.j_upper;
+}
+
+template <typename Real>
+[[nodiscard]] constexpr bool valid_canonical_terrain_view(
+    const FieldView2D<Real>& field) noexcept {
+  return field.data != nullptr && field.nx > 0 && field.ny > 0 &&
+         field.stride_i == 1 && field.stride_j == field.nx &&
+         field.halo.i_lower >= 0 && field.halo.i_upper >= 0 &&
+         field.halo.j_lower >= 0 && field.halo.j_upper >= 0 &&
+         active_nx(field) > 0 && active_ny(field) > 0;
+}
+
+[[nodiscard]] constexpr bool sane_terrain_height_m(const float value) noexcept {
+  return value >= -1000.0F && value <= 20000.0F;
+}
+
 [[nodiscard]] FieldView2D<const float> terrain_view(
     const io::KrosaPressureRefreshMetadata& metadata) noexcept {
   return {
@@ -56,9 +82,10 @@ namespace {
 }
 
 [[nodiscard]] KrosaMassBaseStateReconstructionInputs make_inputs(
-    const io::KrosaPressureRefreshMetadata& metadata) noexcept {
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const FieldView2D<const float> terrain_height_m) noexcept {
   return {
-      terrain_view(metadata),
+      terrain_height_m,
       coefficient_view(metadata.c3h),
       coefficient_view(metadata.c4h),
       coefficient_view(metadata.c3f),
@@ -77,7 +104,11 @@ namespace {
 
 [[nodiscard]] KrosaBaseStateProviderReport base_report(
     const Grid& grid,
-    const io::KrosaPressureRefreshMetadata& metadata) noexcept {
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const FieldView2D<const float> terrain_height_m,
+    const bool terrain_override_used,
+    const std::string_view terrain_source_name,
+    const std::string_view terrain_provenance) {
   const auto& config = grid.config();
   KrosaBaseStateProviderReport report{};
   report.active_nx = config.mass_nx;
@@ -90,13 +121,33 @@ namespace {
   report.c4f_count = vector_size_or_negative(metadata.c4f.size());
   report.c3h_count = vector_size_or_negative(metadata.c3h.size());
   report.c4h_count = vector_size_or_negative(metadata.c4h.size());
-  report.terrain_nx = metadata.terrain_nx;
-  report.terrain_ny = metadata.terrain_ny;
+  report.terrain_override_used = terrain_override_used;
+  if (terrain_override_used) {
+    report.terrain_nx = active_nx(terrain_height_m);
+    report.terrain_ny = active_ny(terrain_height_m);
+    if (report.terrain_nx > 0 && report.terrain_ny > 0) {
+      report.terrain_point_count =
+          point_count_2d(report.terrain_nx, report.terrain_ny);
+    }
+  } else {
+    report.terrain_nx = metadata.terrain_nx;
+    report.terrain_ny = metadata.terrain_ny;
+    report.terrain_point_count = metadata.terrain_height_m.size();
+  }
+  report.terrain_source_name = std::string(terrain_source_name);
+  if (terrain_override_used) {
+    report.terrain_provenance = std::string(terrain_provenance);
+  } else {
+    report.terrain_provenance = "metadata";
+    if (!report.terrain_source_name.empty()) {
+      report.terrain_provenance += ":";
+      report.terrain_provenance += report.terrain_source_name;
+    }
+  }
   if (config.mass_nx > 0 && config.mass_ny > 0) {
     report.expected_terrain_point_count =
         point_count_2d(config.mass_nx, config.mass_ny);
   }
-  report.terrain_point_count = metadata.terrain_height_m.size();
   report.p_top_present =
       metadata.p_top_source != io::PressureRefreshPTopSource::missing;
   return report;
@@ -110,19 +161,86 @@ namespace {
          report.c4h_count == report.expected_mass_level_count;
 }
 
+[[nodiscard]] nest::NestResult validate_terrain_override(
+    const GridConfig& config,
+    const FieldView2D<const float> terrain_height_m) noexcept {
+  if (!valid_canonical_terrain_view(terrain_height_m)) {
+    return result(
+        nest::NestStatus::invalid_contract,
+        "base-state provider terrain override must be a non-null canonical 2D view");
+  }
+
+  if (active_nx(terrain_height_m) != config.mass_nx ||
+      active_ny(terrain_height_m) != config.mass_ny) {
+    return result(
+        nest::NestStatus::invalid_contract,
+        "base-state provider terrain override active shape must match grid");
+  }
+
+  for (std::int32_t j = 0; j < config.mass_ny; ++j) {
+    for (std::int32_t i = 0; i < config.mass_nx; ++i) {
+      const auto value = terrain_height_m(
+          terrain_height_m.halo.i_lower + i,
+          terrain_height_m.halo.j_lower + j);
+      if (!std::isfinite(value) || !sane_terrain_height_m(value)) {
+        return result(
+            nest::NestStatus::invalid_contract,
+            "base-state provider terrain override values must be finite and sane");
+      }
+    }
+  }
+
+  return ok_result();
+}
+
 }  // namespace
 
 KrosaBaseStateProviderReport KrosaBaseStateProvider::reconstruct(
     const Grid& grid,
     const io::KrosaPressureRefreshMetadata& metadata,
     const KrosaMassBaseStateReconstructionOptions options) {
-  pb_ = FieldStorage3D<float>{};
-  t_init_ = FieldStorage3D<float>{};
-  mub_ = FieldStorage2D<float>{};
-  alb_ = FieldStorage3D<float>{};
-  phb_ = FieldStorage3D<float>{};
+  return reconstruct_with_terrain(
+      grid,
+      metadata,
+      terrain_view(metadata),
+      false,
+      metadata.terrain_source_name,
+      {},
+      options);
+}
 
-  auto report = base_report(grid, metadata);
+KrosaBaseStateProviderReport KrosaBaseStateProvider::reconstruct(
+    const Grid& grid,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const KrosaBaseStateProviderTerrainOverride& terrain_override,
+    const KrosaMassBaseStateReconstructionOptions options) {
+  return reconstruct_with_terrain(
+      grid,
+      metadata,
+      terrain_override.terrain_height_m,
+      true,
+      terrain_override.source_name,
+      terrain_override.provenance,
+      options);
+}
+
+KrosaBaseStateProviderReport KrosaBaseStateProvider::reconstruct_with_terrain(
+    const Grid& grid,
+    const io::KrosaPressureRefreshMetadata& metadata,
+    const FieldView2D<const float> terrain_height_m,
+    const bool terrain_override_used,
+    const std::string_view terrain_source_name,
+    const std::string_view terrain_provenance,
+    const KrosaMassBaseStateReconstructionOptions options) {
+  clear_views();
+
+  auto report = base_report(
+      grid,
+      metadata,
+      terrain_height_m,
+      terrain_override_used,
+      terrain_source_name,
+      terrain_provenance);
   const auto& config = grid.config();
 
   if (!valid_grid_config(config)) {
@@ -132,7 +250,15 @@ KrosaBaseStateProviderReport KrosaBaseStateProvider::reconstruct(
     return report;
   }
 
-  if (metadata.terrain_nx != config.mass_nx ||
+  if (terrain_override_used) {
+    if (const auto validation =
+            validate_terrain_override(config, terrain_height_m);
+        !validation.ok()) {
+      report.result = validation;
+      return report;
+    }
+  } else if (
+      metadata.terrain_nx != config.mass_nx ||
       metadata.terrain_ny != config.mass_ny ||
       metadata.terrain_height_m.size() != report.expected_terrain_point_count) {
     report.result = result(
@@ -164,7 +290,7 @@ KrosaBaseStateProviderReport KrosaBaseStateProvider::reconstruct(
   report.allocated_buffers = true;
 
   report.reconstruction = reconstruct_krosa_mass_base_state(
-      make_inputs(metadata),
+      make_inputs(metadata, terrain_height_m),
       make_outputs(pb_, t_init_, mub_, alb_, phb_),
       options);
   report.result = report.reconstruction.result;
@@ -177,6 +303,14 @@ KrosaBaseStateProviderReport KrosaBaseStateProvider::reconstruct(
     report.result = ok_result();
   }
   return report;
+}
+
+void KrosaBaseStateProvider::clear_views() noexcept {
+  pb_ = FieldStorage3D<float>{};
+  t_init_ = FieldStorage3D<float>{};
+  mub_ = FieldStorage2D<float>{};
+  alb_ = FieldStorage3D<float>{};
+  phb_ = FieldStorage3D<float>{};
 }
 
 KrosaBaseStateProviderViews KrosaBaseStateProvider::views() const noexcept {
