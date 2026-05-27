@@ -156,6 +156,30 @@ provider `ALB`), and the KROSA vertical/base-state constants (`P_TOP`, `C3F`,
 `C4F`, `C3H`, `C4H`). Omitting one of these must fail before compute starts so
 the helper cannot refresh uninitialized or partially staged state.
 
+Round D32 records the closure-side interpretation of the real KROSA opt-in
+pressure-refresh diagnostic smoke. `pressure_refresh_applied = true` is only
+evidence that the diagnostic helper path invoked provider, staging, and
+pressure-refresh compute on real KROSA d02 fields. It means the helper updated
+the exposed diagnostic `P` values in that artifact; it does not mean the file
+is physical, integrator-produced, or accepted by the 10 min d02 gate.
+
+Strict gate tooling must keep requiring real candidate metadata. Any artifact
+with the following metadata values remains non-gate and should be rejected or
+reported as failed when submitted to the default strict gate:
+
+```text
+TYWRF_GATE_CANDIDATE = false
+TYWRF_INTEGRATOR_OUTPUT = false
+TYWRF_VALIDATION_GATE_ONLY = false
+```
+
+The R32 smoke is useful only because it exercises the provider/staging/compute
+path against real KROSA d02 fields while verifying that the non-gate metadata
+defense still prevents accidental validation credit. It must not use later
+restart truth, must not promote later restart `ALB` or `PHB` to start-time
+truth, must not lower d02 resolution below 2 km, and must not relax the
+best-track-nudging prohibition.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

@@ -247,6 +247,31 @@ provider `ALB`) and KROSA constants (`P_TOP`, `C3F`, `C4F`, `C3H`, `C4H`).
 Validation tooling should treat missing required fields as a hard diagnostic
 failure instead of allowing refresh from uninitialized state.
 
+Round D32 records the expected judgment for the real KROSA opt-in
+pressure-refresh diagnostic smoke. A report with
+`pressure_refresh_applied = true` provides only diagnostic helper evidence:
+the provider, staging, and pressure-refresh compute path ran on real KROSA d02
+fields and updated the exposed diagnostic `P` target. It is not a d02 10 min
+gate pass, not proof of validated integrator output, and not a substitute for
+the progressive `00:10` strict gate.
+
+The strict d02 gate must continue to require real candidate metadata. Files
+marked with any of the following metadata are not gate-eligible and must be
+rejected or reported as failed by default gate tooling:
+
+```text
+TYWRF_GATE_CANDIDATE = false
+TYWRF_INTEGRATOR_OUTPUT = false
+TYWRF_VALIDATION_GATE_ONLY = false
+```
+
+The R32 smoke is therefore limited to two checks: it confirms that the
+provider/staging/compute path can execute on real KROSA d02 fields, and it
+confirms that the non-gate defense remains active when the artifact is passed
+near validation tooling. It must not use later restart truth, must not use
+later restart `ALB` or `PHB` as start-time truth, and must preserve d02 at
+2 km.
+
 Example:
 
 ```bash
