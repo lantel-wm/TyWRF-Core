@@ -157,6 +157,35 @@ template <typename Real>
 }
 
 template <typename Real>
+[[nodiscard]] std::uint64_t exposed_point_count_2d(
+    const nest::RemapWindow& window,
+    const FieldView2D<Real>& target) noexcept {
+  const auto nx = active_nx(target);
+  const auto ny = active_ny(target);
+  const auto active_points =
+      static_cast<std::uint64_t>(nx) * static_cast<std::uint64_t>(ny);
+  const auto overlap_points =
+      static_cast<std::uint64_t>(window.extent_i) *
+      static_cast<std::uint64_t>(window.extent_j);
+  return active_points - overlap_points;
+}
+
+template <typename Real>
+[[nodiscard]] std::uint64_t exposed_point_count_3d(
+    const nest::RemapWindow& window,
+    const FieldView3D<Real>& target) noexcept {
+  const auto nx = active_nx(target);
+  const auto ny = active_ny(target);
+  const auto active_columns =
+      static_cast<std::uint64_t>(nx) * static_cast<std::uint64_t>(ny);
+  const auto overlap_columns =
+      static_cast<std::uint64_t>(window.extent_i) *
+      static_cast<std::uint64_t>(window.extent_j);
+  return (active_columns - overlap_columns) *
+         static_cast<std::uint64_t>(active_nz(target));
+}
+
+template <typename Real>
 std::uint64_t sync_exposed_2d(
     const nest::RemapWindow& window,
     const FieldView2D<const Real>& source,
@@ -227,6 +256,7 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
   report.diagnostic_only = true;
   report.gate_candidate = false;
   report.integrator_output = false;
+  report.base_state_sync_dry_run = options.base_state_sync_dry_run;
 
   KrosaBaseStateProvider provider;
   if (options.terrain_override == nullptr) {
@@ -253,6 +283,17 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
     report.result = validation;
     return report;
   }
+  report.base_state_sync_contract_ok = true;
+  report.would_sync_pb_point_count =
+      exposed_point_count_3d(plan.mass, state_view.pb);
+  report.would_sync_mub_point_count =
+      exposed_point_count_2d(plan.surface, state_view.mub);
+  report.would_sync_phb_point_count =
+      exposed_point_count_3d(plan.w_full, state_view.phb);
+
+  if (options.base_state_sync_dry_run) {
+    return report;
+  }
 
   report.synced_pb_point_count =
       sync_exposed_3d(plan.mass, provider_views.pb, state_view.pb);
@@ -260,6 +301,9 @@ KrosaPressureRefreshHookReport apply_krosa_moving_nest_pressure_refresh_hook(
       sync_exposed_2d(plan.surface, provider_views.mub, state_view.mub);
   report.synced_phb_point_count =
       sync_exposed_3d(plan.w_full, provider_views.phb, state_view.phb);
+  report.base_state_sync_applied =
+      report.synced_pb_point_count > 0 || report.synced_mub_point_count > 0 ||
+      report.synced_phb_point_count > 0;
 
   const auto staging = make_krosa_pressure_refresh_inputs(
       state_view,

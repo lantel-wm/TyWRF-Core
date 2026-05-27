@@ -15,6 +15,7 @@ struct KrosaPressureRefreshHookOptions {
   KrosaMassBaseStateReconstructionOptions base_state{};
   KrosaPressureRefreshOptions pressure_refresh{};
   const KrosaBaseStateProviderTerrainOverride* terrain_override = nullptr;
+  bool base_state_sync_dry_run = false;
 };
 
 struct KrosaPressureRefreshHookReport {
@@ -26,9 +27,17 @@ struct KrosaPressureRefreshHookReport {
   bool staging_ok = false;
   bool pressure_refresh_applied = false;
   bool calls_pressure_refresh_compute = false;
+  bool base_state_sync_dry_run = false;
+  bool base_state_sync_contract_ok = false;
+  bool base_state_sync_applied = false;
+  std::uint64_t would_sync_pb_point_count = 0;
+  std::uint64_t would_sync_mub_point_count = 0;
+  std::uint64_t would_sync_phb_point_count = 0;
   std::uint64_t synced_pb_point_count = 0;
   std::uint64_t synced_mub_point_count = 0;
   std::uint64_t synced_phb_point_count = 0;
+  std::uint64_t sync_overlap_write_count = 0;
+  std::uint64_t sync_halo_write_count = 0;
   bool touched_overlap_cells = false;
   bool touched_halo_cells = false;
   KrosaBaseStateProviderReport provider_report{};
