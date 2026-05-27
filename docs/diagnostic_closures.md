@@ -474,6 +474,26 @@ scope:
   gate evidence, and any diagnostic artifact presented as selected-field
   integrator output.
 
+Round D48 keeps selected-field scratch telemetry outside closure scope:
+
+- The selected-field `--pressure-refresh` opt-in guard may report scratch
+  pressure compute dry-run telemetry such as dry-run requested/called/ok,
+  would-refresh `P` point counts, and invalid `P` point counts. These fields
+  are readiness telemetry only, not closure outputs and not candidate values.
+- While `thermodynamic_base_state_consistency_ready=false`, the opt-in guard
+  must still fail closed with a nonzero exit and no output file. A closure must
+  not create the missing output or reinterpret the abort report as a produced
+  candidate.
+- The scratch dry-run must not write candidate `P`, `PB`, `PHB`, or `MUB`, and
+  must not set `pressure_refresh_applied=true`. The default selected-field
+  numerical path remains unchanged.
+- Scratch telemetry is not a gate pass. The real
+  `2025-07-26_00:10:00` gate remains failed on `U`, `V`, `MU`, `P`, and
+  storm-center distance.
+- Closures must still reject `00:10` reference-end truth, restart `PHB`/`ALB`
+  provider substitutes, direct parent interpolation of `P`, diagnostic artifact
+  gate evidence, and scratch telemetry presented as gate evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

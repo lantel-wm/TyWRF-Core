@@ -774,6 +774,29 @@ a provider substitute, direct parent interpolation of `P`, diagnostic artifact
 gate evidence, and treating scratch dry-run telemetry as selected-field output
 or integrator validation evidence.
 
+## Round D48 Selected-Field Scratch Telemetry Boundary
+
+D48 may expose the D47 hook scratch pressure compute dry-run telemetry through
+the selected-field `--pressure-refresh` opt-in guard. The guard report may name
+whether the dry-run was requested, called, and ok, plus the would-refresh `P`
+point count and invalid `P` point count. These fields are readiness evidence
+only; they are not selected-field output values and do not show that pressure
+refresh has been applied to the candidate.
+
+While `thermodynamic_base_state_consistency_ready=false`, the opt-in path must
+still exit nonzero and produce no output file. The scratch dry-run must not
+write candidate `P`, `PB`, `PHB`, or `MUB`, and must not set
+`pressure_refresh_applied=true`. The default selected-field candidate numerical
+path remains unchanged and continues to preserve start-state-owned pressure and
+base-state fields.
+
+Scratch telemetry is not a compatibility gate pass. The real
+`2025-07-26_00:10:00` selected-field gate remains failed on `U`, `V`, `MU`,
+`P`, and storm-center distance. Shortcuts remain forbidden: `00:10`
+reference-end truth, restart `PHB`/`ALB` as a provider substitute, direct
+parent interpolation of `P`, diagnostic artifact gate evidence, and treating
+scratch dry-run telemetry as gate evidence.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

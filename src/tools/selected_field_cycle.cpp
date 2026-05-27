@@ -646,6 +646,16 @@ struct PressureRefreshReadiness {
   std::uint64_t sync_overlap_write_count = 0;
   std::uint64_t sync_halo_write_count = 0;
   bool pressure_refresh_compute_called = false;
+  bool pressure_compute_dry_run = false;
+  bool pressure_compute_dry_run_called = false;
+  bool pressure_compute_dry_run_ok = false;
+  std::uint64_t would_refresh_p_point_count = 0;
+  std::uint64_t dry_run_invalid_p_point_count = 0;
+  std::uint64_t pressure_compute_dry_run_report_target_column_count = 0;
+  std::uint64_t pressure_compute_dry_run_report_refreshed_point_count = 0;
+  std::uint64_t pressure_compute_dry_run_report_invalid_point_count = 0;
+  bool pressure_compute_dry_run_report_touched_overlap_cells = false;
+  bool pressure_compute_dry_run_report_touched_halo_cells = false;
   bool pressure_refresh_applied = false;
   std::string provider_terrain_source_name;
   std::string provider_terrain_provenance;
@@ -659,6 +669,15 @@ struct PressureRefreshReadiness {
            would_sync_pb_point_count > 0 && would_sync_mub_point_count > 0 &&
            would_sync_phb_point_count > 0 && sync_overlap_write_count == 0 &&
            sync_halo_write_count == 0 && !pressure_refresh_compute_called &&
+           pressure_compute_dry_run && pressure_compute_dry_run_called &&
+           pressure_compute_dry_run_ok && would_refresh_p_point_count > 0 &&
+           dry_run_invalid_p_point_count == 0 &&
+           pressure_compute_dry_run_report_target_column_count > 0 &&
+           pressure_compute_dry_run_report_refreshed_point_count ==
+               would_refresh_p_point_count &&
+           pressure_compute_dry_run_report_invalid_point_count == 0 &&
+           !pressure_compute_dry_run_report_touched_overlap_cells &&
+           !pressure_compute_dry_run_report_touched_halo_cells &&
            !pressure_refresh_applied;
   }
 };
@@ -681,8 +700,7 @@ struct PressureRefreshReadiness {
   }
   if (report.pressure_refresh_dry_run_contract.has_value()) {
     const auto& dry_run = *report.pressure_refresh_dry_run_contract;
-    readiness.base_state_sync_contract_ok = dry_run.ok() &&
-                                            dry_run.provider_ok &&
+    readiness.base_state_sync_contract_ok = dry_run.provider_ok &&
                                             dry_run.base_state_sync_contract_ok;
     readiness.base_state_sync_dry_run = dry_run.base_state_sync_dry_run;
     readiness.base_state_sync_applied = dry_run.base_state_sync_applied;
@@ -692,6 +710,23 @@ struct PressureRefreshReadiness {
     readiness.sync_overlap_write_count = dry_run.sync_overlap_write_count;
     readiness.sync_halo_write_count = dry_run.sync_halo_write_count;
     readiness.pressure_refresh_compute_called = dry_run.calls_pressure_refresh_compute;
+    readiness.pressure_compute_dry_run = dry_run.pressure_compute_dry_run;
+    readiness.pressure_compute_dry_run_called =
+        dry_run.pressure_compute_dry_run_called;
+    readiness.pressure_compute_dry_run_ok = dry_run.pressure_compute_dry_run_ok;
+    readiness.would_refresh_p_point_count = dry_run.would_refresh_p_point_count;
+    readiness.dry_run_invalid_p_point_count =
+        dry_run.dry_run_invalid_p_point_count;
+    readiness.pressure_compute_dry_run_report_target_column_count =
+        dry_run.pressure_compute_dry_run_report.target_column_count;
+    readiness.pressure_compute_dry_run_report_refreshed_point_count =
+        dry_run.pressure_compute_dry_run_report.refreshed_point_count;
+    readiness.pressure_compute_dry_run_report_invalid_point_count =
+        dry_run.pressure_compute_dry_run_report.invalid_point_count;
+    readiness.pressure_compute_dry_run_report_touched_overlap_cells =
+        dry_run.pressure_compute_dry_run_report.touched_overlap_cells;
+    readiness.pressure_compute_dry_run_report_touched_halo_cells =
+        dry_run.pressure_compute_dry_run_report.touched_halo_cells;
     readiness.pressure_refresh_applied = dry_run.pressure_refresh_applied;
   }
   return readiness;
@@ -733,6 +768,27 @@ struct PressureRefreshReadiness {
   message << "; sync_halo_write_count=" << readiness.sync_halo_write_count;
   message << "; pressure_refresh_compute_called="
           << (readiness.pressure_refresh_compute_called ? "true" : "false");
+  message << "; pressure_compute_dry_run="
+          << (readiness.pressure_compute_dry_run ? "true" : "false");
+  message << "; pressure_compute_dry_run_called="
+          << (readiness.pressure_compute_dry_run_called ? "true" : "false");
+  message << "; pressure_compute_dry_run_ok="
+          << (readiness.pressure_compute_dry_run_ok ? "true" : "false");
+  message << "; would_refresh_p_point_count="
+          << readiness.would_refresh_p_point_count;
+  message << "; dry_run_invalid_p_point_count="
+          << readiness.dry_run_invalid_p_point_count;
+  message << "; pressure_compute_dry_run_report_target_column_count="
+          << readiness.pressure_compute_dry_run_report_target_column_count;
+  message << "; pressure_compute_dry_run_report_refreshed_point_count="
+          << readiness.pressure_compute_dry_run_report_refreshed_point_count;
+  message << "; pressure_compute_dry_run_report_invalid_point_count="
+          << readiness.pressure_compute_dry_run_report_invalid_point_count;
+  message << "; pressure_compute_dry_run_report_touched_overlap_cells="
+          << (readiness.pressure_compute_dry_run_report_touched_overlap_cells ? "true"
+                                                                              : "false");
+  message << "; pressure_compute_dry_run_report_touched_halo_cells="
+          << (readiness.pressure_compute_dry_run_report_touched_halo_cells ? "true" : "false");
   message << "; pressure_refresh_applied="
           << (readiness.pressure_refresh_applied ? "true" : "false");
   return message.str();
@@ -830,6 +886,7 @@ void probe_pressure_refresh_dry_run_contract(
   tywrf::dynamics::KrosaPressureRefreshHookOptions hook_options{};
   hook_options.terrain_override = &terrain_override;
   hook_options.base_state_sync_dry_run = true;
+  hook_options.pressure_compute_dry_run = true;
   auto dry_run_report = tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
       report.remap_plan,
       candidate,
@@ -850,6 +907,17 @@ void probe_pressure_refresh_dry_run_contract(
       dry_run_report.sync_overlap_write_count == 0 &&
       dry_run_report.sync_halo_write_count == 0 &&
       !dry_run_report.calls_pressure_refresh_compute &&
+      dry_run_report.pressure_compute_dry_run &&
+      dry_run_report.pressure_compute_dry_run_called &&
+      dry_run_report.pressure_compute_dry_run_ok &&
+      dry_run_report.would_refresh_p_point_count > 0 &&
+      dry_run_report.dry_run_invalid_p_point_count == 0 &&
+      dry_run_report.pressure_compute_dry_run_report.target_column_count > 0 &&
+      dry_run_report.pressure_compute_dry_run_report.refreshed_point_count ==
+          dry_run_report.would_refresh_p_point_count &&
+      dry_run_report.pressure_compute_dry_run_report.invalid_point_count == 0 &&
+      !dry_run_report.pressure_compute_dry_run_report.touched_overlap_cells &&
+      !dry_run_report.pressure_compute_dry_run_report.touched_halo_cells &&
       !dry_run_report.pressure_refresh_applied;
   if (dry_run_contract_ok) {
     return;
@@ -875,6 +943,27 @@ void probe_pressure_refresh_dry_run_contract(
           << "; sync_halo_write_count=" << dry_run_report.sync_halo_write_count
           << "; pressure_refresh_compute_called="
           << (dry_run_report.calls_pressure_refresh_compute ? "true" : "false")
+          << "; pressure_compute_dry_run="
+          << (dry_run_report.pressure_compute_dry_run ? "true" : "false")
+          << "; pressure_compute_dry_run_called="
+          << (dry_run_report.pressure_compute_dry_run_called ? "true" : "false")
+          << "; pressure_compute_dry_run_ok="
+          << (dry_run_report.pressure_compute_dry_run_ok ? "true" : "false")
+          << "; would_refresh_p_point_count=" << dry_run_report.would_refresh_p_point_count
+          << "; dry_run_invalid_p_point_count="
+          << dry_run_report.dry_run_invalid_p_point_count
+          << "; pressure_compute_dry_run_report_target_column_count="
+          << dry_run_report.pressure_compute_dry_run_report.target_column_count
+          << "; pressure_compute_dry_run_report_refreshed_point_count="
+          << dry_run_report.pressure_compute_dry_run_report.refreshed_point_count
+          << "; pressure_compute_dry_run_report_invalid_point_count="
+          << dry_run_report.pressure_compute_dry_run_report.invalid_point_count
+          << "; pressure_compute_dry_run_report_touched_overlap_cells="
+          << (dry_run_report.pressure_compute_dry_run_report.touched_overlap_cells ? "true"
+                                                                                   : "false")
+          << "; pressure_compute_dry_run_report_touched_halo_cells="
+          << (dry_run_report.pressure_compute_dry_run_report.touched_halo_cells ? "true"
+                                                                                : "false")
           << "; pressure_refresh_applied="
           << (dry_run_report.pressure_refresh_applied ? "true" : "false");
   throw std::runtime_error(message.str());

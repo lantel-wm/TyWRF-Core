@@ -648,6 +648,19 @@ void assert_pressure_refresh_not_ready(
   assert(log.find("sync_overlap_write_count=0") != std::string::npos);
   assert(log.find("sync_halo_write_count=0") != std::string::npos);
   assert(log.find("pressure_refresh_compute_called=false") != std::string::npos);
+  assert(log.find("pressure_compute_dry_run=true") != std::string::npos);
+  assert(log.find("pressure_compute_dry_run_called=true") != std::string::npos);
+  assert(log.find("pressure_compute_dry_run_ok=true") != std::string::npos);
+  assert(log_u64_field(log, "would_refresh_p_point_count") > 0);
+  assert(log.find("dry_run_invalid_p_point_count=0") != std::string::npos);
+  assert(log_u64_field(log, "pressure_compute_dry_run_report_target_column_count") > 0);
+  assert(log_u64_field(log, "pressure_compute_dry_run_report_refreshed_point_count") > 0);
+  assert(log.find("pressure_compute_dry_run_report_invalid_point_count=0") !=
+         std::string::npos);
+  assert(log.find("pressure_compute_dry_run_report_touched_overlap_cells=false") !=
+         std::string::npos);
+  assert(log.find("pressure_compute_dry_run_report_touched_halo_cells=false") !=
+         std::string::npos);
   assert(log.find("pressure_refresh_applied=false") != std::string::npos);
 }
 

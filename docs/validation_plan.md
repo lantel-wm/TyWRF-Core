@@ -612,6 +612,23 @@ reference-end truth, restart `PHB`/`ALB` provider substitutes, direct parent
 interpolation of `P`, and diagnostic artifacts or scratch telemetry as gate
 evidence.
 
+Round D48 may surface that hook scratch telemetry in the selected-field
+`--pressure-refresh` opt-in guard. Validation reports may inspect dry-run
+requested/called/ok fields, would-refresh `P` point counts, and invalid `P`
+point counts, but only as readiness evidence. They are not proof that candidate
+`P`, `PB`, `PHB`, or `MUB` changed and must not be treated as a strict gate
+pass.
+
+The D48 opt-in path must still fail closed while
+`thermodynamic_base_state_consistency_ready=false`: nonzero exit, no output
+file, no writes to candidate `P`, `PB`, `PHB`, or `MUB`, and no
+`pressure_refresh_applied=true`. The default selected-field candidate numerical
+path remains unchanged. The real `2025-07-26_00:10:00` gate is still failed on
+`U`, `V`, `MU`, `P`, and storm-center distance, and validation must continue
+rejecting reference-end truth, restart `PHB`/`ALB` provider substitutes, direct
+parent interpolation of `P`, diagnostic artifact gate evidence, and scratch
+telemetry as gate evidence.
+
 Example:
 
 ```bash
