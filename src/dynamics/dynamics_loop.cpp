@@ -86,7 +86,15 @@ void count_event(const LoopEventKind kind, LoopSummary& summary) noexcept {
     case LoopEventKind::spectral_nudging:
       ++summary.spectral_nudging_calls;
       break;
+    case LoopEventKind::moving_nest_move_check:
+      ++summary.moving_nest_move_checks;
+      ++summary.moving_nest_position_updates;
+      break;
+    case LoopEventKind::vortex_center_recompute:
+      ++summary.vortex_center_recomputes;
+      break;
     case LoopEventKind::moving_nest_position_update:
+      ++summary.moving_nest_move_checks;
       ++summary.moving_nest_position_updates;
       break;
     case LoopEventKind::zero_dynamics_tendency:
@@ -118,8 +126,12 @@ void count_event(const LoopEventKind kind, LoopSummary& summary) noexcept {
       return LoopEventKind::boundary_update;
     case CycleScheduleCallKind::d01_spectral_nudging:
       return LoopEventKind::spectral_nudging;
+    case CycleScheduleCallKind::moving_nest_move_check:
+      return LoopEventKind::moving_nest_move_check;
+    case CycleScheduleCallKind::vortex_center_recompute:
+      return LoopEventKind::vortex_center_recompute;
     case CycleScheduleCallKind::moving_nest_position_update:
-      return LoopEventKind::moving_nest_position_update;
+      return LoopEventKind::moving_nest_move_check;
     case CycleScheduleCallKind::parent_child_interpolation:
       return LoopEventKind::nest_interpolation;
     case CycleScheduleCallKind::two_way_feedback:
@@ -245,6 +257,10 @@ std::string_view loop_event_name(const LoopEventKind kind) noexcept {
       return "boundary_update";
     case LoopEventKind::spectral_nudging:
       return "spectral_nudging";
+    case LoopEventKind::moving_nest_move_check:
+      return "moving_nest_move_check";
+    case LoopEventKind::vortex_center_recompute:
+      return "vortex_center_recompute";
     case LoopEventKind::moving_nest_position_update:
       return "moving_nest_position_update";
     case LoopEventKind::zero_dynamics_tendency:

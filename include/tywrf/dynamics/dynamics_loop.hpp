@@ -15,6 +15,8 @@ enum class LoopEventKind : std::uint8_t {
   spectral_nudging_input_refresh,
   boundary_update,
   spectral_nudging,
+  moving_nest_move_check,
+  vortex_center_recompute,
   moving_nest_position_update,
   zero_dynamics_tendency,
   physics,
@@ -74,6 +76,8 @@ struct LoopSummary {
   std::int64_t spectral_nudging_input_refreshes = 0;
   std::int64_t boundary_updates = 0;
   std::int64_t spectral_nudging_calls = 0;
+  std::int64_t moving_nest_move_checks = 0;
+  std::int64_t vortex_center_recomputes = 0;
   std::int64_t moving_nest_position_updates = 0;
   std::int64_t dynamics_tendency_calls = 0;
   std::int64_t physics_calls = 0;

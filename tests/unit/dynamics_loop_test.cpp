@@ -51,6 +51,30 @@ void expect_event(
   }
 }
 
+std::vector<const LoopEvent*> find_events_by_kind(
+    const std::vector<LoopEvent>& events,
+    const LoopEventKind kind) {
+  std::vector<const LoopEvent*> matches;
+  for (const auto& event : events) {
+    if (event.kind == kind) {
+      matches.push_back(&event);
+    }
+  }
+  return matches;
+}
+
+const LoopEvent* find_event(
+    const std::vector<LoopEvent>& events,
+    const LoopEventKind kind,
+    const std::int64_t nominal_seconds) {
+  for (const auto& event : events) {
+    if (event.kind == kind && event.nominal_seconds == nominal_seconds) {
+      return &event;
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 int main() {
@@ -68,10 +92,11 @@ int main() {
 
   constexpr std::int64_t expected_parent_steps = 540;
   constexpr std::int64_t expected_child_steps = 2'700;
-  constexpr std::int64_t expected_moving_nest_updates = 25;
+  constexpr std::int64_t expected_move_checks = expected_parent_steps;
+  constexpr std::int64_t expected_vortex_recomputes = 25;
   constexpr std::int64_t expected_schedule_calls =
-      2 + 2 + expected_parent_steps * 2 + expected_child_steps +
-      expected_parent_steps + expected_moving_nest_updates + 2;
+      2 + expected_parent_steps * 4 + expected_child_steps +
+      expected_vortex_recomputes + 2 + 2;
   constexpr std::int64_t expected_events =
       expected_schedule_calls + 2 * (expected_parent_steps + expected_child_steps);
 
@@ -85,8 +110,10 @@ int main() {
          "spectral nudging input refreshes bracket the segment");
   expect(summary.boundary_updates == expected_parent_steps, "d01 boundary update count");
   expect(summary.spectral_nudging_calls == expected_parent_steps, "d01 spectral nudging count");
-  expect(summary.moving_nest_position_updates == expected_moving_nest_updates,
-         "moving nest schedule count");
+  expect(summary.moving_nest_move_checks == expected_move_checks,
+         "moving nest move check count");
+  expect(summary.vortex_center_recomputes == expected_vortex_recomputes,
+         "vortex center recompute count");
   expect(summary.dynamics_tendency_calls == expected_parent_steps + expected_child_steps,
          "zero dynamics tendency count");
   expect(summary.physics_calls == expected_parent_steps + expected_child_steps, "physics count");
@@ -100,36 +127,81 @@ int main() {
                  0, "start boundary input refresh", 0, 0);
     expect_event(events[1], LoopEventKind::spectral_nudging_input_refresh, DomainId::d01, 0,
                  -1, 0, 0, "start spectral nudging input refresh", 1, 0);
-    expect_event(events[2], LoopEventKind::moving_nest_position_update, DomainId::d02, 0, -1,
-                 0, 0, "initial moving nest position update", 2, 0);
-    expect_event(events[3], LoopEventKind::boundary_update, DomainId::d01, 0, -1, 0, 40,
-                 "first scheduled d01 boundary update", 3, 0);
-    expect_event(events[4], LoopEventKind::spectral_nudging, DomainId::d01, 0, -1, 0, 40,
-                 "first scheduled d01 spectral nudging", 4, 0);
-    expect_event(events[5], LoopEventKind::zero_dynamics_tendency, DomainId::d01, 0, -1, 0,
-                 40, "first d01 zero tendency placeholder", 4, 0);
-    expect_event(events[6], LoopEventKind::physics, DomainId::d01, 0, -1, 0, 40,
-                 "first d01 physics placeholder", 4, 0);
-    expect_event(events[7], LoopEventKind::nest_interpolation, DomainId::d02, 0, 0, 0, 8,
-                 "first scheduled d02 interpolation", 5, 0);
-    expect_event(events[8], LoopEventKind::zero_dynamics_tendency, DomainId::d02, 0, 0, 0,
-                 8, "first d02 zero tendency placeholder", 5, 0);
-    expect_event(events[9], LoopEventKind::physics, DomainId::d02, 0, 0, 0, 8,
-                 "first d02 physics placeholder", 5, 0);
-    expect_event(events[10], LoopEventKind::nest_interpolation, DomainId::d02, 0, 1, 8, 16,
-                 "second scheduled d02 interpolation", 6, 8);
+    expect_event(events[2], LoopEventKind::boundary_update, DomainId::d01, 0, -1, 0, 40,
+                 "first scheduled d01 boundary update", 2, 0);
+    expect_event(events[3], LoopEventKind::spectral_nudging, DomainId::d01, 0, -1, 0, 40,
+                 "first scheduled d01 spectral nudging", 3, 0);
+    expect_event(events[4], LoopEventKind::zero_dynamics_tendency, DomainId::d01, 0, -1, 0,
+                 40, "first d01 zero tendency placeholder", 3, 0);
+    expect_event(events[5], LoopEventKind::physics, DomainId::d01, 0, -1, 0, 40,
+                 "first d01 physics placeholder", 3, 0);
+    expect_event(events[6], LoopEventKind::nest_interpolation, DomainId::d02, 0, 0, 0, 8,
+                 "first scheduled d02 interpolation", 4, 0);
+    expect_event(events[7], LoopEventKind::zero_dynamics_tendency, DomainId::d02, 0, 0, 0,
+                 8, "first d02 zero tendency placeholder", 4, 0);
+    expect_event(events[8], LoopEventKind::physics, DomainId::d02, 0, 0, 0, 8,
+                 "first d02 physics placeholder", 4, 0);
+    expect_event(events[9], LoopEventKind::nest_interpolation, DomainId::d02, 0, 1, 8, 16,
+                 "second scheduled d02 interpolation", 5, 8);
+    expect_event(events[10], LoopEventKind::zero_dynamics_tendency, DomainId::d02, 0, 1, 8,
+                 16, "second d02 zero tendency placeholder", 5, 8);
   }
 
-  if (events.size() >= 5) {
-    const auto moving_nest_index = events.size() - 5;
+  const auto move_checks =
+      find_events_by_kind(events, LoopEventKind::moving_nest_move_check);
+  expect(static_cast<std::int64_t>(move_checks.size()) == expected_move_checks,
+         "recorded moving nest move check events match parent steps");
+  if (!move_checks.empty()) {
+    expect_event(*move_checks.front(), LoopEventKind::moving_nest_move_check,
+                 DomainId::d02, 0, -1, 40, 40,
+                 "first actual moving nest check", 10, 40);
+  }
+
+  const auto* initial_recompute =
+      find_event(events, LoopEventKind::vortex_center_recompute, 0);
+  expect(initial_recompute != nullptr, "initial vortex recompute event exists");
+  if (initial_recompute != nullptr) {
+    expect_event(*initial_recompute, LoopEventKind::vortex_center_recompute,
+                 DomainId::d02, 0, -1, 40, 40,
+                 "initial vortex recompute event", 11, 0);
+  }
+
+  const auto* first_nominal_recompute =
+      find_event(events, LoopEventKind::vortex_center_recompute, 900);
+  expect(first_nominal_recompute != nullptr, "15 minute vortex recompute event exists");
+  if (first_nominal_recompute != nullptr) {
+    expect_event(*first_nominal_recompute,
+                 LoopEventKind::vortex_center_recompute, DomainId::d02, 22,
+                 -1, 920, 920, "15 minute vortex recompute event", -1, 900);
+  }
+
+  const auto* second_nominal_recompute =
+      find_event(events, LoopEventKind::vortex_center_recompute, 1'800);
+  expect(second_nominal_recompute != nullptr,
+         "30 minute vortex recompute event exists");
+  if (second_nominal_recompute != nullptr) {
+    expect_event(*second_nominal_recompute,
+                 LoopEventKind::vortex_center_recompute, DomainId::d02, 44,
+                 -1, 1'800, 1'800, "30 minute vortex recompute event", -1,
+                 1'800);
+  }
+
+  if (events.size() >= 6) {
+    const auto moving_nest_index = events.size() - 6;
+    const auto vortex_recompute_index = events.size() - 5;
     const auto history_d01_index = events.size() - 4;
     const auto history_d02_index = events.size() - 3;
     const auto boundary_refresh_index = events.size() - 2;
     const auto nudging_refresh_index = events.size() - 1;
 
-    expect_event(events[moving_nest_index], LoopEventKind::moving_nest_position_update,
+    expect_event(events[moving_nest_index], LoopEventKind::moving_nest_move_check,
                  DomainId::d02, 539, -1, 21'600, 21'600,
-                 "final moving nest update before output", expected_schedule_calls - 5,
+                 "final moving nest check before output", expected_schedule_calls - 6,
+                 21'600);
+    expect_event(events[vortex_recompute_index],
+                 LoopEventKind::vortex_center_recompute, DomainId::d02, 539, -1,
+                 21'600, 21'600, "final vortex recompute before output",
+                 expected_schedule_calls - 5,
                  21'600);
     expect_event(events[history_d01_index], LoopEventKind::history_output, DomainId::d01, 539,
                  -1, 21'600, 21'600, "d01 6 h history output",
@@ -146,9 +218,12 @@ int main() {
                  expected_schedule_calls - 1, 21'600);
   }
 
-  expect(tywrf::dynamics::loop_event_name(LoopEventKind::moving_nest_position_update) ==
-             "moving_nest_position_update",
-         "moving nest loop event name");
+  expect(tywrf::dynamics::loop_event_name(LoopEventKind::moving_nest_move_check) ==
+             "moving_nest_move_check",
+         "moving nest move check loop event name");
+  expect(tywrf::dynamics::loop_event_name(LoopEventKind::vortex_center_recompute) ==
+             "vortex_center_recompute",
+         "vortex center recompute loop event name");
 
   if (failures != 0) {
     return 1;

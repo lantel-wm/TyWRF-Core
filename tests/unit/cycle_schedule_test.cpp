@@ -53,6 +53,30 @@ const CycleScheduleCall* find_call(
   return nullptr;
 }
 
+std::vector<const CycleScheduleCall*> find_calls_by_kind(
+    const std::vector<CycleScheduleCall>& calls,
+    const CycleScheduleCallKind kind) {
+  std::vector<const CycleScheduleCall*> matches;
+  for (const auto& call : calls) {
+    if (call.kind == kind) {
+      matches.push_back(&call);
+    }
+  }
+  return matches;
+}
+
+const CycleScheduleCall* find_parent_step_call(
+    const std::vector<CycleScheduleCall>& calls,
+    const CycleScheduleCallKind kind,
+    const std::int64_t parent_step) {
+  for (const auto& call : calls) {
+    if (call.kind == kind && call.parent_step_index == parent_step) {
+      return &call;
+    }
+  }
+  return nullptr;
+}
+
 template <typename Fn>
 void expect_invalid(Fn&& fn, const std::string_view label) {
   try {
@@ -88,10 +112,11 @@ int main() {
 
   constexpr std::int64_t expected_parent_steps = 540;
   constexpr std::int64_t expected_child_substeps = 2'700;
-  constexpr std::int64_t expected_moving_updates = 25;
+  constexpr std::int64_t expected_move_checks = expected_parent_steps;
+  constexpr std::int64_t expected_vortex_recomputes = 25;
   constexpr std::int64_t expected_calls =
-      2 + 2 + expected_parent_steps * 2 + expected_child_substeps +
-      expected_parent_steps + expected_moving_updates + 2;
+      2 + expected_parent_steps * 4 + expected_child_substeps +
+      expected_vortex_recomputes + 2 + 2;
 
   expect(summary.parent_steps == expected_parent_steps, "6 h has 540 d01 steps");
   expect(summary.child_substeps == expected_child_substeps,
@@ -104,8 +129,10 @@ int main() {
          "d01 boundary update is called each parent step");
   expect(summary.d01_spectral_nudging_calls == expected_parent_steps,
          "d01 spectral nudging is called each parent step");
-  expect(summary.moving_nest_position_updates == expected_moving_updates,
-         "moving nest has inclusive 15 minute endpoint schedule");
+  expect(summary.moving_nest_move_checks == expected_move_checks,
+         "moving nest move check is called once per parent step");
+  expect(summary.vortex_center_recomputes == expected_vortex_recomputes,
+         "vortex center recompute has inclusive 15 minute endpoint schedule");
   expect(summary.parent_child_interpolations == expected_child_substeps,
          "parent-child interpolation is called once per d02 substep");
   expect(summary.two_way_feedbacks == expected_parent_steps,
@@ -114,7 +141,7 @@ int main() {
   expect(static_cast<std::int64_t>(calls.size()) == expected_calls,
          "cycle schedule call count");
 
-  if (calls.size() >= 9) {
+  if (calls.size() >= 11) {
     expect_call(
         calls[0], CycleScheduleCallKind::boundary_input_refresh, DomainId::d01,
         0, -1, 0, 0, 0, "start boundary refresh");
@@ -122,62 +149,125 @@ int main() {
         calls[1], CycleScheduleCallKind::spectral_nudging_input_refresh,
         DomainId::d01, 0, -1, 0, 0, 0, "start nudging refresh");
     expect_call(
-        calls[2], CycleScheduleCallKind::moving_nest_position_update,
-        DomainId::d02, 0, -1, 0, 0, 0, "initial moving nest position");
-    expect_call(
-        calls[3], CycleScheduleCallKind::d01_boundary_update, DomainId::d01,
+        calls[2], CycleScheduleCallKind::d01_boundary_update, DomainId::d01,
         0, -1, 0, 40, 0, "first d01 boundary update");
     expect_call(
-        calls[4], CycleScheduleCallKind::d01_spectral_nudging, DomainId::d01,
+        calls[3], CycleScheduleCallKind::d01_spectral_nudging, DomainId::d01,
         0, -1, 0, 40, 0, "first d01 spectral nudging");
     expect_call(
-        calls[5], CycleScheduleCallKind::parent_child_interpolation,
+        calls[4], CycleScheduleCallKind::parent_child_interpolation,
         DomainId::d02, 0, 0, 0, 8, 0, "first d02 interpolation");
     expect_call(
-        calls[6], CycleScheduleCallKind::parent_child_interpolation,
+        calls[5], CycleScheduleCallKind::parent_child_interpolation,
         DomainId::d02, 0, 1, 8, 16, 8, "second d02 interpolation");
     expect_call(
-        calls[7], CycleScheduleCallKind::parent_child_interpolation,
+        calls[6], CycleScheduleCallKind::parent_child_interpolation,
         DomainId::d02, 0, 2, 16, 24, 16, "third d02 interpolation");
     expect_call(
-        calls[8], CycleScheduleCallKind::parent_child_interpolation,
+        calls[7], CycleScheduleCallKind::parent_child_interpolation,
         DomainId::d02, 0, 3, 24, 32, 24, "fourth d02 interpolation");
+    expect_call(
+        calls[8], CycleScheduleCallKind::parent_child_interpolation,
+        DomainId::d02, 0, 4, 32, 40, 32, "fifth d02 interpolation");
+    expect_call(
+        calls[9], CycleScheduleCallKind::two_way_feedback, DomainId::d01,
+        0, -1, 0, 40, 40, "first two-way feedback");
+    expect_call(
+        calls[10], CycleScheduleCallKind::moving_nest_move_check,
+        DomainId::d02, 0, -1, 40, 40, 40,
+        "first moving nest move check");
   }
 
-  const auto* first_nominal_move =
-      find_call(calls, CycleScheduleCallKind::moving_nest_position_update, 900);
-  expect(first_nominal_move != nullptr, "first 15 minute moving nest call exists");
-  if (first_nominal_move != nullptr) {
+  const auto move_checks =
+      find_calls_by_kind(calls, CycleScheduleCallKind::moving_nest_move_check);
+  expect(static_cast<std::int64_t>(move_checks.size()) == expected_move_checks,
+         "moving nest move check count matches parent steps");
+  if (!move_checks.empty()) {
     expect_call(
-        *first_nominal_move, CycleScheduleCallKind::moving_nest_position_update,
+        *move_checks.front(), CycleScheduleCallKind::moving_nest_move_check,
+        DomainId::d02, 0, -1, 40, 40, 40,
+        "first actual moving nest check is at the first parent step end");
+  }
+  for (const auto* move_check : move_checks) {
+    const auto* feedback = find_parent_step_call(
+        calls, CycleScheduleCallKind::two_way_feedback,
+        move_check->parent_step_index);
+    expect(feedback != nullptr, "feedback exists before moving nest check");
+    if (feedback != nullptr) {
+      expect(feedback->sequence_index < move_check->sequence_index,
+             "feedback precedes moving nest check within parent step");
+      expect(feedback->end_seconds == move_check->end_seconds,
+             "feedback and moving nest check share the same parent step end");
+    }
+    expect(move_check->end_seconds > 0, "moving nest check is not emitted at t=0");
+  }
+
+  const auto* initial_recompute =
+      find_call(calls, CycleScheduleCallKind::vortex_center_recompute, 0);
+  expect(initial_recompute != nullptr, "initial vortex recompute call exists");
+  if (initial_recompute != nullptr) {
+    expect_call(
+        *initial_recompute, CycleScheduleCallKind::vortex_center_recompute,
+        DomainId::d02, 0, -1, 40, 40, 0,
+        "nominal 0 s vortex recompute snaps to first parent step end");
+  }
+
+  const auto* first_nominal_recompute =
+      find_call(calls, CycleScheduleCallKind::vortex_center_recompute, 900);
+  expect(first_nominal_recompute != nullptr,
+         "first 15 minute vortex recompute call exists");
+  if (first_nominal_recompute != nullptr) {
+    expect_call(
+        *first_nominal_recompute, CycleScheduleCallKind::vortex_center_recompute,
         DomainId::d02, 22, -1, 920, 920, 900,
-        "900 s moving nest call snaps to next 40 s boundary");
+        "900 s vortex recompute snaps to next 40 s boundary");
   }
 
-  const auto* final_nominal_move =
-      find_call(calls, CycleScheduleCallKind::moving_nest_position_update, 21'600);
-  expect(final_nominal_move != nullptr, "final moving nest endpoint call exists");
-  if (final_nominal_move != nullptr) {
+  const auto* second_nominal_recompute =
+      find_call(calls, CycleScheduleCallKind::vortex_center_recompute, 1'800);
+  expect(second_nominal_recompute != nullptr,
+         "30 minute vortex recompute call exists");
+  if (second_nominal_recompute != nullptr) {
     expect_call(
-        *final_nominal_move, CycleScheduleCallKind::moving_nest_position_update,
+        *second_nominal_recompute,
+        CycleScheduleCallKind::vortex_center_recompute, DomainId::d02, 44, -1,
+        1'800, 1'800, 1'800,
+        "1800 s vortex recompute lands on exact parent step end");
+  }
+
+  const auto* final_nominal_recompute =
+      find_call(calls, CycleScheduleCallKind::vortex_center_recompute, 21'600);
+  expect(final_nominal_recompute != nullptr,
+         "final vortex recompute endpoint call exists");
+  if (final_nominal_recompute != nullptr) {
+    expect_call(
+        *final_nominal_recompute,
+        CycleScheduleCallKind::vortex_center_recompute, DomainId::d02, 539, -1,
+        21'600, 21'600, 21'600, "final vortex recompute call");
+  }
+
+  if (calls.size() >= 7) {
+    const auto first_final_event = calls.size() - 7;
+    expect_call(
+        calls[first_final_event], CycleScheduleCallKind::two_way_feedback,
+        DomainId::d01, 539, -1, 21'560, 21'600, 21'600,
+        "final feedback before moving nest check");
+    expect_call(
+        calls[first_final_event + 1], CycleScheduleCallKind::moving_nest_move_check,
         DomainId::d02, 539, -1, 21'600, 21'600, 21'600,
-        "final moving nest call");
-  }
-
-  if (calls.size() >= 5) {
-    const auto first_final_event = calls.size() - 5;
+        "final moving nest check before output");
     expect_call(
-        calls[first_final_event],
-        CycleScheduleCallKind::moving_nest_position_update, DomainId::d02,
-        539, -1, 21'600, 21'600, 21'600, "final movement before output");
+        calls[first_final_event + 2],
+        CycleScheduleCallKind::vortex_center_recompute, DomainId::d02, 539, -1,
+        21'600, 21'600, 21'600, "final vortex recompute before output");
     expect_call(
-        calls[first_final_event + 1], CycleScheduleCallKind::history_output,
+        calls[first_final_event + 3], CycleScheduleCallKind::history_output,
         DomainId::d01, 539, -1, 21'600, 21'600, 21'600, "d01 history");
     expect_call(
-        calls[first_final_event + 2], CycleScheduleCallKind::history_output,
+        calls[first_final_event + 4], CycleScheduleCallKind::history_output,
         DomainId::d02, 539, -1, 21'600, 21'600, 21'600, "d02 history");
     expect_call(
-        calls[first_final_event + 3],
+        calls[first_final_event + 5],
         CycleScheduleCallKind::boundary_input_refresh, DomainId::d01, 539, -1,
         21'600, 21'600, 21'600, "end boundary refresh");
   }
@@ -191,8 +281,14 @@ int main() {
 
   expect(
       tywrf::dynamics::cycle_schedule_call_name(
-          CycleScheduleCallKind::two_way_feedback) == "two_way_feedback",
+          CycleScheduleCallKind::moving_nest_move_check) ==
+          "moving_nest_move_check",
       "call kind name");
+  expect(
+      tywrf::dynamics::cycle_schedule_call_name(
+          CycleScheduleCallKind::vortex_center_recompute) ==
+          "vortex_center_recompute",
+      "vortex recompute call kind name");
   expect(
       tywrf::dynamics::segment_endpoint_policy_name(
           tywrf::dynamics::SegmentEndpointPolicy::bracket_start_and_end) ==

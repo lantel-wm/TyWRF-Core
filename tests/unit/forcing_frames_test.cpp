@@ -327,6 +327,36 @@ int run_reference_smoke_test() {
                  tywrf::io::kKrosaForcingIntervalSeconds),
          "KROSA wrfbdy record 27 inferred end timestamp");
 
+  const auto u_bxs_slice = boundary.read_float_time_slice("U_BXS", 0);
+  expect(u_bxs_slice.metadata.slice_shape ==
+             std::vector<std::size_t>{5, 59, 429},
+         "KROSA wrfbdy U_BXS record 0 raw shape");
+  const auto staged_u_bxs = tywrf::io::stage_forcing_time_slice(u_bxs_slice);
+  expect(staged_u_bxs.variable_name == "U_BXS",
+         "KROSA wrfbdy U_BXS staged variable name");
+  expect(staged_u_bxs.record_index == 0,
+         "KROSA wrfbdy U_BXS staged record index");
+  const auto packed_u_bxs = tywrf::io::pack_boundary_x_side_raw_to_canonical(
+      staged_u_bxs.field.values,
+      u_bxs_slice.metadata.slice_shape);
+  expect(packed_u_bxs.layout.nx == 5 && packed_u_bxs.layout.ny == 429 &&
+             packed_u_bxs.layout.nz == 59,
+         "KROSA wrfbdy U_BXS canonical shape");
+  const std::array<std::array<std::size_t, 3>, 4> u_bxs_samples{{
+      {0, 0, 0},
+      {4, 428, 58},
+      {2, 17, 31},
+      {3, 287, 7},
+  }};
+  for (const auto& sample : u_bxs_samples) {
+    const auto i = sample[0];
+    const auto j = sample[1];
+    const auto k = sample[2];
+    const auto raw_index = ((i * 59) + k) * 429 + j;
+    expect(packed_u_bxs.at(i, j, k) == staged_u_bxs.field.values.at(raw_index),
+           "KROSA wrfbdy U_BXS raw bdy,k,j maps to canonical i,j,k");
+  }
+
   const tywrf::io::KrosaForcingReader nudging(
       wrffdda,
       tywrf::io::KrosaForcingKind::spectral_nudging);
@@ -347,7 +377,33 @@ int run_reference_smoke_test() {
                  tywrf::io::kKrosaForcingIntervalSeconds),
          "KROSA wrffdda record 27 inferred end timestamp");
 
-  std::cout << "Validated KROSA forcing frame metadata under " << root << '\n';
+  const auto q_new_slice = nudging.read_float_time_slice("Q_NDG_NEW", 0);
+  expect(q_new_slice.metadata.slice_shape ==
+             std::vector<std::size_t>{59, 429, 265},
+         "KROSA wrffdda Q_NDG_NEW record 0 raw shape");
+  const auto packed_q_new = tywrf::io::pack_fdda_3d_raw_to_canonical(
+      q_new_slice.values,
+      q_new_slice.metadata.slice_shape);
+  expect(packed_q_new.layout.nx == 265 && packed_q_new.layout.ny == 429 &&
+             packed_q_new.layout.nz == 59,
+         "KROSA wrffdda Q_NDG_NEW canonical shape");
+  const std::array<std::array<std::size_t, 3>, 4> q_new_samples{{
+      {0, 0, 0},
+      {264, 428, 58},
+      {19, 23, 41},
+      {251, 307, 6},
+  }};
+  for (const auto& sample : q_new_samples) {
+    const auto i = sample[0];
+    const auto j = sample[1];
+    const auto k = sample[2];
+    const auto raw_index = ((k * 429) + j) * 265 + i;
+    expect(packed_q_new.at(i, j, k) == q_new_slice.values.at(raw_index),
+           "KROSA wrffdda Q_NDG_NEW raw k,j,i maps to canonical i,j,k");
+  }
+
+  std::cout << "Validated KROSA forcing frame metadata and canonical pack smoke under "
+            << root << '\n';
   return failures == 0 ? 0 : 1;
 }
 

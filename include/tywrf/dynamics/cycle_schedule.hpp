@@ -14,10 +14,12 @@ enum class CycleScheduleCallKind : std::uint8_t {
   spectral_nudging_input_refresh,
   d01_boundary_update,
   d01_spectral_nudging,
-  moving_nest_position_update,
+  moving_nest_move_check,
+  vortex_center_recompute,
   parent_child_interpolation,
   two_way_feedback,
   history_output,
+  moving_nest_position_update,
 };
 
 enum class SegmentEndpointPolicy : std::uint8_t {
@@ -66,6 +68,8 @@ struct CycleScheduleSummary {
   std::int64_t spectral_nudging_input_refreshes = 0;
   std::int64_t d01_boundary_updates = 0;
   std::int64_t d01_spectral_nudging_calls = 0;
+  std::int64_t moving_nest_move_checks = 0;
+  std::int64_t vortex_center_recomputes = 0;
   std::int64_t moving_nest_position_updates = 0;
   std::int64_t parent_child_interpolations = 0;
   std::int64_t two_way_feedbacks = 0;

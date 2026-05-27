@@ -12,13 +12,17 @@ void require(const bool condition, const char* message) {
   }
 }
 
-[[nodiscard]] std::int64_t snap_to_next_multiple(
-    const std::int64_t value,
-    const std::int64_t interval) noexcept {
-  if (value == 0) {
-    return 0;
+[[nodiscard]] std::int64_t snap_to_next_parent_step_end(
+    const std::int64_t nominal_seconds,
+    const std::int64_t parent_time_step_seconds) noexcept {
+  const auto snapped =
+      ((nominal_seconds + parent_time_step_seconds - 1) /
+       parent_time_step_seconds) *
+      parent_time_step_seconds;
+  if (snapped == 0) {
+    return parent_time_step_seconds;
   }
-  return ((value + interval - 1) / interval) * interval;
+  return snapped;
 }
 
 [[nodiscard]] std::int64_t instant_parent_step_index(
@@ -70,8 +74,12 @@ void count_call(const CycleScheduleCallKind kind, CycleScheduleSummary& summary)
     case CycleScheduleCallKind::d01_spectral_nudging:
       ++summary.d01_spectral_nudging_calls;
       break;
-    case CycleScheduleCallKind::moving_nest_position_update:
+    case CycleScheduleCallKind::moving_nest_move_check:
+      ++summary.moving_nest_move_checks;
       ++summary.moving_nest_position_updates;
+      break;
+    case CycleScheduleCallKind::vortex_center_recompute:
+      ++summary.vortex_center_recomputes;
       break;
     case CycleScheduleCallKind::parent_child_interpolation:
       ++summary.parent_child_interpolations;
@@ -81,6 +89,10 @@ void count_call(const CycleScheduleCallKind kind, CycleScheduleSummary& summary)
       break;
     case CycleScheduleCallKind::history_output:
       ++summary.history_outputs;
+      break;
+    case CycleScheduleCallKind::moving_nest_position_update:
+      ++summary.moving_nest_move_checks;
+      ++summary.moving_nest_position_updates;
       break;
   }
 }
@@ -120,10 +132,10 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
       static_cast<std::int64_t>(config.segment_seconds / config.parent_time_step_seconds);
   const auto child_substeps =
       parent_steps * static_cast<std::int64_t>(config.parent_time_step_ratio);
-  const auto moving_nest_updates =
+  const auto vortex_center_recomputes =
       static_cast<std::int64_t>(config.segment_seconds / config.moving_nest_interval_seconds) + 1;
   const auto expected_calls =
-      2 + 2 + parent_steps * 2 + child_substeps + parent_steps + moving_nest_updates + 2;
+      2 + parent_steps * 4 + child_substeps + vortex_center_recomputes + 2 + 2;
   calls.reserve(static_cast<std::size_t>(expected_calls));
   summary.parent_steps = parent_steps;
   summary.child_substeps = child_substeps;
@@ -133,10 +145,6 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
   emit_call(
       calls, summary, CycleScheduleCallKind::spectral_nudging_input_refresh,
       DomainId::d01, 0, -1, 0, 0, 0);
-  emit_call(
-      calls, summary, CycleScheduleCallKind::moving_nest_position_update,
-      DomainId::d02, 0, -1, 0, 0, 0);
-
   for (std::int64_t parent_step = 0; parent_step < parent_steps; ++parent_step) {
     const auto parent_start =
         parent_step * static_cast<std::int64_t>(config.parent_time_step_seconds);
@@ -164,15 +172,18 @@ CycleSchedule CycleSchedule::build(CycleScheduleConfig config) {
     emit_call(
         calls, summary, CycleScheduleCallKind::two_way_feedback, DomainId::d01,
         parent_step, -1, parent_start, parent_end, parent_end);
+    emit_call(
+        calls, summary, CycleScheduleCallKind::moving_nest_move_check,
+        DomainId::d02, parent_step, -1, parent_end, parent_end, parent_end);
 
-    for (std::int64_t nominal = config.moving_nest_interval_seconds;
+    for (std::int64_t nominal = 0;
          nominal <= config.segment_seconds;
          nominal += config.moving_nest_interval_seconds) {
       const auto scheduled =
-          snap_to_next_multiple(nominal, config.parent_time_step_seconds);
+          snap_to_next_parent_step_end(nominal, config.parent_time_step_seconds);
       if (scheduled == parent_end) {
         emit_call(
-            calls, summary, CycleScheduleCallKind::moving_nest_position_update,
+            calls, summary, CycleScheduleCallKind::vortex_center_recompute,
             DomainId::d02, parent_step, -1, scheduled, scheduled, nominal);
       }
     }
@@ -230,6 +241,10 @@ std::string_view cycle_schedule_call_name(const CycleScheduleCallKind kind) noex
       return "d01_boundary_update";
     case CycleScheduleCallKind::d01_spectral_nudging:
       return "d01_spectral_nudging";
+    case CycleScheduleCallKind::moving_nest_move_check:
+      return "moving_nest_move_check";
+    case CycleScheduleCallKind::vortex_center_recompute:
+      return "vortex_center_recompute";
     case CycleScheduleCallKind::moving_nest_position_update:
       return "moving_nest_position_update";
     case CycleScheduleCallKind::parent_child_interpolation:
