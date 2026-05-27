@@ -1,0 +1,10 @@
+.venv/
+.uv-cache/
+.uv-python/
+build/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+__pycache__/
+.pytest_cache/
+*.py[cod]
