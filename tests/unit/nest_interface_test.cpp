@@ -39,16 +39,44 @@ void expect_exchange_status(
 void expect_window(
     const tywrf::nest::RemapWindow& window,
     const HorizontalStagger stagger,
+    const std::int32_t old_i_begin,
+    const std::int32_t old_j_begin,
     const std::int32_t extent_i,
     const std::int32_t extent_j,
+    const std::int32_t total_i,
+    const std::int32_t total_j,
     const std::string_view label) {
   if (window.stagger != stagger || window.extent_i != extent_i ||
       window.extent_j != extent_j || window.new_i_begin != 0 ||
-      window.new_j_begin != 0 || window.old_i_begin != 55 ||
-      window.old_j_begin != 45 || window.old_i_offset_from_new != 55 ||
-      window.old_j_offset_from_new != 45) {
+      window.new_j_begin != 0 || window.old_i_begin != old_i_begin ||
+      window.old_j_begin != old_j_begin ||
+      window.old_i_offset_from_new != old_i_begin ||
+      window.old_j_offset_from_new != old_j_begin ||
+      window.old_i_begin + window.extent_i > total_i ||
+      window.old_j_begin + window.extent_j > total_j ||
+      window.new_i_begin + window.extent_i > total_i ||
+      window.new_j_begin + window.extent_j > total_j) {
     std::cerr << label << " remap window mismatch for "
               << tywrf::nest::horizontal_stagger_name(window.stagger) << '\n';
+    assert(false);
+  }
+}
+
+void expect_pose_event(
+    const tywrf::nest::MovingNestPoseEvent* event,
+    const std::int64_t model_seconds,
+    const std::int64_t parent_step_index,
+    const std::int32_t i_parent_start,
+    const std::int32_t j_parent_start,
+    const bool moved,
+    const std::string_view label) {
+  if (event == nullptr || event->model_seconds != model_seconds ||
+      event->parent_step_index != parent_step_index ||
+      event->position.i_parent_start != i_parent_start ||
+      event->position.j_parent_start != j_parent_start ||
+      event->position.index_base != tywrf::nest::IndexBase::one_based ||
+      event->moved != moved) {
+    std::cerr << label << " pose event mismatch\n";
     assert(false);
   }
 }
@@ -60,6 +88,10 @@ int main() {
   static_assert(std::is_trivially_copyable_v<tywrf::nest::NestResult>);
   static_assert(std::is_standard_layout_v<tywrf::nest::ExchangeResult>);
   static_assert(std::is_trivially_copyable_v<tywrf::nest::ExchangeResult>);
+  static_assert(std::is_standard_layout_v<tywrf::nest::MovingNestPoseEvent>);
+  static_assert(std::is_trivially_copyable_v<tywrf::nest::MovingNestPoseEvent>);
+  static_assert(std::is_standard_layout_v<tywrf::nest::MovingNestPoseTimeline>);
+  static_assert(std::is_trivially_copyable_v<tywrf::nest::MovingNestPoseTimeline>);
   static_assert(std::is_standard_layout_v<tywrf::nest::DomainPose>);
   static_assert(std::is_trivially_copyable_v<tywrf::nest::DomainPose>);
   static_assert(std::is_standard_layout_v<tywrf::nest::NestPose>);
@@ -109,6 +141,41 @@ int main() {
   assert(initial_position.i_parent_start == 114);
   assert(initial_position.j_parent_start == 96);
 
+  const auto timeline = tywrf::nest::make_krosa_first_10min_d02_pose_timeline();
+  expect_status(
+      tywrf::nest::validate_moving_nest_pose_timeline(descriptor, timeline),
+      NestStatus::ok, "KROSA first 10 minute d02 pose timeline");
+  assert(timeline.events != nullptr);
+  assert(timeline.event_count == 16);
+  assert(tywrf::nest::moving_nest_movement_count(timeline) == 12);
+  expect_pose_event(
+      tywrf::nest::moving_nest_pose_at_model_second(timeline, 0), 0, 0, 114, 96,
+      false, "initial d02 pose");
+  expect_pose_event(
+      tywrf::nest::moving_nest_pose_at_model_second(timeline, 40), 40, 1, 115,
+      97, true, "first d02 move");
+  expect_pose_event(
+      tywrf::nest::moving_nest_pose_at_model_second(timeline, 480), 480, 12,
+      126, 103, true, "final d02 move");
+  expect_pose_event(
+      tywrf::nest::moving_nest_pose_at_model_second(timeline, 520), 520, 13,
+      126, 103, false, "first d02 endpoint hold");
+  expect_pose_event(
+      tywrf::nest::moving_nest_pose_at_model_second(timeline, 560), 560, 14,
+      126, 103, false, "second d02 endpoint hold");
+  expect_pose_event(
+      tywrf::nest::moving_nest_pose_at_model_second(timeline, 600), 600, 15,
+      126, 103, false, "10 minute d02 endpoint hold");
+
+  const auto* final_event = tywrf::nest::moving_nest_final_pose(timeline);
+  expect_pose_event(final_event, 600, 15, 126, 103, false, "final d02 pose");
+
+  auto invalid_timeline = timeline;
+  invalid_timeline.event_count = 0;
+  expect_status(
+      tywrf::nest::validate_moving_nest_pose_timeline(descriptor, invalid_timeline),
+      NestStatus::invalid_contract, "empty moving nest timeline");
+
   const auto footprint = tywrf::nest::parent_child_footprint(descriptor, initial_position);
   assert(footprint.span_i_parent_cells == 42);
   assert(footprint.span_j_parent_cells == 42);
@@ -124,42 +191,51 @@ int main() {
   assert(from_pose.parent_footprint.i_parent_start == 114);
   assert(from_pose.parent_footprint.j_parent_start == 96);
 
-  const tywrf::nest::ParentChildPosition moved_position{
-      125, 105, tywrf::nest::IndexBase::one_based};
+  const auto moved_position = final_event->position;
   const auto to_pose = tywrf::nest::make_domain_pose(descriptor, moved_position);
   expect_status(to_pose.result, NestStatus::ok, "moved d02 domain pose");
 
   const auto delta = tywrf::nest::pose_delta(
       from_pose, to_pose, descriptor.parent_grid_ratio);
   expect_status(delta.result, NestStatus::ok, "KROSA pose delta");
-  assert(delta.parent_di == 11);
-  assert(delta.parent_dj == 9);
-  assert(delta.child_di == 55);
-  assert(delta.child_dj == 45);
+  assert(delta.parent_di == 12);
+  assert(delta.parent_dj == 7);
+  assert(delta.child_di == 60);
+  assert(delta.child_dj == 35);
   assert(delta.parent_to_child_ratio == 5);
 
   const auto from_nest_pose = tywrf::nest::make_nest_pose(descriptor, initial_position);
   const auto to_nest_pose = tywrf::nest::make_nest_pose(descriptor, moved_position);
   const auto nest_delta = tywrf::nest::pose_delta(from_nest_pose, to_nest_pose);
   expect_status(nest_delta.result, NestStatus::ok, "KROSA nest pose delta");
-  assert(nest_delta.child_di == 55);
-  assert(nest_delta.child_dj == 45);
+  assert(nest_delta.child_di == 60);
+  assert(nest_delta.child_dj == 35);
 
   const auto remap_plan = tywrf::nest::build_remap_plan(from_pose, to_pose);
   expect_status(remap_plan.result, NestStatus::ok, "KROSA d02 remap plan");
-  assert(remap_plan.delta.child_di == 55);
-  assert(remap_plan.delta.child_dj == 45);
-  expect_window(remap_plan.mass, HorizontalStagger::mass, 155, 165, "mass");
-  expect_window(remap_plan.surface, HorizontalStagger::surface, 155, 165, "surface");
-  expect_window(remap_plan.w_full, HorizontalStagger::w_full, 155, 165, "w_full");
-  expect_window(remap_plan.u, HorizontalStagger::u, 156, 165, "U");
-  expect_window(remap_plan.v, HorizontalStagger::v, 155, 166, "V");
+  assert(remap_plan.delta.child_di == 60);
+  assert(remap_plan.delta.child_dj == 35);
+  expect_window(
+      remap_plan.mass, HorizontalStagger::mass, 60, 35, 150, 175,
+      descriptor.child.mass_nx, descriptor.child.mass_ny, "mass");
+  expect_window(
+      remap_plan.surface, HorizontalStagger::surface, 60, 35, 150, 175,
+      descriptor.child.mass_nx, descriptor.child.mass_ny, "surface");
+  expect_window(
+      remap_plan.w_full, HorizontalStagger::w_full, 60, 35, 150, 175,
+      descriptor.child.mass_nx, descriptor.child.mass_ny, "w_full");
+  expect_window(
+      remap_plan.u, HorizontalStagger::u, 60, 35, 151, 175,
+      descriptor.child.mass_nx + 1, descriptor.child.mass_ny, "U");
+  expect_window(
+      remap_plan.v, HorizontalStagger::v, 60, 35, 150, 176,
+      descriptor.child.mass_nx, descriptor.child.mass_ny + 1, "V");
 
   const auto nest_remap_plan =
       tywrf::nest::build_remap_plan(from_nest_pose, to_nest_pose);
   expect_status(nest_remap_plan.result, NestStatus::ok, "KROSA nest remap plan");
-  assert(nest_remap_plan.mass.extent_i == 155);
-  assert(nest_remap_plan.mass.extent_j == 165);
+  assert(nest_remap_plan.mass.extent_i == 150);
+  assert(nest_remap_plan.mass.extent_j == 175);
 
   const auto no_overlap_pose = tywrf::nest::make_domain_pose(
       descriptor, {156, 96, tywrf::nest::IndexBase::one_based});

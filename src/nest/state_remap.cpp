@@ -137,6 +137,40 @@ template <typename Real>
   return ok_result();
 }
 
+[[nodiscard]] constexpr bool same_halo(const Halo3D lhs, const Halo3D rhs) noexcept {
+  return lhs.i_lower == rhs.i_lower && lhs.i_upper == rhs.i_upper &&
+         lhs.j_lower == rhs.j_lower && lhs.j_upper == rhs.j_upper &&
+         lhs.k_lower == rhs.k_lower && lhs.k_upper == rhs.k_upper;
+}
+
+[[nodiscard]] constexpr bool same_grid_config(
+    const GridConfig& lhs,
+    const GridConfig& rhs) noexcept {
+  return lhs.mass_nx == rhs.mass_nx && lhs.mass_ny == rhs.mass_ny &&
+         lhs.mass_nz == rhs.mass_nz && lhs.full_nz == rhs.full_nz &&
+         same_halo(lhs.halo, rhs.halo);
+}
+
+[[nodiscard]] NestResult validate_parent_fill_inputs(
+    const State<float>& parent_filled_child,
+    const State<float>& new_child) noexcept {
+  if (!same_grid_config(parent_filled_child.grid.config(), new_child.grid.config())) {
+    return result(
+        NestStatus::invalid_contract,
+        "parent-filled child state must use the new child grid");
+  }
+
+  return ok_result();
+}
+
+[[nodiscard]] constexpr bool in_new_overlap_window(
+    const RemapWindow& window,
+    const std::int32_t i,
+    const std::int32_t j) noexcept {
+  return i >= window.new_i_begin && i < window.new_i_begin + window.extent_i &&
+         j >= window.new_j_begin && j < window.new_j_begin + window.extent_j;
+}
+
 void copy_overlap_2d(
     const RemapWindow& window,
     const FieldView2D<const float>& old_field,
@@ -193,6 +227,103 @@ void copy_overlap_3d(
       static_cast<std::uint64_t>(nz);
 }
 
+void fill_exposed_2d(
+    const RemapWindow& window,
+    const FieldView2D<const float>& parent_field,
+    const FieldView2D<float>& new_field,
+    ChildStateRemapReport& report) noexcept {
+  const auto parent_i0 = parent_field.halo.i_lower;
+  const auto parent_j0 = parent_field.halo.j_lower;
+  const auto new_i0 = new_field.halo.i_lower;
+  const auto new_j0 = new_field.halo.j_lower;
+  const auto nx = active_nx(new_field);
+  const auto ny = active_ny(new_field);
+  std::uint64_t filled_points = 0;
+
+  for (std::int32_t j = 0; j < ny; ++j) {
+    for (std::int32_t i = 0; i < nx; ++i) {
+      if (!in_new_overlap_window(window, i, j)) {
+        new_field(new_i0 + i, new_j0 + j) = parent_field(parent_i0 + i, parent_j0 + j);
+        ++filled_points;
+      }
+    }
+  }
+
+  if (filled_points > 0) {
+    ++report.parent_fill_field_count;
+    report.parent_fill_point_count += filled_points;
+  }
+}
+
+void fill_exposed_3d(
+    const RemapWindow& window,
+    const FieldView3D<const float>& parent_field,
+    const FieldView3D<float>& new_field,
+    ChildStateRemapReport& report) noexcept {
+  const auto parent_i0 = parent_field.halo.i_lower;
+  const auto parent_j0 = parent_field.halo.j_lower;
+  const auto parent_k0 = parent_field.halo.k_lower;
+  const auto new_i0 = new_field.halo.i_lower;
+  const auto new_j0 = new_field.halo.j_lower;
+  const auto new_k0 = new_field.halo.k_lower;
+  const auto nx = active_nx(new_field);
+  const auto ny = active_ny(new_field);
+  const auto nz = active_nz(new_field);
+  std::uint64_t filled_points = 0;
+
+  for (std::int32_t j = 0; j < ny; ++j) {
+    for (std::int32_t k = 0; k < nz; ++k) {
+      for (std::int32_t i = 0; i < nx; ++i) {
+        if (in_new_overlap_window(window, i, j)) {
+          continue;
+        }
+        new_field(new_i0 + i, new_j0 + j, new_k0 + k) =
+            parent_field(parent_i0 + i, parent_j0 + j, parent_k0 + k);
+        ++filled_points;
+      }
+    }
+  }
+
+  if (filled_points > 0) {
+    ++report.parent_fill_field_count;
+    report.parent_fill_point_count += filled_points;
+  }
+}
+
+void fill_all_supported_exposed_cells(
+    const RemapPlan& plan,
+    const StateView<const float>& parent_view,
+    const StateView<float>& new_view,
+    ChildStateRemapReport& report) noexcept {
+  fill_exposed_3d(plan.u, parent_view.u, new_view.u, report);
+  fill_exposed_3d(plan.v, parent_view.v, new_view.v, report);
+  fill_exposed_3d(plan.w_full, parent_view.w, new_view.w, report);
+  fill_exposed_3d(plan.w_full, parent_view.ph, new_view.ph, report);
+  fill_exposed_3d(plan.w_full, parent_view.phb, new_view.phb, report);
+
+  fill_exposed_3d(plan.mass, parent_view.t, new_view.t, report);
+  fill_exposed_3d(plan.mass, parent_view.p, new_view.p, report);
+  fill_exposed_3d(plan.mass, parent_view.pb, new_view.pb, report);
+  fill_exposed_3d(plan.mass, parent_view.qvapor, new_view.qvapor, report);
+  fill_exposed_3d(plan.mass, parent_view.qcloud, new_view.qcloud, report);
+  fill_exposed_3d(plan.mass, parent_view.qrain, new_view.qrain, report);
+  fill_exposed_3d(plan.mass, parent_view.qice, new_view.qice, report);
+  fill_exposed_3d(plan.mass, parent_view.qsnow, new_view.qsnow, report);
+  fill_exposed_3d(plan.mass, parent_view.qgraup, new_view.qgraup, report);
+  fill_exposed_3d(plan.mass, parent_view.qnice, new_view.qnice, report);
+  fill_exposed_3d(plan.mass, parent_view.qnrain, new_view.qnrain, report);
+
+  fill_exposed_2d(plan.surface, parent_view.mu, new_view.mu, report);
+  fill_exposed_2d(plan.surface, parent_view.mub, new_view.mub, report);
+  fill_exposed_2d(plan.surface, parent_view.psfc, new_view.psfc, report);
+  fill_exposed_2d(plan.surface, parent_view.u10, new_view.u10, report);
+  fill_exposed_2d(plan.surface, parent_view.v10, new_view.v10, report);
+  fill_exposed_2d(plan.surface, parent_view.t2, new_view.t2, report);
+  fill_exposed_2d(plan.surface, parent_view.q2, new_view.q2, report);
+  fill_exposed_2d(plan.surface, parent_view.rainc, new_view.rainc, report);
+  fill_exposed_2d(plan.surface, parent_view.rainnc, new_view.rainnc, report);
+}
+
 }  // namespace
 
 ChildStateRemapReport remap_child_state_overlap_only(
@@ -242,6 +373,35 @@ ChildStateRemapReport remap_child_state_overlap_only(
   copy_overlap_2d(plan.surface, old_view.rainc, new_view.rainc, report);
   copy_overlap_2d(plan.surface, old_view.rainnc, new_view.rainnc, report);
 
+  return report;
+}
+
+ChildStateRemapReport remap_child_state_overlap_with_parent_fill(
+    const RemapPlan& plan,
+    const State<float>& old_child,
+    const State<float>& parent_filled_child,
+    State<float>& new_child) noexcept {
+  ChildStateRemapReport report{};
+  report.result = ok_result();
+  report.needs_parent_fill = true;
+
+  if (const auto validation = validate_parent_fill_inputs(parent_filled_child, new_child);
+      !validation.ok()) {
+    report.result = validation;
+    return report;
+  }
+
+  report = remap_child_state_overlap_only(plan, old_child, new_child);
+  if (!report.ok()) {
+    return report;
+  }
+
+  const auto parent_view = parent_filled_child.view();
+  const auto new_view = new_child.view();
+  fill_all_supported_exposed_cells(plan, parent_view, new_view, report);
+
+  report.filled_exposed_cells = report.parent_fill_point_count > 0;
+  report.needs_parent_fill = false;
   return report;
 }
 

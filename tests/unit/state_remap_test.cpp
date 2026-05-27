@@ -10,6 +10,7 @@
 namespace {
 
 constexpr float kSentinel = -9'999.0F;
+constexpr float kParentFill = 123'456.0F;
 
 tywrf::Grid make_child_grid() {
   return tywrf::Grid({
@@ -17,7 +18,7 @@ tywrf::Grid make_child_grid() {
       .mass_ny = 3,
       .mass_nz = 2,
       .full_nz = 3,
-      .halo = {},
+      .halo = tywrf::Halo3D{1, 1, 1, 1, 1, 1},
   });
 }
 
@@ -157,6 +158,37 @@ void expect_overlap_2d(
   }
 }
 
+void expect_parent_fill_spots_2d(
+    const tywrf::FieldStorage2D<float>& old_field,
+    const tywrf::FieldStorage2D<float>& parent_field,
+    const tywrf::FieldStorage2D<float>& new_field,
+    const tywrf::nest::RemapWindow& window,
+    const std::string_view label) {
+  const auto old_layout = old_field.layout();
+  const auto parent_layout = parent_field.layout();
+  const auto new_layout = new_field.layout();
+  const auto old_view = old_field.view();
+  const auto parent_view = parent_field.view();
+  const auto new_view = new_field.view();
+
+  const auto overlap_new_i = new_layout.i_begin() + window.new_i_begin;
+  const auto overlap_new_j = new_layout.j_begin() + window.new_j_begin;
+  const auto overlap_old_i = old_layout.i_begin() + window.old_i_begin;
+  const auto overlap_old_j = old_layout.j_begin() + window.old_j_begin;
+  expect_value(
+      new_view(overlap_new_i, overlap_new_j),
+      old_view(overlap_old_i, overlap_old_j),
+      label);
+
+  const auto exposed_i = new_layout.active_nx() - 1;
+  const auto exposed_j = new_layout.active_ny() - 1;
+  assert(!in_window(window, exposed_i, exposed_j));
+  expect_value(
+      new_view(new_layout.i_begin() + exposed_i, new_layout.j_begin() + exposed_j),
+      parent_view(parent_layout.i_begin() + exposed_i, parent_layout.j_begin() + exposed_j),
+      label);
+}
+
 void expect_overlap_3d(
     const tywrf::FieldStorage3D<float>& old_field,
     const tywrf::FieldStorage3D<float>& new_field,
@@ -186,6 +218,45 @@ void expect_overlap_3d(
   }
 }
 
+void expect_parent_fill_spots_3d(
+    const tywrf::FieldStorage3D<float>& old_field,
+    const tywrf::FieldStorage3D<float>& parent_field,
+    const tywrf::FieldStorage3D<float>& new_field,
+    const tywrf::nest::RemapWindow& window,
+    const std::string_view label) {
+  const auto old_layout = old_field.layout();
+  const auto parent_layout = parent_field.layout();
+  const auto new_layout = new_field.layout();
+  const auto old_view = old_field.view();
+  const auto parent_view = parent_field.view();
+  const auto new_view = new_field.view();
+
+  const auto overlap_new_i = new_layout.i_begin() + window.new_i_begin;
+  const auto overlap_new_j = new_layout.j_begin() + window.new_j_begin;
+  const auto overlap_new_k = new_layout.k_begin();
+  const auto overlap_old_i = old_layout.i_begin() + window.old_i_begin;
+  const auto overlap_old_j = old_layout.j_begin() + window.old_j_begin;
+  const auto overlap_old_k = old_layout.k_begin();
+  expect_value(
+      new_view(overlap_new_i, overlap_new_j, overlap_new_k),
+      old_view(overlap_old_i, overlap_old_j, overlap_old_k),
+      label);
+
+  const auto exposed_i = new_layout.active_nx() - 1;
+  const auto exposed_j = new_layout.active_ny() - 1;
+  assert(!in_window(window, exposed_i, exposed_j));
+  expect_value(
+      new_view(
+          new_layout.i_begin() + exposed_i,
+          new_layout.j_begin() + exposed_j,
+          new_layout.k_begin()),
+      parent_view(
+          parent_layout.i_begin() + exposed_i,
+          parent_layout.j_begin() + exposed_j,
+          parent_layout.k_begin()),
+      label);
+}
+
 [[nodiscard]] std::uint64_t points_2d(
     const tywrf::nest::RemapWindow& window) {
   return static_cast<std::uint64_t>(window.extent_i) *
@@ -206,6 +277,14 @@ void expect_overlap_3d(
   return points_3d(plan.u, mass_nz) + points_3d(plan.v, mass_nz) +
          3U * points_3d(plan.w_full, full_nz) +
          11U * points_3d(plan.mass, mass_nz) + 9U * points_2d(plan.surface);
+}
+
+[[nodiscard]] std::uint64_t exposed_horizontal_cells(
+    const tywrf::nest::RemapWindow& window,
+    const std::int32_t nx,
+    const std::int32_t ny) {
+  return static_cast<std::uint64_t>(nx) * static_cast<std::uint64_t>(ny) -
+         points_2d(window);
 }
 
 void expect_all_supported_fields(
@@ -239,6 +318,30 @@ void expect_all_supported_fields(
   expect_overlap_2d(old_state.rainnc, new_state.rainnc, plan.surface, "RAINNC");
 }
 
+void expect_representative_parent_fill_fields(
+    const tywrf::State<float>& old_state,
+    const tywrf::State<float>& parent_state,
+    const tywrf::State<float>& new_state,
+    const tywrf::nest::RemapPlan& plan) {
+  expect_parent_fill_spots_3d(old_state.u, parent_state.u, new_state.u, plan.u, "U");
+  expect_parent_fill_spots_3d(old_state.v, parent_state.v, new_state.v, plan.v, "V");
+  expect_parent_fill_spots_3d(old_state.w, parent_state.w, new_state.w, plan.w_full, "W");
+  expect_parent_fill_spots_3d(old_state.t, parent_state.t, new_state.t, plan.mass, "T");
+  expect_parent_fill_spots_2d(old_state.mu, parent_state.mu, new_state.mu, plan.surface, "MU");
+}
+
+void expect_representative_halos(const tywrf::State<float>& state) {
+  const auto u_layout = state.u.layout();
+  const auto u = state.u.view();
+  const auto t_layout = state.t.layout();
+  const auto t = state.t.view();
+  const auto mu_layout = state.mu.layout();
+  const auto mu = state.mu.view();
+  expect_value(u(0, u_layout.j_begin(), u_layout.k_begin()), kSentinel, "U halo");
+  expect_value(t(0, t_layout.j_begin(), t_layout.k_begin()), kSentinel, "T halo");
+  expect_value(mu(0, mu_layout.j_begin()), kSentinel, "MU halo");
+}
+
 }  // namespace
 
 int main() {
@@ -251,6 +354,9 @@ int main() {
   fill_state(old_state, kSentinel);
   fill_state(new_state, kSentinel);
   fill_indexed_state(old_state);
+
+  tywrf::State<float> parent_filled_state(grid);
+  fill_state(parent_filled_state, kParentFill);
 
   const auto descriptor = make_small_descriptor();
   const auto from_pose = tywrf::nest::make_domain_pose(
@@ -270,15 +376,56 @@ int main() {
   assert(plan.u.extent_j == 2);
   assert(plan.v.extent_i == 3);
   assert(plan.v.extent_j == 3);
+  const auto mass_exposed = exposed_horizontal_cells(
+      plan.mass, grid.mass_shape().nx, grid.mass_shape().ny);
+  const auto u_exposed = exposed_horizontal_cells(
+      plan.u, grid.u_shape().nx, grid.u_shape().ny);
+  const auto v_exposed = exposed_horizontal_cells(
+      plan.v, grid.v_shape().nx, grid.v_shape().ny);
+  const auto w_exposed = exposed_horizontal_cells(
+      plan.w_full, grid.w_shape().nx, grid.w_shape().ny);
+  const auto surface_exposed = exposed_horizontal_cells(
+      plan.surface, grid.surface_shape().nx, grid.surface_shape().ny);
+  assert(mass_exposed == 6);
+  assert(u_exposed == 7);
+  assert(v_exposed == 7);
+  assert(w_exposed == 6);
+  assert(surface_exposed == 6);
+  const auto expected_parent_fill_points =
+      u_exposed * static_cast<std::uint64_t>(grid.u_shape().nz) +
+      v_exposed * static_cast<std::uint64_t>(grid.v_shape().nz) +
+      3U * w_exposed * static_cast<std::uint64_t>(grid.w_shape().nz) +
+      11U * mass_exposed * static_cast<std::uint64_t>(grid.mass_shape().nz) +
+      9U * surface_exposed;
 
   const auto report =
       tywrf::nest::remap_child_state_overlap_only(plan, old_state, new_state);
   assert(report.ok());
   assert(report.copied_field_count == 25);
   assert(report.copied_point_count == expected_copied_points(plan, grid));
+  assert(report.parent_fill_field_count == 0);
+  assert(report.parent_fill_point_count == 0);
   assert(report.needs_parent_fill);
+  assert(!report.filled_exposed_cells);
   assert(!report.copied_halo_cells);
   expect_all_supported_fields(old_state, new_state, plan);
+  expect_representative_halos(new_state);
+
+  tywrf::State<float> filled_new_state(grid);
+  fill_state(filled_new_state, kSentinel);
+  const auto fill_report = tywrf::nest::remap_child_state_overlap_with_parent_fill(
+      plan, old_state, parent_filled_state, filled_new_state);
+  assert(fill_report.ok());
+  assert(fill_report.copied_field_count == 25);
+  assert(fill_report.copied_point_count == expected_copied_points(plan, grid));
+  assert(fill_report.parent_fill_field_count == 25);
+  assert(fill_report.parent_fill_point_count == expected_parent_fill_points);
+  assert(!fill_report.needs_parent_fill);
+  assert(fill_report.filled_exposed_cells);
+  assert(!fill_report.copied_halo_cells);
+  expect_representative_parent_fill_fields(
+      old_state, parent_filled_state, filled_new_state, plan);
+  expect_representative_halos(filled_new_state);
 
   tywrf::State<float> full_new_state(grid);
   fill_state(full_new_state, kSentinel);
@@ -289,9 +436,30 @@ int main() {
   assert(full_report.ok());
   assert(full_report.copied_field_count == 25);
   assert(full_report.copied_point_count == expected_copied_points(full_plan, grid));
+  assert(full_report.parent_fill_field_count == 0);
+  assert(full_report.parent_fill_point_count == 0);
   assert(!full_report.needs_parent_fill);
+  assert(!full_report.filled_exposed_cells);
   assert(!full_report.copied_halo_cells);
   expect_all_supported_fields(old_state, full_new_state, full_plan);
+  expect_representative_halos(full_new_state);
+
+  tywrf::State<float> full_filled_new_state(grid);
+  fill_state(full_filled_new_state, kSentinel);
+  const auto full_fill_report =
+      tywrf::nest::remap_child_state_overlap_with_parent_fill(
+          full_plan, old_state, parent_filled_state, full_filled_new_state);
+  assert(full_fill_report.ok());
+  assert(full_fill_report.copied_field_count == 25);
+  assert(full_fill_report.copied_point_count ==
+         expected_copied_points(full_plan, grid));
+  assert(full_fill_report.parent_fill_field_count == 0);
+  assert(full_fill_report.parent_fill_point_count == 0);
+  assert(!full_fill_report.needs_parent_fill);
+  assert(!full_fill_report.filled_exposed_cells);
+  assert(!full_fill_report.copied_halo_cells);
+  expect_all_supported_fields(old_state, full_filled_new_state, full_plan);
+  expect_representative_halos(full_filled_new_state);
 
   return 0;
 }

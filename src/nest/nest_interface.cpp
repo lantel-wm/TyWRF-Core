@@ -46,6 +46,36 @@ namespace {
          lhs.parent_time_step_ratio == rhs.parent_time_step_ratio;
 }
 
+[[nodiscard]] constexpr bool same_parent_child_position(
+    const ParentChildPosition& lhs,
+    const ParentChildPosition& rhs) noexcept {
+  return lhs.i_parent_start == rhs.i_parent_start &&
+         lhs.j_parent_start == rhs.j_parent_start && lhs.index_base == rhs.index_base;
+}
+
+constexpr MovingNestPoseEvent kKrosaFirst10MinD02PoseEvents[] = {
+    {0, 0, {114, 96, IndexBase::one_based}, false},
+    {40, 1, {115, 97, IndexBase::one_based}, true},
+    {80, 2, {116, 98, IndexBase::one_based}, true},
+    {120, 3, {117, 99, IndexBase::one_based}, true},
+    {160, 4, {118, 100, IndexBase::one_based}, true},
+    {200, 5, {119, 101, IndexBase::one_based}, true},
+    {240, 6, {120, 102, IndexBase::one_based}, true},
+    {280, 7, {121, 103, IndexBase::one_based}, true},
+    {320, 8, {122, 103, IndexBase::one_based}, true},
+    {360, 9, {123, 103, IndexBase::one_based}, true},
+    {400, 10, {124, 103, IndexBase::one_based}, true},
+    {440, 11, {125, 103, IndexBase::one_based}, true},
+    {480, 12, {126, 103, IndexBase::one_based}, true},
+    {520, 13, {126, 103, IndexBase::one_based}, false},
+    {560, 14, {126, 103, IndexBase::one_based}, false},
+    {600, 15, {126, 103, IndexBase::one_based}, false},
+};
+
+constexpr std::size_t kKrosaFirst10MinD02PoseEventCount =
+    sizeof(kKrosaFirst10MinD02PoseEvents) /
+    sizeof(kKrosaFirst10MinD02PoseEvents[0]);
+
 [[nodiscard]] constexpr std::int32_t lower_bound(
     const IndexBase index_base,
     const std::int32_t corral_dist_parent_cells) noexcept {
@@ -237,6 +267,10 @@ MovingNestConfig make_krosa_moving_nest_config() noexcept {
       DomainMovingNestConfig{1, 15, 30.0, 10, 70'000.0, 0},
       DomainMovingNestConfig{2, 15, 30.0, 30, 70'000.0, 0},
   };
+}
+
+MovingNestPoseTimeline make_krosa_first_10min_d02_pose_timeline() noexcept {
+  return {kKrosaFirst10MinD02PoseEvents, kKrosaFirst10MinD02PoseEventCount};
 }
 
 SpectralNudgingConfig make_krosa_spectral_nudging_config() noexcept {
@@ -438,6 +472,109 @@ NestResult validate_movement_proposal(
   }
 
   return ok_result();
+}
+
+NestResult validate_moving_nest_pose_timeline(
+    const ParentChildDescriptor& descriptor,
+    const MovingNestPoseTimeline& timeline) noexcept {
+  if (const auto descriptor_status = validate_parent_child_descriptor(descriptor);
+      !descriptor_status.ok()) {
+    return descriptor_status;
+  }
+  if (timeline.events == nullptr || timeline.event_count == 0) {
+    return result(NestStatus::invalid_contract, "moving nest timeline is empty");
+  }
+
+  const auto& first_event = timeline.events[0];
+  if (first_event.model_seconds < 0 || first_event.parent_step_index < 0) {
+    return result(NestStatus::invalid_contract, "moving nest timeline starts before model time");
+  }
+  if (first_event.moved) {
+    return result(NestStatus::invalid_contract, "moving nest timeline first event must be a hold");
+  }
+  if (const auto first_position_status =
+          validate_parent_child_position(descriptor, first_event.position);
+      !first_position_status.ok()) {
+    return first_position_status;
+  }
+
+  for (std::size_t event_index = 1; event_index < timeline.event_count; ++event_index) {
+    const auto& previous = timeline.events[event_index - 1];
+    const auto& current = timeline.events[event_index];
+
+    if (current.model_seconds <= previous.model_seconds) {
+      return result(NestStatus::invalid_contract, "moving nest timeline seconds must increase");
+    }
+    if (current.parent_step_index < previous.parent_step_index) {
+      return result(
+          NestStatus::invalid_contract,
+          "moving nest timeline parent steps must be monotonic");
+    }
+    if (current.model_seconds < 0 || current.parent_step_index < 0) {
+      return result(NestStatus::invalid_contract, "moving nest timeline event is negative");
+    }
+    if (current.position.index_base != first_event.position.index_base) {
+      return result(NestStatus::invalid_contract, "moving nest timeline index base changed");
+    }
+    if (const auto position_status =
+            validate_parent_child_position(descriptor, current.position);
+        !position_status.ok()) {
+      return position_status;
+    }
+
+    const auto pose_changed =
+        !same_parent_child_position(previous.position, current.position);
+    if (current.moved != pose_changed) {
+      return result(
+          NestStatus::invalid_contract,
+          "moving nest timeline movement flag does not match pose change");
+    }
+  }
+
+  return ok_result();
+}
+
+const MovingNestPoseEvent* moving_nest_pose_at_model_second(
+    const MovingNestPoseTimeline& timeline,
+    const std::int64_t model_seconds) noexcept {
+  if (timeline.events == nullptr || timeline.event_count == 0 ||
+      model_seconds < timeline.events[0].model_seconds ||
+      model_seconds > timeline.events[timeline.event_count - 1].model_seconds) {
+    return nullptr;
+  }
+
+  const MovingNestPoseEvent* active = &timeline.events[0];
+  for (std::size_t event_index = 1; event_index < timeline.event_count; ++event_index) {
+    const auto& event = timeline.events[event_index];
+    if (event.model_seconds > model_seconds) {
+      break;
+    }
+    active = &event;
+  }
+  return active;
+}
+
+const MovingNestPoseEvent* moving_nest_final_pose(
+    const MovingNestPoseTimeline& timeline) noexcept {
+  if (timeline.events == nullptr || timeline.event_count == 0) {
+    return nullptr;
+  }
+  return &timeline.events[timeline.event_count - 1];
+}
+
+std::size_t moving_nest_movement_count(
+    const MovingNestPoseTimeline& timeline) noexcept {
+  if (timeline.events == nullptr || timeline.event_count == 0) {
+    return 0;
+  }
+
+  std::size_t count = 0;
+  for (std::size_t event_index = 0; event_index < timeline.event_count; ++event_index) {
+    if (timeline.events[event_index].moved) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 NestResult validate_spectral_nudging_config(

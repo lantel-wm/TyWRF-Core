@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -64,6 +65,18 @@ struct ParentChildPosition {
   std::int32_t i_parent_start = 0;
   std::int32_t j_parent_start = 0;
   IndexBase index_base = IndexBase::one_based;
+};
+
+struct MovingNestPoseEvent {
+  std::int64_t model_seconds = 0;
+  std::int64_t parent_step_index = 0;
+  ParentChildPosition position;
+  bool moved = false;
+};
+
+struct MovingNestPoseTimeline {
+  const MovingNestPoseEvent* events = nullptr;
+  std::size_t event_count = 0;
 };
 
 struct ParentChildFootprint {
@@ -202,6 +215,7 @@ struct SpectralNudgingConfig {
 [[nodiscard]] ParentChildDescriptor make_krosa_parent_child_descriptor() noexcept;
 [[nodiscard]] ParentChildPosition make_krosa_initial_d02_position() noexcept;
 [[nodiscard]] MovingNestConfig make_krosa_moving_nest_config() noexcept;
+[[nodiscard]] MovingNestPoseTimeline make_krosa_first_10min_d02_pose_timeline() noexcept;
 [[nodiscard]] SpectralNudgingConfig make_krosa_spectral_nudging_config() noexcept;
 [[nodiscard]] DomainPose make_domain_pose(
     const ParentChildDescriptor& descriptor,
@@ -226,6 +240,18 @@ struct SpectralNudgingConfig {
     const ParentChildDescriptor& descriptor,
     const MovingNestConfig& moving_config,
     const MovementProposal& proposal) noexcept;
+
+[[nodiscard]] NestResult validate_moving_nest_pose_timeline(
+    const ParentChildDescriptor& descriptor,
+    const MovingNestPoseTimeline& timeline) noexcept;
+
+[[nodiscard]] const MovingNestPoseEvent* moving_nest_pose_at_model_second(
+    const MovingNestPoseTimeline& timeline,
+    std::int64_t model_seconds) noexcept;
+[[nodiscard]] const MovingNestPoseEvent* moving_nest_final_pose(
+    const MovingNestPoseTimeline& timeline) noexcept;
+[[nodiscard]] std::size_t moving_nest_movement_count(
+    const MovingNestPoseTimeline& timeline) noexcept;
 
 [[nodiscard]] NestResult validate_spectral_nudging_config(
     const SpectralNudgingConfig& config) noexcept;
