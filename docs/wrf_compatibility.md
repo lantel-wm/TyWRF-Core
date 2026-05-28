@@ -1104,6 +1104,42 @@ they must not generate candidates, patch fields, tune formulas with
 reference-end truth, or describe diagnostic/audit/probe/hidden-seam artifacts
 as gate passes.
 
+## Round D58 Local Audit Direction
+
+D57 commit `ee2fff4` (`Audit pressure bias and spatial alignment`) preserves
+the same compatibility state after full validation: CMake build passed, CTest
+passed `29/29`, pytest passed `160/160`, and push to `origin/main` succeeded.
+This is codebase validation, not a WRF-compatible numerical pass. The strict
+d02 `2025-07-26_00:10:00` gate remains failed, and no `00:20` progression is
+compatible until that endpoint passes.
+
+The D57 pressure vertical-bias audit keeps the error attribution on
+perturbation-pressure `P`. The worst levels remain low mass levels `0..4`;
+level `0` has `P` mean difference `-4167.791 Pa` and RMSE `4170.444 Pa`.
+Companion base-state fields do not explain that bias: `PB` and `MUB`
+companion differences are about `+1 Pa`, `MU` is about `+11.625`, full
+pressure `P + PB` inherits the negative `P` bias, and `PSFC` is about
+`-376.164 Pa`. The current compatibility conclusion is therefore a
+perturbation-`P` producer or staging issue, not a base-state companion mismatch.
+
+The D57 selected-field spatial alignment audit also remains diagnostic-only.
+Small horizontal shifts improve global normalized RMSE only modestly: `U` end
+`2.46%` and evolution `2.64%`, `V` end `3.40%` and evolution `3.79%`, and
+`MU` end `7.57%` and evolution `7.28%`. The selected-field gap is therefore
+not explained by a simple small horizontal shift.
+
+D58 compatibility work should stay observation-only and audit local evidence:
+
+- pressure producer/staging C++ and metadata paths that explain how
+  perturbation `P` is sourced, staged, and written;
+- selected-field pipeline, timing, and remap C++/metadata paths, cross-checked
+  against the D56/D57 JSON summaries.
+
+These audits may inspect code, metadata, and prior JSON reports for error
+attribution. They must not patch candidate fields, generate candidate files,
+tune formulas from reference-end truth, or describe diagnostic/audit/probe/
+hidden-seam outputs as gate passes.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

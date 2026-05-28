@@ -710,6 +710,31 @@ Round D57 keeps the D56 audit results outside closure scope:
   formulas from reference-end truth, or turn diagnostic/audit/probe/hidden-seam
   artifacts into gate evidence.
 
+Round D58 keeps the D57 audit results outside closure scope:
+
+- D57 commit `ee2fff4` passed code validation (`cmake --build`, CTest `29/29`,
+  pytest `160/160`) and pushed to `origin/main`, but that is still not a
+  scientific validation pass. The strict d02 `2025-07-26_00:10:00` gate remains
+  failed and validation must not advance to `00:20`.
+- The pressure vertical-bias audit shows the low-level `P` error is not
+  explained by base-state companion fields. The worst mass levels are `0..4`;
+  level `0` has `P` mean difference `-4167.791 Pa` and RMSE `4170.444 Pa`.
+  `PB` and `MUB` companion differences are about `+1 Pa`, `MU` is about
+  `+11.625`, `P + PB` inherits the negative `P` bias, and `PSFC` is about
+  `-376.164 Pa`. A closure must not patch that perturbation-`P`
+  producer/staging problem or relabel it as base-state agreement.
+- The selected-field spatial alignment audit found only modest normalized RMSE
+  gains from small shifts: `U` end `2.46%` and evolution `2.64%`, `V` end
+  `3.40%` and evolution `3.79%`, and `MU` end `7.57%` and evolution `7.28%`.
+  A closure must not treat the selected-field failures as solved by a simple
+  horizontal shift or use a shift diagnostic to move candidate fields.
+- D58 may audit local C++/metadata pressure producer and staging paths, plus
+  selected-field pipeline, timing, and remap paths using local metadata and the
+  D56/D57 JSON summaries. Those audits are observation-only: they cannot
+  generate closure candidates, patch fields, tune formulas from reference-end
+  truth, or convert diagnostic/audit/probe/hidden-seam artifacts into gate
+  evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

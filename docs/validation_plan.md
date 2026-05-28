@@ -898,6 +898,38 @@ attribution only. They must not patch candidates, generate candidate fields,
 advance validation to `00:20`, or describe diagnostic/audit/probe/hidden-seam
 artifacts as gate passes.
 
+D58 starts from D57 commit `ee2fff4`, where full code validation passed
+(`cmake --build`, CTest `29/29`, pytest `160/160`) and the branch was pushed to
+`origin/main`. This does not change scientific validation status: the strict
+d02 `2025-07-26_00:10:00` gate remains failed, and validation must not advance
+to `00:20`.
+
+The D57 pressure vertical-bias audit computed the worst perturbation-pressure
+error at low mass levels `0..4`. At level `0`, `P` mean difference is
+`-4167.791 Pa` and RMSE is `4170.444 Pa`. Companion fields do not carry a
+matching negative bias: `PB` and `MUB` companion differences are about `+1 Pa`,
+`MU` is about `+11.625`, full pressure `P + PB` inherits the negative `P`
+bias, and `PSFC` is about `-376.164 Pa`. Validation should therefore treat the
+current pressure problem as a perturbation-`P` producer/staging issue rather
+than a base-state companion mismatch.
+
+The D57 selected-field spatial alignment audit computed only modest gains from
+small horizontal shifts. Global normalized RMSE improvements were `U` end
+`2.46%` and evolution `2.64%`, `V` end `3.40%` and evolution `3.79%`, and
+`MU` end `7.57%` and evolution `7.28%`. This keeps the selected-field failure
+outside a simple small-shift explanation.
+
+D58 validation diagnostics should therefore remain non-producing audits:
+
+- a local C++/metadata audit of the perturbation `P` producer and staging path;
+- a local C++/metadata and D56/D57 JSON-summary audit of selected-field
+  pipeline, timing, and remap behavior.
+
+Both D58 audits are observation-only. They cannot patch or generate
+candidates, cannot use reference-end truth to tune output, cannot advance the
+progressive sequence to `00:20`, and cannot describe audit/probe/hidden-seam
+artifacts as gate passes.
+
 Example:
 
 ```bash
