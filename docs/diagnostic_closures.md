@@ -1361,6 +1361,30 @@ proof. A pass still requires the real strict `2025-07-26_00:10:00` d02 fields
 and TC diagnostics to pass; otherwise closures and reports must keep the
 sequence stopped at `00:10`.
 
+D87 is complete, verified, and pushed at commit `8466e7c`
+(`Add self-advection wind subcycling`). The `--wind-tendency-substeps N` option
+is selected-field `self_advection` wind-tendency subcycling, not a diagnostic
+closure. Its d02 substep is fixed at `8 s`; `N=75` covers the full
+`2025-07-26_00:00:00 -> 2025-07-26_00:10:00` 600 second segment.
+
+The real KROSA `N=75` candidate passed `candidate_metadata`, but that metadata
+result is eligibility only. The strict `00:10` gate still failed first on `U`
+with normalized RMSE `0.13578703428452885`; `V` normalized RMSE was
+`0.15517830284022266`. The SLP gate still failed storm-center distance at
+`43.4827156063485 km`, while minimum SLP error `0.36407470703125 hPa` and
+Vmax10m error `0.7686817572680305 m s-1` passed. Relative to default
+`none`, the D87 `self_advection` run changed only `U` and `V`; non-wind fields
+were unchanged. A diagnostic closure must not patch those wind errors, relabel
+metadata as success, or use unchanged non-wind fields as pass evidence.
+
+D88 may add only wind subcycling `U`/`V` error localization and audit tooling.
+Such tooling remains diagnostic-only and cannot write closure candidates,
+borrow selected-field positive metadata, hide failed `U`/`V` metrics, or claim
+the validation gate passed. D88 must not use reference-end or oracle sources,
+must not handle `P`, `MU`, `PB`, or `PHB`, must not invoke pressure refresh,
+physics, or best-track nudging, must not lower d02 below `2 km`, and must not
+advance or report `00:20`.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

@@ -1822,6 +1822,29 @@ only compatibility proof remains a real strict `2025-07-26_00:10:00` d02 run
 whose fields and TC diagnostics pass; until then validation must not proceed to
 `00:20`.
 
+D87 is complete, verified, and pushed at commit `8466e7c`
+(`Add self-advection wind subcycling`). It added
+`--wind-tendency-substeps N` for the selected-field `self_advection` wind
+tendency source. The d02 wind tendency substep is fixed at `8 s`; `N=75`
+therefore represents the complete `2025-07-26_00:00:00 ->
+2025-07-26_00:10:00` 600 second endpoint.
+
+The real KROSA d02 `00:10` run with `N=75` passed `candidate_metadata`, but the
+strict gate failed. The first failed field is still `U`, with normalized RMSE
+`0.13578703428452885`; `V` normalized RMSE is `0.15517830284022266`. The SLP
+diagnostic gate failed storm-center distance at `43.4827156063485 km`, while
+minimum SLP error `0.36407470703125 hPa` and Vmax10m error
+`0.7686817572680305 m s-1` passed. Compared with default wind tendency source
+`none`, D87 `self_advection` subcycling changed only `U` and `V`; non-wind
+fields were unchanged.
+
+D88 compatibility scope is limited to wind subcycling `U`/`V` error
+localization and audit tooling. D88 must not treat the D87 metadata pass as a
+validation pass, must not advance or report `00:20`, and must not use
+reference-end/oracle sources. It must not handle `P`, `MU`, `PB`, or `PHB`,
+must not invoke pressure refresh, physics, or best-track nudging, and must not
+change d02 resolution below `2 km`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

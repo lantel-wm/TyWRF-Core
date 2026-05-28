@@ -1588,6 +1588,29 @@ the real strict `2025-07-26_00:10:00` d02 field thresholds and TC diagnostic
 gates to pass from that non-oracle candidate; otherwise validation remains
 stopped at `00:10`.
 
+D87 is complete, verified, and pushed at commit `8466e7c`
+(`Add self-advection wind subcycling`). The new
+`--wind-tendency-substeps N` option applies the selected-field
+`self_advection` wind tendency with fixed `8 s` d02 substeps. `N=75` is the
+full 600 second `2025-07-26_00:00:00 -> 2025-07-26_00:10:00` validation
+segment.
+
+The real KROSA d02 `00:10` `N=75` candidate passed `candidate_metadata`, so the
+gate evaluated the artifact, but the validation gate failed. The first failed
+field was `U` with normalized RMSE `0.13578703428452885`; `V` normalized RMSE
+was `0.15517830284022266`. The SLP gate failed storm-center distance with
+error `43.4827156063485 km`; minimum SLP error `0.36407470703125 hPa` and
+Vmax10m error `0.7686817572680305 m s-1` passed. Relative to the default
+`none` wind tendency source, `self_advection` changed only `U` and `V`; all
+non-wind fields were unchanged.
+
+D88 validation scope is audit-only `U`/`V` error localization for wind
+subcycling. It may add or document tooling that explains the failed `U`/`V`
+metrics, but it must not produce a validation pass by metadata interpretation,
+must not advance or report `00:20`, and must not broaden into `P`, `MU`, `PB`,
+`PHB`, pressure refresh, physics, best-track nudging, reference-end/oracle
+sources, or any d02 resolution change below `2 km`.
+
 Example:
 
 ```bash
