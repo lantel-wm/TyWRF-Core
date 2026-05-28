@@ -12,6 +12,7 @@ namespace {
 
 constexpr float kSentinel = -9'999.0F;
 constexpr float kTolerance = 1.0e-3F;
+constexpr double kCoordinateTolerance = 1.0e-12;
 
 tywrf::Grid make_parent_grid() {
   return tywrf::Grid({
@@ -194,6 +195,17 @@ void expect_value(
   }
 }
 
+void expect_double_close(
+    const double actual,
+    const double expected,
+    const std::string_view label) {
+  if (std::fabs(actual - expected) > kCoordinateTolerance) {
+    std::cerr << label << " mismatch: got " << actual << ", expected "
+              << expected << '\n';
+    assert(false);
+  }
+}
+
 void expect_halo_3d(
     const tywrf::FieldStorage3D<float>& field,
     const std::string_view label) {
@@ -234,6 +246,7 @@ void expect_halo_2d(
 void expect_interpolated_3d(
     const tywrf::FieldStorage3D<float>& child_field,
     const tywrf::nest::FieldStateExchangePlan& field_plan,
+    const tywrf::nest::HorizontalStagger stagger,
     const float base,
     const float ax,
     const float ay,
@@ -246,16 +259,24 @@ void expect_interpolated_3d(
   constexpr auto parent_j_start_zero = 1;
 
   for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
-    const auto y = static_cast<double>(parent_j_start_zero) +
-                   static_cast<double>(j) / static_cast<double>(ratio);
+    const auto y = tywrf::nest::wrf_parent_child_coordinate(
+        stagger,
+        tywrf::nest::ParentChildHorizontalAxis::y,
+        parent_j_start_zero,
+        j,
+        ratio);
     for (std::int32_t k = 0; k < layout.active_nz(); ++k) {
       for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
         const auto storage_i = layout.i_begin() + i;
         const auto storage_j = layout.j_begin() + j;
         const auto storage_k = layout.k_begin() + k;
         if (in_exposed_region(field_plan, i, j)) {
-          const auto x = static_cast<double>(parent_i_start_zero) +
-                         static_cast<double>(i) / static_cast<double>(ratio);
+          const auto x = tywrf::nest::wrf_parent_child_coordinate(
+              stagger,
+              tywrf::nest::ParentChildHorizontalAxis::x,
+              parent_i_start_zero,
+              i,
+              ratio);
           expect_close(
               view(storage_i, storage_j, storage_k),
               linear_value(base, ax, ay, ak, x, y, k),
@@ -272,6 +293,7 @@ void expect_interpolated_3d(
 void expect_interpolated_2d(
     const tywrf::FieldStorage2D<float>& child_field,
     const tywrf::nest::FieldStateExchangePlan& field_plan,
+    const tywrf::nest::HorizontalStagger stagger,
     const float base,
     const float ax,
     const float ay,
@@ -283,14 +305,22 @@ void expect_interpolated_2d(
   constexpr auto parent_j_start_zero = 1;
 
   for (std::int32_t j = 0; j < layout.active_ny(); ++j) {
-    const auto y = static_cast<double>(parent_j_start_zero) +
-                   static_cast<double>(j) / static_cast<double>(ratio);
+    const auto y = tywrf::nest::wrf_parent_child_coordinate(
+        stagger,
+        tywrf::nest::ParentChildHorizontalAxis::y,
+        parent_j_start_zero,
+        j,
+        ratio);
     for (std::int32_t i = 0; i < layout.active_nx(); ++i) {
       const auto storage_i = layout.i_begin() + i;
       const auto storage_j = layout.j_begin() + j;
       if (in_exposed_region(field_plan, i, j)) {
-        const auto x = static_cast<double>(parent_i_start_zero) +
-                       static_cast<double>(i) / static_cast<double>(ratio);
+        const auto x = tywrf::nest::wrf_parent_child_coordinate(
+            stagger,
+            tywrf::nest::ParentChildHorizontalAxis::x,
+            parent_i_start_zero,
+            i,
+            ratio);
         expect_close(
             view(storage_i, storage_j),
             linear_value(base, ax, ay, 0.0F, x, y, 0),
@@ -301,6 +331,89 @@ void expect_interpolated_2d(
     }
   }
   expect_halo_2d(child_field, label);
+}
+
+void test_wrf_style_parent_coordinates_for_staggers() {
+  using tywrf::nest::HorizontalStagger;
+  using tywrf::nest::ParentChildHorizontalAxis;
+  using tywrf::nest::wrf_parent_child_coordinate;
+
+  constexpr std::int32_t parent_start_zero = 2;
+  constexpr std::int32_t ratio = 5;
+
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::mass, ParentChildHorizontalAxis::x, parent_start_zero, 0, ratio),
+      1.6,
+      "mass x child index 0 uses center semantics");
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::mass, ParentChildHorizontalAxis::y, parent_start_zero, 5, ratio),
+      2.6,
+      "mass y child index at ratio boundary uses center semantics");
+
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::u, ParentChildHorizontalAxis::x, parent_start_zero, 0, ratio),
+      2.0,
+      "U x child index 0 maps to parent face");
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::u, ParentChildHorizontalAxis::x, parent_start_zero, ratio, ratio),
+      3.0,
+      "U x child index at ratio boundary maps to next parent face");
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::u, ParentChildHorizontalAxis::y, parent_start_zero, 0, ratio),
+      1.6,
+      "U y non-stagger direction uses center semantics");
+
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::v, ParentChildHorizontalAxis::x, parent_start_zero, 0, ratio),
+      1.6,
+      "V x non-stagger direction uses center semantics");
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::v, ParentChildHorizontalAxis::y, parent_start_zero, 0, ratio),
+      2.0,
+      "V y child index 0 maps to parent face");
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::v, ParentChildHorizontalAxis::y, parent_start_zero, ratio, ratio),
+      3.0,
+      "V y child index at ratio boundary maps to next parent face");
+
+  constexpr auto krosa_i_start_zero = 113;
+  constexpr auto krosa_j_start_zero = 95;
+  constexpr auto krosa_child_index = 105;
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::mass,
+          ParentChildHorizontalAxis::x,
+          krosa_i_start_zero,
+          krosa_child_index,
+          ratio),
+      133.6,
+      "KROSA ratio=5 representative mass x coordinate");
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::u,
+          ParentChildHorizontalAxis::x,
+          krosa_i_start_zero,
+          krosa_child_index,
+          ratio),
+      134.0,
+      "KROSA ratio=5 representative U face x coordinate");
+  expect_double_close(
+      wrf_parent_child_coordinate(
+          HorizontalStagger::v,
+          ParentChildHorizontalAxis::y,
+          krosa_j_start_zero,
+          krosa_child_index,
+          ratio),
+      116.0,
+      "KROSA ratio=5 representative V face y coordinate");
 }
 
 void test_bilinear_exposed_fill_for_selected_staggers() {
@@ -345,13 +458,59 @@ void test_bilinear_exposed_fill_for_selected_staggers() {
   assert(!report.wrote_overlap);
   assert(!report.wrote_halo);
 
-  expect_interpolated_3d(child.u, exchange.fields[0], 1'000.0F, 7.0F, 13.0F, 101.0F, "U");
-  expect_interpolated_3d(child.v, exchange.fields[1], 2'000.0F, 11.0F, 17.0F, 103.0F, "V");
-  expect_interpolated_2d(child.mu, exchange.fields[2], 3'000.0F, 19.0F, 23.0F, "MU");
   expect_interpolated_3d(
-      child.qvapor, exchange.fields[3], 4'000.0F, 29.0F, 31.0F, 107.0F, "QVAPOR");
-  expect_interpolated_3d(child.t, exchange.fields[4], 5'000.0F, 5.0F, 3.0F, 10.0F, "T");
-  expect_interpolated_3d(child.ph, exchange.fields[5], 6'000.0F, 2.0F, 4.0F, 50.0F, "PH");
+      child.u,
+      exchange.fields[0],
+      tywrf::nest::HorizontalStagger::u,
+      1'000.0F,
+      7.0F,
+      13.0F,
+      101.0F,
+      "U");
+  expect_interpolated_3d(
+      child.v,
+      exchange.fields[1],
+      tywrf::nest::HorizontalStagger::v,
+      2'000.0F,
+      11.0F,
+      17.0F,
+      103.0F,
+      "V");
+  expect_interpolated_2d(
+      child.mu,
+      exchange.fields[2],
+      tywrf::nest::HorizontalStagger::surface,
+      3'000.0F,
+      19.0F,
+      23.0F,
+      "MU");
+  expect_interpolated_3d(
+      child.qvapor,
+      exchange.fields[3],
+      tywrf::nest::HorizontalStagger::mass,
+      4'000.0F,
+      29.0F,
+      31.0F,
+      107.0F,
+      "QVAPOR");
+  expect_interpolated_3d(
+      child.t,
+      exchange.fields[4],
+      tywrf::nest::HorizontalStagger::mass,
+      5'000.0F,
+      5.0F,
+      3.0F,
+      10.0F,
+      "T");
+  expect_interpolated_3d(
+      child.ph,
+      exchange.fields[5],
+      tywrf::nest::HorizontalStagger::w_full,
+      6'000.0F,
+      2.0F,
+      4.0F,
+      50.0F,
+      "PH");
 }
 
 void test_plan_selects_only_requested_field() {
@@ -388,6 +547,7 @@ void test_plan_selects_only_requested_field() {
   expect_interpolated_3d(
       child.qvapor,
       full_exchange.fields[3],
+      tywrf::nest::HorizontalStagger::mass,
       4'000.0F,
       29.0F,
       31.0F,
@@ -485,6 +645,7 @@ int main() {
   static_assert(
       std::is_trivially_copyable_v<tywrf::nest::ParentChildInterpolationReport>);
 
+  test_wrf_style_parent_coordinates_for_staggers();
   test_bilinear_exposed_fill_for_selected_staggers();
   test_plan_selects_only_requested_field();
   test_rejects_non_krosa_ratio_or_resolution();

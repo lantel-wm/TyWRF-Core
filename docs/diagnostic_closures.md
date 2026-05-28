@@ -1248,6 +1248,26 @@ write candidate fields, change thresholds, patch wind errors, borrow positive
 metadata, or prove a strict `00:10` pass. It also must not handle `P`, `MU`,
 physics, best-track nudging, or any d02 resolution change below `2 km`.
 
+D81 is complete at commit `3b17b6b`
+(`Add selected-field wind error audit`). It passed focused validation, full
+validation, the real D80 wind-audit smoke, and was pushed. The audit conclusion
+is diagnostic only: D80's real `00:10` `U`/`V` error is domain-wide. Metadata
+passes, but the field gate remains failed; the first failed field is still `U`
+with normalized RMSE `0.11787539215928292`. Closure and validation work must
+not advance to `00:20`.
+
+D82 parent-child interpolation work is not a diagnostic closure. It may only
+address `U`/`V` stagger-aware coordinate semantics and directly related tests
+or metadata: `U` belongs on the west-east staggered coordinate and `V` belongs
+on the south-north staggered coordinate. D82 must not patch wind fields through
+a closure, handle `P` or `MU`, alter physics, introduce best-track nudging,
+lower d02 below `2 km`, or use oracle/reference-copy truth.
+
+Coordinate metadata, coordinate audits, and wind-audit summaries cannot close a
+field or make a candidate gate-eligible. They remain diagnostic context until a
+real strict `2025-07-26_00:10:00` d02 gate run with positive integrator
+metadata proves improved field metrics.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

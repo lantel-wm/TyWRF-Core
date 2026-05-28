@@ -1468,6 +1468,28 @@ candidate, modify thresholds, change gate metadata, count as `00:10` pass
 proof, or advance the validation sequence. It also must not handle `P`, `MU`,
 physics, or best-track nudging, and d02 must remain at `2 km`.
 
+D81 is complete at commit `3b17b6b`
+(`Add selected-field wind error audit`). It passed focused validation, full
+validation, the real D80 wind-audit smoke, and was pushed. The audit result is
+that D80's real `00:10` `U`/`V` error is domain-wide. The metadata portion
+passes, but the field gate does not; the first failed field remains `U` with
+normalized RMSE `0.11787539215928292`. The progressive sequence remains stopped
+at `2025-07-26_00:10:00`; no `00:20` run or report may be treated as the next
+gate until `00:10` passes.
+
+D82 validation scope is limited to parent-child interpolation `U`/`V`
+stagger-coordinate semantics and directly related tests or metadata. It may
+clarify or test that `U` interpolation uses west-east staggered coordinates and
+`V` interpolation uses south-north staggered coordinates. It must not work on
+`P`, `MU`, physics, best-track nudging, threshold changes, oracle candidates,
+or any d02 resolution change below `2 km`.
+
+Any D82 coordinate metadata, coordinate audit, or wind-audit report is not gate
+evidence. Validation status can change only after a real strict d02
+`2025-07-26_00:10:00` gate run reports positive integrator metadata and field
+metrics that prove improvement. Until that output exists, the field gate is
+failed and validation must not advance to `00:20`.
+
 Example:
 
 ```bash

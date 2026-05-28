@@ -12,6 +12,11 @@ enum class ParentChildInterpolationMethod : std::uint8_t {
   bilinear,
 };
 
+enum class ParentChildHorizontalAxis : std::uint8_t {
+  x,
+  y,
+};
+
 struct ParentChildInterpolationConfig {
   ParentChildInterpolationMethod method = ParentChildInterpolationMethod::bilinear;
   bool allow_owned_overlap_regions = false;
@@ -34,11 +39,39 @@ struct ParentChildInterpolationReport {
   }
 };
 
+[[nodiscard]] constexpr bool parent_child_axis_is_staggered(
+    const HorizontalStagger stagger,
+    const ParentChildHorizontalAxis axis) noexcept {
+  return (stagger == HorizontalStagger::u && axis == ParentChildHorizontalAxis::x) ||
+         (stagger == HorizontalStagger::v && axis == ParentChildHorizontalAxis::y);
+}
+
+// Maps a child active horizontal index onto the parent active index space for
+// the same WRF Arakawa C-grid location. parent_start_zero_based is the parent
+// grid-line start index after applying ParentChildPosition::index_base. U is
+// face-centered in x, V is face-centered in y, and all non-staggered axes use
+// mass-center half-cell semantics.
+[[nodiscard]] constexpr double wrf_parent_child_coordinate(
+    const HorizontalStagger stagger,
+    const ParentChildHorizontalAxis axis,
+    const std::int32_t parent_start_zero_based,
+    const std::int32_t child_active_index,
+    const std::int32_t ratio) noexcept {
+  const auto start = static_cast<double>(parent_start_zero_based);
+  const auto child_index = static_cast<double>(child_active_index);
+  const auto parent_ratio = static_cast<double>(ratio);
+  if (parent_child_axis_is_staggered(stagger, axis)) {
+    return start + child_index / parent_ratio;
+  }
+  return start + (child_index + 0.5) / parent_ratio - 0.5;
+}
+
 // Host-side first-slice parent-to-child fill for moving-nest exposed cells.
 // The exchange plan selects target child active regions. Coordinates are mapped
-// from child active indices to parent active indices using the target nest
-// position and parent_grid_ratio, then sampled by nearest-neighbor or bilinear
-// horizontal interpolation. Vertical levels are copied by matching active k.
+// from child active indices to parent active indices using explicit WRF
+// mass-center/face-center stagger semantics, the target nest position, and
+// parent_grid_ratio, then sampled by nearest-neighbor or bilinear horizontal
+// interpolation. Vertical levels are copied by matching active k.
 // Supported fields are U, V, MU, QVAPOR, T, and PH. No NetCDF, logging,
 // allocation, or overlap/halo writes are performed unless the plan explicitly
 // owns those regions and config allows them.

@@ -1702,6 +1702,30 @@ change thresholds, relax metadata rejection, or be described as proof that the
 `00:10` gate passed. D81 must not handle `P`, `MU`, physics, or best-track
 nudging, and d02 must remain `2 km`.
 
+D81 is complete at commit `3b17b6b`
+(`Add selected-field wind error audit`). It passed focused validation, full
+validation, the real D80 wind-audit smoke, and was pushed. The audit conclusion
+is that the D80 real `00:10` selected-field candidate has domain-wide `U`/`V`
+error, not a metadata-only problem. `candidate_metadata` passes, but the field
+gate remains failed; the first failed field is still `U` with normalized RMSE
+`0.11787539215928292`. Compatibility work must remain stopped at `00:10` and
+must not advance to `00:20`.
+
+D82 may address only parent-child interpolation `U`/`V` stagger-aware
+coordinate semantics and directly related tests or metadata. The allowed
+compatibility boundary is coordinate interpretation for staggered wind fields:
+`U` must be handled on the west-east staggered coordinate, `V` on the
+south-north staggered coordinate, and any parent-child coordinate metadata must
+make that distinction explicit. D82 must not handle `P`, `MU`, physics,
+best-track nudging, oracle/reference-copy candidates, or any d02 resolution
+change below `2 km`.
+
+Coordinate metadata, selected-field wind audits, and stagger-coordinate reports
+are compatibility diagnostics only. They are not gate evidence and must not be
+reported as an accepted `00:10` field pass. The only evidence that D82 improved
+compatibility is a later real strict `2025-07-26_00:10:00` d02 gate report with
+positive integrator metadata and improved field metrics.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

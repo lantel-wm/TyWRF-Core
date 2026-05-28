@@ -1038,13 +1038,13 @@ void assert_successful_candidate(
   expect_close(read_2d_value(file_id, "MU", 2, 0), linear_2d(2, 5, 50'000.0F, 1.0F, 10.0F), "MU overlap");
   expect_close(read_3d_value(file_id, "QVAPOR", 1, 2, 0), linear_3d(1, 2, 5, 70'000.0F, 1.0F, 10.0F, 100.0F), "QVAPOR overlap");
 
-  expect_close(read_3d_value(file_id, "U", 1, 0, 10), parent_linear(1'000.0F, 7.0F, 13.0F, 101.0F, 4.0, 1.0, 1), "U exposed");
-  expect_close(read_3d_value(file_id, "V", 1, 10, 9), parent_linear(2'000.0F, 11.0F, 17.0F, 103.0F, 3.8, 3.0, 1), "V exposed");
-  expect_close(read_2d_value(file_id, "MU", 0, 9), parent_linear(5'000.0F, 19.0F, 23.0F, 0.0F, 3.8, 1.0, 0), "MU exposed");
-  expect_close(read_3d_value(file_id, "QVAPOR", 1, 9, 9), parent_linear(7'000.0F, 29.0F, 31.0F, 107.0F, 3.8, 2.8, 1), "QVAPOR exposed");
+  expect_close(read_3d_value(file_id, "U", 1, 0, 10), parent_linear(1'000.0F, 7.0F, 13.0F, 101.0F, 4.0, 0.6, 1), "U exposed");
+  expect_close(read_3d_value(file_id, "V", 1, 10, 9), parent_linear(2'000.0F, 11.0F, 17.0F, 103.0F, 3.4, 3.0, 1), "V exposed");
+  expect_close(read_2d_value(file_id, "MU", 0, 9), parent_linear(5'000.0F, 19.0F, 23.0F, 0.0F, 3.4, 0.6, 0), "MU exposed");
+  expect_close(read_3d_value(file_id, "QVAPOR", 1, 9, 9), parent_linear(7'000.0F, 29.0F, 31.0F, 107.0F, 3.4, 2.4, 1), "QVAPOR exposed");
 
-  expect_close(read_3d_value(file_id, "T", 1, 9, 9), parent_linear(3'000.0F, 5.0F, 3.0F, 10.0F, 3.8, 2.8, 1), "T exposed");
-  expect_close(read_3d_value(file_id, "PH", 2, 9, 9), parent_linear(4'000.0F, 2.0F, 4.0F, 50.0F, 3.8, 2.8, 2), "PH exposed");
+  expect_close(read_3d_value(file_id, "T", 1, 9, 9), parent_linear(3'000.0F, 5.0F, 3.0F, 10.0F, 3.4, 2.4, 1), "T exposed");
+  expect_close(read_3d_value(file_id, "PH", 2, 9, 9), parent_linear(4'000.0F, 2.0F, 4.0F, 50.0F, 3.4, 2.4, 2), "PH exposed");
   const auto preserved_exposed_p = linear_3d(1, 9, 9, 60'000.0F, 1.0F, 10.0F, 100.0F);
   if (pressure_refresh) {
     const auto refreshed_p = read_3d_value(file_id, "P", 1, 9, 9);
@@ -2177,7 +2177,7 @@ void assert_diagnostic_adapter_report_path(
   const auto preserved_phb = linear_3d(2, 9, 9, 90'000.0F, 1.0F, 10.0F, 100.0F);
   const auto preserved_mub = linear_2d(9, 9, 100'000.0F, 1.0F, 10.0F);
   const auto preserved_t =
-      parent_linear(3'000.0F, 5.0F, 3.0F, 10.0F, 3.8, 2.8, 1);
+      parent_linear(3'000.0F, 5.0F, 3.0F, 10.0F, 3.4, 2.4, 1);
   expect_close(read_3d_value(file_id, "P", 1, 9, 9), preserved_exposed_p, "adapter P preserved");
   expect_close(read_3d_value(file_id, "PB", 1, 9, 9), preserved_pb, "adapter PB preserved");
   expect_close(read_3d_value(file_id, "PHB", 2, 9, 9), preserved_phb, "adapter PHB preserved");

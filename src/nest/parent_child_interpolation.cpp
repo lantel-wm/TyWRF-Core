@@ -196,14 +196,6 @@ template <typename ParentReal, typename ChildReal>
   return ok_result();
 }
 
-[[nodiscard]] constexpr double parent_coordinate(
-    const std::int32_t parent_start_zero_based,
-    const std::int32_t child_active_index,
-    const std::int32_t ratio) noexcept {
-  return static_cast<double>(parent_start_zero_based) +
-         static_cast<double>(child_active_index) / static_cast<double>(ratio);
-}
-
 [[nodiscard]] constexpr std::int32_t nearest_index(
     const double coordinate,
     const std::int32_t active_count) noexcept {
@@ -359,10 +351,20 @@ template <typename ParentReal, typename ChildReal>
     const auto child_j0 = child.halo.j_lower + region.child_j_begin;
     for (std::int32_t j = 0; j < region.extent_j; ++j) {
       const auto child_active_j = region.child_j_begin + j;
-      const auto y = parent_coordinate(parent_j_start_zero, child_active_j, ratio);
+      const auto y = wrf_parent_child_coordinate(
+          expected_stagger,
+          ParentChildHorizontalAxis::y,
+          parent_j_start_zero,
+          child_active_j,
+          ratio);
       for (std::int32_t i = 0; i < region.extent_i; ++i) {
         const auto child_active_i = region.child_i_begin + i;
-        const auto x = parent_coordinate(parent_i_start_zero, child_active_i, ratio);
+        const auto x = wrf_parent_child_coordinate(
+            expected_stagger,
+            ParentChildHorizontalAxis::x,
+            parent_i_start_zero,
+            child_active_i,
+            ratio);
         child(child_i0 + i, child_j0 + j) = sample_2d(parent, x, y, config.method);
         ++point_count;
       }
@@ -427,11 +429,21 @@ template <typename ParentReal, typename ChildReal>
     const auto child_k0 = child.halo.k_lower;
     for (std::int32_t j = 0; j < region.extent_j; ++j) {
       const auto child_active_j = region.child_j_begin + j;
-      const auto y = parent_coordinate(parent_j_start_zero, child_active_j, ratio);
+      const auto y = wrf_parent_child_coordinate(
+          expected_stagger,
+          ParentChildHorizontalAxis::y,
+          parent_j_start_zero,
+          child_active_j,
+          ratio);
       for (std::int32_t k = 0; k < region.active_k_count; ++k) {
         for (std::int32_t i = 0; i < region.extent_i; ++i) {
           const auto child_active_i = region.child_i_begin + i;
-          const auto x = parent_coordinate(parent_i_start_zero, child_active_i, ratio);
+          const auto x = wrf_parent_child_coordinate(
+              expected_stagger,
+              ParentChildHorizontalAxis::x,
+              parent_i_start_zero,
+              child_active_i,
+              ratio);
           child(child_i0 + i, child_j0 + j, child_k0 + k) =
               sample_3d(parent, x, y, k, config.method);
           ++point_count;
