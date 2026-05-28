@@ -930,6 +930,45 @@ candidates, cannot use reference-end truth to tune output, cannot advance the
 progressive sequence to `00:20`, and cannot describe audit/probe/hidden-seam
 artifacts as gate passes.
 
+D59 starts from D58 commit `5d9adb5`, where full code validation passed
+(`cmake --build`, CTest `29/29`, pytest `167/167`) and the branch was pushed
+to `origin/main`. This does not change scientific validation status: the
+strict d02 `2025-07-26_00:10:00` gate remains failed, and validation must not
+advance to `00:20`.
+
+The D58 pressure producer audit output is
+`build/validation/r58_pressure_refresh_producer_audit.json`. It is
+diagnostic-only and identifies the local producer inventory around
+`compute_krosa_pressure` (`src/dynamics/pressure_refresh.cpp:275`),
+`refresh_krosa_moving_nest_pressure`
+(`src/dynamics/pressure_refresh.cpp:357`), and
+`apply_krosa_moving_nest_pressure_refresh_hook`
+(`src/dynamics/pressure_refresh_hook.cpp:309`). The worst level is still mass
+level `0`, with maximum absolute `P` mean difference about `4167.790767 Pa`.
+Validation should treat this as pressure formula/input and staging evidence,
+not as a replacement metric or a gate result.
+
+The D58 selected-field pipeline audit output is
+`build/validation/r58_selected_field_pipeline_audit.json`. It is
+diagnostic-only and reports seven risk flags: target fraction below half,
+target error fraction below half, amplitude near one but RMSE high, modest
+best-shift improvement, end/evolution shift mismatch, gate/integrator claims
+while audits fail, and large movement-delta schedule/remap risk. The movement
+child delta is `{i:60,j:35}`. Target fractions are about `U = 0.407583`,
+`V = 0.407583`, and `MU = 0.404762`.
+
+D59 validation diagnostics should remain non-producing audits:
+
+- a pressure formula/input audit for the local producer path, source fields,
+  constants, masks, and staging metadata;
+- a selected-field schedule/remap timeline audit for movement ordering,
+  exposure masks, interpolation, pressure refresh, and output metadata.
+
+Both D59 audits are observation-only. They cannot generate candidates, patch
+fields, tune formulas from reference-end truth, promote audit/probe/hidden-seam
+outputs to gate evidence, advance to `00:20`, reduce d02 below `2 km`, or add
+best-track nudging.
+
 Example:
 
 ```bash

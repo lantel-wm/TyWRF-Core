@@ -735,6 +735,39 @@ Round D58 keeps the D57 audit results outside closure scope:
   truth, or convert diagnostic/audit/probe/hidden-seam artifacts into gate
   evidence.
 
+Round D59 keeps the D58 audit results outside closure scope:
+
+- D58 commit `5d9adb5` passed code validation (`cmake --build`, CTest `29/29`,
+  pytest `167/167`) and pushed to `origin/main`, but that is still not a
+  scientific validation pass. The strict d02 `2025-07-26_00:10:00` gate remains
+  failed and validation must not advance to `00:20`.
+- The pressure producer audit
+  `build/validation/r58_pressure_refresh_producer_audit.json` is
+  diagnostic-only. It identifies local producer inventory around
+  `compute_krosa_pressure` (`src/dynamics/pressure_refresh.cpp:275`),
+  `refresh_krosa_moving_nest_pressure`
+  (`src/dynamics/pressure_refresh.cpp:357`), and
+  `apply_krosa_moving_nest_pressure_refresh_hook`
+  (`src/dynamics/pressure_refresh_hook.cpp:309`). The worst level remains
+  mass level `0`, with maximum absolute `P` mean difference about
+  `4167.790767 Pa`. A closure must not patch `P`, relabel this as a gate
+  result, or tune a formula from reference-end truth.
+- The selected-field pipeline audit
+  `build/validation/r58_selected_field_pipeline_audit.json` is also
+  diagnostic-only. It reports seven risk flags: target fraction below half,
+  target error fraction below half, amplitude near one while RMSE remains
+  high, modest best-shift improvement, end/evolution shift mismatch,
+  gate/integrator claims while audits fail, and large movement-delta
+  schedule/remap risk. The movement child delta is `{i:60,j:35}`, with target
+  fractions about `U = 0.407583`, `V = 0.407583`, and `MU = 0.404762`. A
+  closure must not treat these timeline/remap diagnostics as permission to
+  shift, blend, or patch candidate fields.
+- D59 may add a pressure formula/input audit and a selected-field
+  schedule/remap timeline audit. Both are observation-only; they cannot
+  generate closure candidates, patch fields, tune formulas from reference-end
+  truth, convert diagnostic/probe/hidden-seam outputs into gate evidence,
+  reduce d02 below `2 km`, or introduce best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

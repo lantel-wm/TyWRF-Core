@@ -1140,6 +1140,49 @@ attribution. They must not patch candidate fields, generate candidate files,
 tune formulas from reference-end truth, or describe diagnostic/audit/probe/
 hidden-seam outputs as gate passes.
 
+## Round D59 Formula and Timeline Audit Direction
+
+D58 commit `5d9adb5` (`Audit pressure and selected-field producers`) preserves
+the same compatibility state after full validation: CMake build passed, CTest
+passed `29/29`, pytest passed `167/167`, and push to `origin/main` succeeded.
+This is codebase validation, not a WRF-compatible numerical pass. The strict
+d02 `2025-07-26_00:10:00` gate remains failed, and no `00:20` progression is
+compatible until that endpoint passes.
+
+The D58 pressure producer audit
+`build/validation/r58_pressure_refresh_producer_audit.json` remains
+diagnostic-only. It localizes the perturbation-pressure producer inventory
+around `compute_krosa_pressure` (`src/dynamics/pressure_refresh.cpp:275`),
+`refresh_krosa_moving_nest_pressure`
+(`src/dynamics/pressure_refresh.cpp:357`), and
+`apply_krosa_moving_nest_pressure_refresh_hook`
+(`src/dynamics/pressure_refresh_hook.cpp:309`). The worst level remains mass
+level `0`, and the maximum absolute `P` mean difference is about
+`4167.790767 Pa`. Compatibility work should therefore inspect the pressure
+formula inputs, constants, masks, and staging handoff before any producer
+change is attempted.
+
+The D58 selected-field pipeline audit
+`build/validation/r58_selected_field_pipeline_audit.json` is also
+diagnostic-only. It reported seven risk flags: target fraction below half,
+target error fraction below half, amplitude near one while RMSE remains high,
+modest best-shift improvement, end/evolution shift mismatch, gate/integrator
+claims while audits fail, and a large movement-delta schedule/remap risk. The
+movement child delta is `{i:60,j:35}`, and target fractions are about
+`U = 0.407583`, `V = 0.407583`, and `MU = 0.404762`.
+
+D59 compatibility work should remain observation-only:
+
+- audit pressure formula inputs, constants, masks, target staging, and local
+  producer metadata without writing candidate fields;
+- audit the selected-field schedule/remap timeline around movement, target
+  mask exposure, interpolation, pressure refresh, and output metadata.
+
+These audits may inspect code, metadata, local inputs, and prior JSON reports
+for attribution. They must not generate candidates, patch candidate fields,
+tune formulas from reference-end truth, use diagnostic/probe/hidden-seam output
+as gate evidence, lower d02 below `2 km`, or introduce best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
