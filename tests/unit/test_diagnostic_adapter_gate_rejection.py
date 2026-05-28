@@ -38,6 +38,28 @@ D72_DIAGNOSTIC_ADAPTER_REPORT = {
     "diagnostic_adapter_invalid_point_count": 0,
 }
 
+D75_SOURCE_STAGING_PROVIDER_REPORT = {
+    "status": "diagnostic_adapter_source_staging_reported",
+    "candidate_kind": "integrator_candidate",
+    "diagnostic_only": False,
+    "gate_candidate": True,
+    "integrator_output": True,
+    "diagnostic_adapter_source_staging_ok": True,
+    "diagnostic_adapter_source_staging_diagnostic_only": True,
+    "diagnostic_adapter_source_staging_gate_candidate": False,
+    "diagnostic_adapter_source_staging_integrator_output": False,
+    "diagnostic_adapter_source_staging_writes_candidate": False,
+    "diagnostic_adapter_source_staging_uses_reference_end_truth": False,
+    "diagnostic_adapter_source_staging_uses_direct_p_shortcut": False,
+    "diagnostic_adapter_source_staging_provider_kind": (
+        "wrfout_d02_source_staging_provider_v0"
+    ),
+    "diagnostic_adapter_source_staging_input_count": 25,
+    "diagnostic_adapter_source_staging_staged_count": 25,
+    "diagnostic_adapter_source_staging_missing_count": 0,
+    "diagnostic_adapter_source_staging_invalid_count": 0,
+}
+
 
 def _bool_attr(value: bool) -> str:
     return "true" if value else "false"
@@ -114,6 +136,80 @@ def _attrs_from_adapter_report(report: dict[str, object]) -> dict[str, object]:
             "Diagnostic-only selected-field base-state adapter report; not a "
             "validation gate pass or normal integrator output; staging buffers only."
         ),
+    }
+
+
+def _attrs_from_source_staging_provider_report(
+    report: dict[str, object],
+) -> dict[str, object]:
+    assert report["status"] == "diagnostic_adapter_source_staging_reported"
+    assert report["diagnostic_only"] is False
+    assert report["gate_candidate"] is True
+    assert report["integrator_output"] is True
+    assert report["diagnostic_adapter_source_staging_ok"] is True
+    assert report["diagnostic_adapter_source_staging_diagnostic_only"] is True
+    assert report["diagnostic_adapter_source_staging_gate_candidate"] is False
+    assert report["diagnostic_adapter_source_staging_integrator_output"] is False
+    assert report["diagnostic_adapter_source_staging_writes_candidate"] is False
+    assert (
+        report["diagnostic_adapter_source_staging_uses_reference_end_truth"] is False
+    )
+    assert report["diagnostic_adapter_source_staging_uses_direct_p_shortcut"] is False
+    assert report["diagnostic_adapter_source_staging_input_count"] == 25
+    assert report["diagnostic_adapter_source_staging_staged_count"] == 25
+    assert report["diagnostic_adapter_source_staging_missing_count"] == 0
+    assert report["diagnostic_adapter_source_staging_invalid_count"] == 0
+
+    return {
+        "DX": 2000.0,
+        "DY": 2000.0,
+        "TYWRF_DIAGNOSTIC_ONLY": _bool_attr(report["diagnostic_only"]),
+        "TYWRF_GATE_CANDIDATE": _bool_attr(report["gate_candidate"]),
+        "TYWRF_INTEGRATOR_OUTPUT": _bool_attr(report["integrator_output"]),
+        "TYWRF_VALIDATION_GATE_ONLY": "false",
+        "TYWRF_CANDIDATE_KIND": report["candidate_kind"],
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_OK": _bool_attr(
+            report["diagnostic_adapter_source_staging_ok"]
+        ),
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_DIAGNOSTIC_ONLY": _bool_attr(
+            report["diagnostic_adapter_source_staging_diagnostic_only"]
+        ),
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_GATE_CANDIDATE": _bool_attr(
+            report["diagnostic_adapter_source_staging_gate_candidate"]
+        ),
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INTEGRATOR_OUTPUT": _bool_attr(
+            report["diagnostic_adapter_source_staging_integrator_output"]
+        ),
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_WRITES_CANDIDATE": _bool_attr(
+            report["diagnostic_adapter_source_staging_writes_candidate"]
+        ),
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_REFERENCE_END_TRUTH": (
+            _bool_attr(
+                report[
+                    "diagnostic_adapter_source_staging_uses_reference_end_truth"
+                ]
+            )
+        ),
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_DIRECT_P_SHORTCUT": (
+            _bool_attr(
+                report["diagnostic_adapter_source_staging_uses_direct_p_shortcut"]
+            )
+        ),
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_PROVIDER_KIND": report[
+            "diagnostic_adapter_source_staging_provider_kind"
+        ],
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INPUT_COUNT": report[
+            "diagnostic_adapter_source_staging_input_count"
+        ],
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_COUNT": report[
+            "diagnostic_adapter_source_staging_staged_count"
+        ],
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MISSING_COUNT": report[
+            "diagnostic_adapter_source_staging_missing_count"
+        ],
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_COUNT": report[
+            "diagnostic_adapter_source_staging_invalid_count"
+        ],
     }
 
 
@@ -222,6 +318,114 @@ def test_d72_diagnostic_adapter_report_is_rejected_by_strict_0010_gate(
         "TYWRF_DIAGNOSTIC_ADAPTER_INTEGRATION_STATUS="
         "staging_report_only_no_gate_no_integrator"
     ) in metadata["message"]
+
+    assert {field["status"] for field in cycle["fields"]} == {"passed"}
+    assert {
+        metric["status"]
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
+    assert payload["first_failure"]["cycle_index"] == 1
+    assert payload["first_failure"]["end_time"] == END_00_10
+    assert payload["first_failure"]["field"] is None
+    assert payload["first_failure"]["diagnostic"] == "candidate_metadata"
+
+
+def test_d75_source_staging_provider_metadata_is_rejected_by_strict_0010_gate(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(
+        candidate_dir / END_FILE,
+        attrs=_attrs_from_source_staging_provider_report(
+            D75_SOURCE_STAGING_PROVIDER_REPORT
+        ),
+    )
+
+    report_path = tmp_path / "strict_gate.json"
+    exit_code = cycle_gate_main(
+        [
+            "--reference-dir",
+            str(reference_dir),
+            "--candidate-dir",
+            str(candidate_dir),
+            "--start",
+            START,
+            "--end",
+            END_00_10,
+            "--interval-minutes",
+            "10",
+            "--output",
+            str(report_path),
+            "--pretty",
+        ]
+    )
+    capsys.readouterr()
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    cycle = payload["cycles"][0]
+    diagnostics = {metric["name"]: metric for metric in cycle["diagnostics"]}
+    metadata = diagnostics["candidate_metadata"]
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["summary"] == {"total": 1, "passed": 0, "failed": 1}
+    assert payload["interval_minutes"] == 10
+    assert cycle["start_time"] == START
+    assert cycle["end_time"] == END_00_10
+    assert "2025-07-26_00:20:00" not in json.dumps(payload)
+
+    assert metadata["status"] == "failed"
+    assert "TYWRF_GATE_CANDIDATE=false" not in metadata["message"]
+    assert "TYWRF_INTEGRATOR_OUTPUT=false" not in metadata["message"]
+    assert (
+        "TYWRF_CANDIDATE_KIND=integrator_candidate" not in metadata["message"]
+    )
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_OK=true"
+        in metadata["message"]
+    )
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_DIAGNOSTIC_ONLY=true"
+        in metadata["message"]
+    )
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_PROVIDER_KIND="
+        "wrfout_d02_source_staging_provider_v0"
+    ) in metadata["message"]
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INPUT_COUNT=25"
+        in metadata["message"]
+    )
+
+    with netCDF4.Dataset(candidate_dir / END_FILE) as dataset:
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_GATE_CANDIDATE"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_WRITES_CANDIDATE"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_REFERENCE_END_TRUTH"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_DIRECT_P_SHORTCUT"
+            )
+            == "false"
+        )
 
     assert {field["status"] for field in cycle["fields"]} == {"passed"}
     assert {

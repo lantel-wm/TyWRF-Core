@@ -1345,11 +1345,13 @@ still be reported as non-gate diagnostic evidence, not as a
 `2025-07-26_00:10:00` validation pass. The strict `00:10` gate still fails, so
 validation must not proceed to `00:20`.
 
-D74 may stage only a non-oracle child-shaped base-state source provider for
-diagnostic/test use. Its purpose is to replace `source==child` staging in a
-later hidden adapter wiring round, not to change validation behavior in this
-round. D74 must not connect the provider to `selected_field_cycle`, write or
-relabel normal candidates, set positive gate metadata, or weaken the strict
+D74 is complete, verified, pushed, and synchronized at commit `b1d2de2`
+(`Add base-state source staging provider`). It staged only the non-oracle
+child-shaped `BaseStateSourceStagingProvider` for diagnostic/test use. Its
+purpose is to replace `source==child` staging in a later hidden adapter wiring
+round, not to change validation behavior in that provider round. D74 did not
+connect the provider to `selected_field_cycle`, write or relabel normal
+candidates, set positive gate metadata, or weaken the strict
 metadata/disposition checks. Default strict-gate tooling must continue to treat
 D74 provider reports, fixtures, and staged outputs as non-gate artifacts:
 
@@ -1358,6 +1360,16 @@ diagnostic_only = true
 gate_candidate = false
 integrator_output = false
 ```
+
+D75 validation scope is hidden diagnostic adapter source staging only. The D74
+provider may back hidden adapter scratch-source staging, and reports may expose
+provider-backed source provenance plus staged/exposed/masked count metadata.
+That metadata remains disqualifying and cannot be used as gate evidence. D75
+must not write or relabel normal candidates, refresh candidate `P`, change the
+normal pressure-refresh path, mark a report as integrator output, or relax
+strict metadata rejection. The strict d02 `2025-07-26_00:10:00` gate still
+fails, so validation must stop at `00:10` and must not proceed to `00:20`;
+d02 stays `2 km`, and best-track nudging remains prohibited.
 
 Example:
 

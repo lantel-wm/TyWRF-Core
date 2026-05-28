@@ -3,6 +3,7 @@
 #include "tywrf/io/pressure_refresh_io.hpp"
 #include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/nest/base_state_exchange_adapter.hpp"
+#include "tywrf/nest/base_state_source_staging.hpp"
 #include "tywrf/nest/parent_child_interpolation.hpp"
 #include "tywrf/nest/static_fields.hpp"
 #include "tywrf/nest/state_exchange.hpp"
@@ -169,6 +170,9 @@ struct CandidateReport {
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh;
   std::optional<tywrf::nest::ExposedBaseStateExchangeAdapterReport>
       diagnostic_adapter;
+  std::optional<tywrf::nest::BaseStateSourceStagingReport>
+      diagnostic_adapter_source_staging;
+  bool diagnostic_adapter_source_staging_aliases_child = false;
   std::filesystem::path diagnostic_adapter_metadata_source;
   std::size_t diagnostic_adapter_metadata_time_index = 0;
   std::filesystem::path pressure_refresh_metadata_source;
@@ -251,6 +255,31 @@ diagnostic_adapter_views(DiagnosticBaseStateAdapterStaging& staging) {
       staging.t_init.view(),
       staging.alb.view(),
       staging.ht.view()};
+}
+
+template <typename LhsReal, typename RhsReal>
+[[nodiscard]] bool field_data_alias(
+    const tywrf::FieldView2D<LhsReal>& lhs,
+    const tywrf::FieldView2D<RhsReal>& rhs) noexcept {
+  return lhs.data != nullptr && rhs.data != nullptr && lhs.data == rhs.data;
+}
+
+template <typename LhsReal, typename RhsReal>
+[[nodiscard]] bool field_data_alias(
+    const tywrf::FieldView3D<LhsReal>& lhs,
+    const tywrf::FieldView3D<RhsReal>& rhs) noexcept {
+  return lhs.data != nullptr && rhs.data != nullptr && lhs.data == rhs.data;
+}
+
+[[nodiscard]] bool base_state_views_alias(
+    const tywrf::nest::ExposedBaseStateViews<const float>& source,
+    const tywrf::nest::ExposedBaseStateViews<float>& child) noexcept {
+  return field_data_alias(source.phb, child.phb) ||
+         field_data_alias(source.mub, child.mub) ||
+         field_data_alias(source.pb, child.pb) ||
+         field_data_alias(source.t_init, child.t_init) ||
+         field_data_alias(source.alb, child.alb) ||
+         field_data_alias(source.ht, child.ht);
 }
 
 [[nodiscard]] std::string timeline_value(std::string value) {
@@ -2027,17 +2056,87 @@ void run_diagnostic_adapter_report(
       {.time_index = options.template_time_index});
   require_pressure_refresh_inputs_ready(metadata);
 
-  DiagnosticBaseStateAdapterStaging source(candidate.grid);
+  DiagnosticBaseStateAdapterStaging explicit_source(candidate.grid);
   DiagnosticBaseStateAdapterStaging child(candidate.grid);
-  fill_diagnostic_adapter_staging(candidate, output_static, metadata_alb, source);
+  fill_diagnostic_adapter_staging(candidate, output_static, metadata_alb, explicit_source);
   fill_diagnostic_adapter_staging(candidate, output_static, metadata_alb, child);
+
+  tywrf::nest::BaseStateSourceStagingProvider source_provider;
+  const auto source_staging_report = source_provider.stage(
+      candidate.grid,
+      report.remap_plan,
+      diagnostic_adapter_views(
+          static_cast<const DiagnosticBaseStateAdapterStaging&>(explicit_source)));
+  const auto provider_source_views = source_provider.views();
+  const auto child_views = diagnostic_adapter_views(child);
+  report.diagnostic_adapter_source_staging = source_staging_report;
+  report.diagnostic_adapter_source_staging_aliases_child =
+      base_state_views_alias(provider_source_views, child_views);
+  append_timeline_event(
+      report,
+      "diagnostic_adapter_source_staging",
+      {
+          timeline_field("provider", "BaseStateSourceStagingProvider"),
+          timeline_field("source", std::string(source_staging_report.source)),
+          timeline_field("ok", std::string(bool_text(source_staging_report.ok()))),
+          timeline_field(
+              "diagnostic_only",
+              std::string(bool_text(source_staging_report.diagnostic_only))),
+          timeline_field(
+              "gate_candidate",
+              std::string(bool_text(source_staging_report.gate_candidate))),
+          timeline_field(
+              "integrator_output",
+              std::string(bool_text(source_staging_report.integrator_output))),
+          timeline_field(
+              "writes_candidate",
+              std::string(bool_text(source_staging_report.writes_candidate))),
+          timeline_field(
+              "writes_netcdf",
+              std::string(bool_text(source_staging_report.writes_netcdf))),
+          timeline_field(
+              "uses_reference_end_truth",
+              std::string(bool_text(source_staging_report.uses_reference_end_truth))),
+          timeline_field(
+              "uses_direct_p_shortcut",
+              std::string(bool_text(source_staging_report.uses_direct_p_shortcut))),
+          timeline_field(
+              "aliases_child",
+              std::string(
+                  bool_text(report.diagnostic_adapter_source_staging_aliases_child))),
+          timeline_field(
+              "exposed_regions",
+              static_cast<std::uint64_t>(source_staging_report.exposed_region_count)),
+          timeline_field(
+              "exposed_mass_points",
+              source_staging_report.exposed_mass_point_count),
+          timeline_field(
+              "masked_mass_points",
+              source_staging_report.masked_mass_point_count),
+          timeline_field("staged_values", source_staging_report.staged_value_count),
+          timeline_field(
+              "invalid_values",
+              source_staging_report.invalid_exposed_value_count),
+      });
+  if (!source_staging_report.ok()) {
+    std::ostringstream message;
+    message << "diagnostic_base_state_source_staging_failed";
+    if (source_staging_report.result.message != nullptr &&
+        source_staging_report.result.message[0] != '\0') {
+      message << ": " << source_staging_report.result.message;
+    }
+    throw std::runtime_error(message.str());
+  }
+  if (report.diagnostic_adapter_source_staging_aliases_child) {
+    throw std::runtime_error(
+        "diagnostic_base_state_source_staging unexpectedly aliases child staging");
+  }
 
   const auto adapter_report =
       tywrf::nest::apply_exposed_base_state_exchange_adapter(
           report.remap_plan,
-          diagnostic_adapter_views(
-              static_cast<const DiagnosticBaseStateAdapterStaging&>(source)),
-          diagnostic_adapter_views(child),
+          provider_source_views,
+          child_views,
           {{metadata.metadata.c3h.data(),
             static_cast<std::int32_t>(metadata.metadata.c3h.size())},
            {metadata.metadata.c4h.data(),
@@ -2534,6 +2633,206 @@ void write_pressure_formula_observation_attrs(
       pressure_formula_observation_values(report.pressure_formula_observations));
 }
 
+void write_diagnostic_adapter_source_staging_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (!report.diagnostic_adapter_source_staging.has_value()) {
+    return;
+  }
+
+  const auto& staging = *report.diagnostic_adapter_source_staging;
+  write_text_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_VERSION", "d75_provider_report_v0");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_PROVIDER_KIND",
+      "BaseStateSourceStagingProvider");
+  write_text_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_SOURCE", staging.source);
+  write_text_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_DISPOSITION", staging.disposition);
+  write_text_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_SOURCE_SHAPE", staging.source_shape);
+  write_text_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_OK", bool_text(staging.ok()));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_RESULT_MESSAGE",
+      staging.result.message == nullptr ? "" : staging.result.message);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_DIAGNOSTIC_ONLY",
+      bool_text(staging.diagnostic_only));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_GATE_CANDIDATE",
+      bool_text(staging.gate_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INTEGRATOR_OUTPUT",
+      bool_text(staging.integrator_output));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_WRITES_CANDIDATE",
+      bool_text(staging.writes_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_WRITES_NETCDF",
+      bool_text(staging.writes_netcdf));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_CANDIDATE_BUFFERS_PRESERVED",
+      bool_text(staging.candidate_buffers_preserved));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_OWNS_STAGING_BUFFERS",
+      bool_text(staging.owns_staging_buffers));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_ALLOCATED_BUFFERS",
+      bool_text(staging.allocated_buffers));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_REFERENCE_END_TRUTH",
+      bool_text(staging.uses_reference_end_truth));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_DIRECT_P_SHORTCUT",
+      bool_text(staging.uses_direct_p_shortcut));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_READS_DIRECT_P",
+      bool_text(staging.reads_direct_p));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_ALIASES_CHILD",
+      bool_text(report.diagnostic_adapter_source_staging_aliases_child));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_ACTIVE_NX",
+      static_cast<double>(staging.active_nx));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_ACTIVE_NY",
+      static_cast<double>(staging.active_ny));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MASS_NZ",
+      static_cast<double>(staging.mass_nz));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_FULL_NZ",
+      static_cast<double>(staging.full_nz));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_REGION_COUNT",
+      static_cast<double>(staging.exposed_region_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_MASS_CELL_COUNT",
+      static_cast<double>(staging.exposed_mass_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_MASS_POINT_COUNT",
+      static_cast<double>(staging.exposed_mass_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_SURFACE_CELL_COUNT",
+      static_cast<double>(staging.exposed_surface_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_W_FULL_COLUMN_COUNT",
+      static_cast<double>(staging.exposed_w_full_column_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_W_FULL_POINT_COUNT",
+      static_cast<double>(staging.exposed_w_full_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MASKED_MASS_CELL_COUNT",
+      static_cast<double>(staging.masked_mass_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MASKED_MASS_POINT_COUNT",
+      static_cast<double>(staging.masked_mass_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MASKED_SURFACE_CELL_COUNT",
+      static_cast<double>(staging.masked_surface_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MASKED_W_FULL_COLUMN_COUNT",
+      static_cast<double>(staging.masked_w_full_column_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MASKED_W_FULL_POINT_COUNT",
+      static_cast<double>(staging.masked_w_full_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_PHB_POINT_COUNT",
+      static_cast<double>(staging.staged_phb_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_MUB_CELL_COUNT",
+      static_cast<double>(staging.staged_mub_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_HT_CELL_COUNT",
+      static_cast<double>(staging.staged_ht_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_PB_POINT_COUNT",
+      static_cast<double>(staging.staged_pb_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_T_INIT_POINT_COUNT",
+      static_cast<double>(staging.staged_t_init_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_ALB_POINT_COUNT",
+      static_cast<double>(staging.staged_alb_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_VALUE_COUNT",
+      static_cast<double>(staging.staged_value_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_ACTIVE_MASKED_VALUE_COUNT",
+      static_cast<double>(staging.active_masked_value_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_HALO_MASKED_VALUE_COUNT",
+      static_cast<double>(staging.halo_masked_value_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_VALUE_COUNT",
+      static_cast<double>(staging.invalid_exposed_value_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_PHB_POINT_COUNT",
+      static_cast<double>(staging.invalid_exposed_phb_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_MUB_CELL_COUNT",
+      static_cast<double>(staging.invalid_exposed_mub_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_HT_CELL_COUNT",
+      static_cast<double>(staging.invalid_exposed_ht_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_PB_POINT_COUNT",
+      static_cast<double>(staging.invalid_exposed_pb_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_T_INIT_POINT_COUNT",
+      static_cast<double>(staging.invalid_exposed_t_init_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_ALB_POINT_COUNT",
+      static_cast<double>(staging.invalid_exposed_alb_point_count));
+}
+
 void write_diagnostic_adapter_attrs(
     const NetcdfHandle& file,
     const CandidateReport& report) {
@@ -2685,6 +2984,7 @@ void write_diagnostic_adapter_attrs(
       file,
       "TYWRF_DIAGNOSTIC_ADAPTER_INVALID_POINT_COUNT",
       static_cast<double>(adapter.invalid_point_count));
+  write_diagnostic_adapter_source_staging_attrs(file, report);
   write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_WRITTEN_FIELDS", "PHB,MUB,HGT,PB,T_INIT,ALB");
   write_text_attr(
       file,
@@ -3295,6 +3595,308 @@ void write_pressure_formula_observation_json(
       pretty);
 }
 
+void write_diagnostic_adapter_source_staging_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool pretty) {
+  if (!report.diagnostic_adapter_source_staging.has_value()) {
+    return;
+  }
+
+  const auto& staging = *report.diagnostic_adapter_source_staging;
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_staging_version",
+      "d75_provider_report_v0",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_staging_provider_kind",
+      "BaseStateSourceStagingProvider",
+      true,
+      pretty);
+  write_json_string(
+      stream, "diagnostic_adapter_source_staging_source", staging.source, true, pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_staging_disposition",
+      staging.disposition,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_staging_source_shape",
+      staging.source_shape,
+      true,
+      pretty);
+  write_json_bool(stream, "diagnostic_adapter_source_staging_ok", staging.ok(), true, pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_staging_result_message",
+      staging.result.message == nullptr ? "" : staging.result.message,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_diagnostic_only",
+      staging.diagnostic_only,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_gate_candidate",
+      staging.gate_candidate,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_integrator_output",
+      staging.integrator_output,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_writes_candidate",
+      staging.writes_candidate,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_writes_netcdf",
+      staging.writes_netcdf,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_candidate_buffers_preserved",
+      staging.candidate_buffers_preserved,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_owns_staging_buffers",
+      staging.owns_staging_buffers,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_allocated_buffers",
+      staging.allocated_buffers,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_uses_reference_end_truth",
+      staging.uses_reference_end_truth,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_uses_direct_p_shortcut",
+      staging.uses_direct_p_shortcut,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_reads_direct_p",
+      staging.reads_direct_p,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_staging_aliases_child",
+      report.diagnostic_adapter_source_staging_aliases_child,
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_active_nx",
+      static_cast<double>(staging.active_nx),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_active_ny",
+      static_cast<double>(staging.active_ny),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_mass_nz",
+      static_cast<double>(staging.mass_nz),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_full_nz",
+      static_cast<double>(staging.full_nz),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_exposed_region_count",
+      static_cast<double>(staging.exposed_region_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_exposed_mass_cell_count",
+      static_cast<double>(staging.exposed_mass_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_exposed_mass_point_count",
+      static_cast<double>(staging.exposed_mass_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_exposed_surface_cell_count",
+      static_cast<double>(staging.exposed_surface_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_exposed_w_full_column_count",
+      static_cast<double>(staging.exposed_w_full_column_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_exposed_w_full_point_count",
+      static_cast<double>(staging.exposed_w_full_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_masked_mass_cell_count",
+      static_cast<double>(staging.masked_mass_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_masked_mass_point_count",
+      static_cast<double>(staging.masked_mass_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_masked_surface_cell_count",
+      static_cast<double>(staging.masked_surface_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_masked_w_full_column_count",
+      static_cast<double>(staging.masked_w_full_column_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_masked_w_full_point_count",
+      static_cast<double>(staging.masked_w_full_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_staged_phb_point_count",
+      static_cast<double>(staging.staged_phb_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_staged_mub_cell_count",
+      static_cast<double>(staging.staged_mub_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_staged_ht_cell_count",
+      static_cast<double>(staging.staged_ht_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_staged_pb_point_count",
+      static_cast<double>(staging.staged_pb_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_staged_t_init_point_count",
+      static_cast<double>(staging.staged_t_init_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_staged_alb_point_count",
+      static_cast<double>(staging.staged_alb_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_staged_value_count",
+      static_cast<double>(staging.staged_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_active_masked_value_count",
+      static_cast<double>(staging.active_masked_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_halo_masked_value_count",
+      static_cast<double>(staging.halo_masked_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_invalid_exposed_value_count",
+      static_cast<double>(staging.invalid_exposed_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_invalid_exposed_phb_point_count",
+      static_cast<double>(staging.invalid_exposed_phb_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_invalid_exposed_mub_cell_count",
+      static_cast<double>(staging.invalid_exposed_mub_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_invalid_exposed_ht_cell_count",
+      static_cast<double>(staging.invalid_exposed_ht_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_invalid_exposed_pb_point_count",
+      static_cast<double>(staging.invalid_exposed_pb_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_invalid_exposed_t_init_point_count",
+      static_cast<double>(staging.invalid_exposed_t_init_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_staging_invalid_exposed_alb_point_count",
+      static_cast<double>(staging.invalid_exposed_alb_point_count),
+      true,
+      pretty);
+}
+
 void write_diagnostic_adapter_json(
     std::ostream& stream,
     const CandidateReport& report,
@@ -3476,6 +4078,7 @@ void write_diagnostic_adapter_json(
       static_cast<double>(adapter.invalid_point_count),
       true,
       pretty);
+  write_diagnostic_adapter_source_staging_json(stream, report, pretty);
   write_json_string(
       stream,
       "diagnostic_adapter_written_fields",

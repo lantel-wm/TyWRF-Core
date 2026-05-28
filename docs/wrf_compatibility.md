@@ -1588,20 +1588,31 @@ MSLP, or Vmax values, the artifact is still not a gate candidate and cannot
 count as the strict `2025-07-26_00:10:00` pass. The current strict gate remains
 failed, so validation must stop at `00:10` and must not advance to `00:20`.
 
-D74 compatibility work is provider-only planning/implementation for a
-non-oracle child-shaped base-state source staging provider. This provider is a
-diagnostic/test-only source contract intended to replace `source==child`
-staging in a later hidden adapter wiring round. It must not be connected to
-`selected_field_cycle`, must not write normal candidates, must not mark
-anything as gate-eligible, and must not relax strict-gate metadata or
-disposition checks. Any D74 report, fixture, or staged buffer remains
-non-gate compatibility context only:
+D74 is now complete, verified, pushed, and synchronized at commit `b1d2de2`
+(`Add base-state source staging provider`). It added the non-oracle
+child-shaped `BaseStateSourceStagingProvider` as a diagnostic/test-only source
+contract intended to replace `source==child` staging in a later hidden adapter
+wiring round. It is not connected to `selected_field_cycle`, does not write
+normal candidates, does not mark anything as gate-eligible, and does not relax
+strict-gate metadata or disposition checks. Any D74 report, fixture, or staged
+buffer remains non-gate compatibility context only:
 
 ```text
 diagnostic_only = true
 gate_candidate = false
 integrator_output = false
 ```
+
+D75 may wire the D74 provider only into the hidden diagnostic adapter source
+staging side. That wiring boundary remains report/staging-only: it must not
+write or relabel normal candidates, refresh candidate `P`, change the normal
+pressure-refresh path, or relax strict gate metadata. D75 may add
+provider-backed source provenance and staged/count metadata so the hidden
+adapter report can explain which source populated its scratch buffers, but that
+metadata is itself disqualifying context and cannot be used as strict-gate
+evidence. The strict d02 `2025-07-26_00:10:00` gate remains failed, validation
+must not advance to `00:20`, d02 remains `2 km`, and best-track nudging remains
+out of scope.
 
 ## Physics Bridge Compatibility Notes
 

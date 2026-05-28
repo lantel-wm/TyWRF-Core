@@ -1492,6 +1492,27 @@ void assert_diagnostic_adapter_report_path(
   assert(log.find("\"diagnostic_adapter_writes_candidate\": false") != std::string::npos);
   assert(log.find("\"diagnostic_adapter_called_d68_exchange\": true") != std::string::npos);
   assert(log.find("\"diagnostic_adapter_called_d69_recompute\": true") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_source_staging_version\": "
+                  "\"d75_provider_report_v0\"") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_source_staging_provider_kind\": "
+                  "\"BaseStateSourceStagingProvider\"") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_source_staging_source\": "
+                  "\"explicit_base_state_source_staging_provider\"") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_source_staging_source\": "
+                  "\"selected_field_integrator_v0\"") == std::string::npos);
+  assert(json_bool_field(log, "diagnostic_adapter_source_staging_ok"));
+  assert(json_bool_field(log, "diagnostic_adapter_source_staging_diagnostic_only"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_gate_candidate"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_integrator_output"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_writes_candidate"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_writes_netcdf"));
+  assert(json_bool_field(log, "diagnostic_adapter_source_staging_candidate_buffers_preserved"));
+  assert(json_bool_field(log, "diagnostic_adapter_source_staging_owns_staging_buffers"));
+  assert(json_bool_field(log, "diagnostic_adapter_source_staging_allocated_buffers"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_uses_reference_end_truth"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_uses_direct_p_shortcut"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_reads_direct_p"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_staging_aliases_child"));
   assert(log.find("\"diagnostic_adapter_integration_status\": "
                   "\"staging_report_only_no_gate_no_integrator\"") != std::string::npos);
   assert(json_number_field(log, "diagnostic_adapter_c3h_count") == 2.0);
@@ -1499,6 +1520,12 @@ void assert_diagnostic_adapter_report_path(
   assert(json_number_field(log, "diagnostic_adapter_exposed_mass_cell_count") > 0.0);
   assert(json_number_field(log, "diagnostic_adapter_recomputed_point_count") > 0.0);
   assert(json_number_field(log, "diagnostic_adapter_invalid_point_count") == 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_staging_exposed_region_count") > 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_staging_exposed_mass_cell_count") > 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_staging_exposed_mass_point_count") > 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_staging_masked_mass_cell_count") > 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_staging_staged_value_count") > 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_staging_invalid_exposed_value_count") == 0.0);
   assert_disposition_report_matches_metadata(
       output,
       log_path,
@@ -1529,9 +1556,96 @@ void assert_diagnostic_adapter_report_path(
   assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_EXPOSED_MASS_CELL_COUNT") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_RECOMPUTED_POINT_COUNT") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_INVALID_POINT_COUNT") == 0.0);
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_VERSION") ==
+      "d75_provider_report_v0");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_PROVIDER_KIND") ==
+      "BaseStateSourceStagingProvider");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_SOURCE") ==
+      "explicit_base_state_source_staging_provider");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_OK") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_DIAGNOSTIC_ONLY") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_GATE_CANDIDATE") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INTEGRATOR_OUTPUT") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_WRITES_CANDIDATE") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_WRITES_NETCDF") ==
+      "false");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_CANDIDATE_BUFFERS_PRESERVED") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_OWNS_STAGING_BUFFERS") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_ALLOCATED_BUFFERS") ==
+      "true");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_REFERENCE_END_TRUTH") == "false");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_DIRECT_P_SHORTCUT") == "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_READS_DIRECT_P") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_ALIASES_CHILD") ==
+      "false");
+  assert(
+      read_double_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_REGION_COUNT") > 0.0);
+  assert(
+      read_double_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_MASS_CELL_COUNT") > 0.0);
+  assert(
+      read_double_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_EXPOSED_MASS_POINT_COUNT") > 0.0);
+  assert(
+      read_double_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_MASKED_MASS_CELL_COUNT") > 0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_VALUE_COUNT") >
+      0.0);
+  assert(
+      read_double_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_VALUE_COUNT") == 0.0);
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
   const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
+  assert(events.find(":diagnostic_adapter_source_staging(") != std::string::npos);
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_source_staging", "provider") ==
+      "BaseStateSourceStagingProvider");
+  assert(timeline_field_value(events, "diagnostic_adapter_source_staging", "ok") == "true");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_source_staging", "gate_candidate") ==
+      "false");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_source_staging", "writes_candidate") ==
+      "false");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_source_staging", "aliases_child") ==
+      "false");
   assert(events.find(":diagnostic_adapter_report(") != std::string::npos);
   assert(timeline_field_value(events, "diagnostic_adapter_report", "opt_in") == "true");
   assert(timeline_field_value(events, "diagnostic_adapter_report", "diagnostic_only") == "true");
@@ -1550,10 +1664,13 @@ void assert_diagnostic_adapter_report_path(
   const auto preserved_pb = linear_3d(1, 9, 9, 80'000.0F, 1.0F, 10.0F, 100.0F);
   const auto preserved_phb = linear_3d(2, 9, 9, 90'000.0F, 1.0F, 10.0F, 100.0F);
   const auto preserved_mub = linear_2d(9, 9, 100'000.0F, 1.0F, 10.0F);
+  const auto preserved_t =
+      parent_linear(3'000.0F, 5.0F, 3.0F, 10.0F, 3.8, 2.8, 1);
   expect_close(read_3d_value(file_id, "P", 1, 9, 9), preserved_exposed_p, "adapter P preserved");
   expect_close(read_3d_value(file_id, "PB", 1, 9, 9), preserved_pb, "adapter PB preserved");
   expect_close(read_3d_value(file_id, "PHB", 2, 9, 9), preserved_phb, "adapter PHB preserved");
   expect_close(read_2d_value(file_id, "MUB", 9, 9), preserved_mub, "adapter MUB preserved");
+  expect_close(read_3d_value(file_id, "T", 1, 9, 9), preserved_t, "adapter T preserved");
   check_nc(nc_close(file_id), "close diagnostic adapter output");
 }
 

@@ -1126,19 +1126,31 @@ thresholds. Such diagnostics can inform future producer work, but they cannot
 become closure evidence, cannot satisfy the strict `00:10` gate, and cannot
 justify advancing validation to `00:20`.
 
-D74 may define or stage only a non-oracle child-shaped base-state source
-provider for diagnostic/test use. It is a source-provider boundary intended to
-replace `source==child` staging in a later hidden adapter wiring round; it is
-not a closure, not a pressure-refresh producer, and not a normal candidate
-writer. It must not connect to `selected_field_cycle`, must not emit or borrow
-positive selected-field metadata, and must not relax strict gate rejection.
-Any D74 provider artifact or report must remain:
+D74 is complete, verified, pushed, and synchronized at commit `b1d2de2`
+(`Add base-state source staging provider`). It defined the non-oracle
+child-shaped `BaseStateSourceStagingProvider` for diagnostic/test use. It is a
+source-provider boundary intended to replace `source==child` staging in a later
+hidden adapter wiring round; it is not a closure, not a pressure-refresh
+producer, and not a normal candidate writer. It is not connected to
+`selected_field_cycle`, does not emit or borrow positive selected-field
+metadata, and does not relax strict gate rejection. Any D74 provider artifact
+or report must remain:
 
 ```text
 diagnostic_only = true
 gate_candidate = false
 integrator_output = false
 ```
+
+D75 may use that provider only on the hidden diagnostic adapter source-staging
+side. Provider-backed source provenance and staged/count metadata may be
+reported to explain hidden scratch-buffer inputs, but those facts are
+disqualifiers, not closure evidence and not gate evidence. A closure must not
+use D75 metadata to patch candidate fields, write normal candidates, refresh
+candidate `P`, change normal pressure-refresh behavior, borrow positive
+selected-field metadata, or weaken strict gate rejection. The strict d02
+`00:10` gate remains failed, validation must not advance to `00:20`, d02 must
+remain `2 km`, and best-track nudging remains forbidden.
 
 ## Hard Prohibitions
 
