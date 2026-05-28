@@ -21,6 +21,10 @@ WIND_SUBCYCLING_ATTRS = (
     "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT",
     "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS",
     "TYWRF_WIND_TENDENCY_TOTAL_SECONDS",
+    "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE",
+    "TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS",
+    "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION",
+    "TYWRF_WIND_TENDENCY_ADVECTION_FORM",
 )
 
 
@@ -130,6 +134,23 @@ def error_metrics(
     }
 
 
+def _zero_delta_metrics(candidate: Any) -> dict[str, Any]:
+    cand_values, cand_finite = _finite_values(candidate)
+    valid_count = int(np.count_nonzero(cand_finite))
+    return {
+        "status": "computed",
+        "changed_count": 0,
+        "rmse": 0.0,
+        "normalized_rmse": 0.0,
+        "max_abs_diff": 0.0,
+        "valid_count": valid_count,
+        "count": valid_count,
+        # D88 compatibility aliases.
+        "differing_count": 0,
+        "max_abs_delta": 0.0,
+    }
+
+
 def baseline_delta_metrics(candidate: Any, baseline: Any) -> dict[str, Any]:
     cand_values, cand_finite = _finite_values(candidate)
     base_values, base_finite = _finite_values(baseline)
@@ -141,16 +162,36 @@ def baseline_delta_metrics(candidate: Any, baseline: Any) -> dict[str, Any]:
     if valid_count == 0:
         return {
             "status": "no_valid_samples",
+            "changed_count": 0,
+            "rmse": None,
+            "normalized_rmse": None,
+            "max_abs_diff": None,
+            "valid_count": 0,
+            "count": 0,
+            # D88 compatibility aliases.
             "differing_count": 0,
             "max_abs_delta": None,
-            "valid_count": 0,
         }
     delta = cand_values[valid] - base_values[valid]
+    rmse = float(math.sqrt(float(np.mean(delta * delta))))
+    scale = float(math.sqrt(float(np.mean(base_values[valid] * base_values[valid]))))
+    if scale == 0.0:
+        normalized = 0.0 if rmse == 0.0 else None
+    else:
+        normalized = float(rmse / scale)
+    max_abs = float(np.max(np.abs(delta)))
+    changed_count = int(np.count_nonzero(delta != 0.0))
     return {
         "status": "computed",
-        "differing_count": int(np.count_nonzero(delta != 0.0)),
-        "max_abs_delta": float(np.max(np.abs(delta))),
+        "changed_count": changed_count,
+        "rmse": rmse,
+        "normalized_rmse": normalized,
+        "max_abs_diff": max_abs,
         "valid_count": valid_count,
+        "count": valid_count,
+        # D88 compatibility aliases.
+        "differing_count": changed_count,
+        "max_abs_delta": max_abs,
     }
 
 
@@ -266,6 +307,15 @@ def _shape_of(data: Any | None) -> list[int] | None:
     return [int(value) for value in np.asarray(data).shape]
 
 
+def _same_existing_path(left: Path | None, right: Path | None) -> bool:
+    if left is None or right is None:
+        return False
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return left.absolute() == right.absolute()
+
+
 def _read_optional_variable(
     dataset: netCDF4.Dataset,
     variable: str,
@@ -286,19 +336,36 @@ def _delta_vs_baseline(
     variable: str,
     *,
     candidate_status: str,
+    baseline_is_candidate: bool,
     time_index: int,
 ) -> dict[str, Any]:
     if baseline is None:
         return {
             "status": "not_requested",
+            "changed_count": None,
+            "rmse": None,
+            "normalized_rmse": None,
+            "max_abs_diff": None,
             "differing_count": None,
             "max_abs_delta": None,
         }
     if candidate_status != "available" or candidate_data is None:
         return {
             "status": "candidate_unavailable",
+            "changed_count": None,
+            "rmse": None,
+            "normalized_rmse": None,
+            "max_abs_diff": None,
             "differing_count": None,
             "max_abs_delta": None,
+        }
+    if baseline_is_candidate:
+        return {
+            "baseline_present": True,
+            "candidate_shape": _shape_of(candidate_data),
+            "baseline_shape": _shape_of(candidate_data),
+            "same_path_as_baseline": True,
+            **_zero_delta_metrics(candidate_data),
         }
     baseline_status, baseline_data, message = _read_optional_variable(
         baseline,
@@ -309,6 +376,11 @@ def _delta_vs_baseline(
         "baseline_present": baseline_status == "available",
         "candidate_shape": _shape_of(candidate_data),
         "baseline_shape": _shape_of(baseline_data),
+        "same_path_as_baseline": False,
+        "changed_count": None,
+        "rmse": None,
+        "normalized_rmse": None,
+        "max_abs_diff": None,
         "differing_count": None,
         "max_abs_delta": None,
     }
@@ -349,6 +421,7 @@ def compare_candidate_variable(
     baseline: netCDF4.Dataset | None,
     variable: str,
     *,
+    baseline_is_candidate: bool = False,
     boundary_bands: Iterable[int] = DEFAULT_BOUNDARY_BANDS,
     time_index: int = -1,
 ) -> dict[str, Any]:
@@ -385,6 +458,7 @@ def compare_candidate_variable(
             baseline,
             variable,
             candidate_status=candidate_status,
+            baseline_is_candidate=baseline_is_candidate,
             time_index=time_index,
         ),
     }
@@ -500,6 +574,10 @@ def audit_wind_subcycling(
                         candidate,
                         baseline,
                         variable,
+                        baseline_is_candidate=_same_existing_path(
+                            path,
+                            baseline_wrfout,
+                        ),
                         boundary_bands=boundary_bands,
                         time_index=time_index,
                     )

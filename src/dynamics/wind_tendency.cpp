@@ -13,6 +13,16 @@ template <typename Real>
   return value > static_cast<Real>(0);
 }
 
+[[nodiscard]] bool valid_advection_form(
+    const WindTendencyAdvectionForm form) noexcept {
+  switch (form) {
+    case WindTendencyAdvectionForm::centered:
+    case WindTendencyAdvectionForm::upwind:
+      return true;
+  }
+  return false;
+}
+
 template <typename Real>
 [[nodiscard]] WindTendencyReport make_report(
     const WindTendencyConfig<Real> config,
@@ -90,7 +100,8 @@ template <typename Real>
     const WindTendencyViews<Real> views,
     const WindTendencyConfig<Real> config) noexcept {
   if (!positive(config.dx_m) || !positive(config.dy_m) ||
-      config.dt_seconds < static_cast<Real>(0)) {
+      config.dt_seconds < static_cast<Real>(0) ||
+      !valid_advection_form(config.advection_form)) {
     return WindTendencyStatus::invalid_config;
   }
 
@@ -106,7 +117,7 @@ template <typename Real>
 }
 
 template <typename Real>
-void apply_first_order_horizontal_advection(
+void apply_centered_horizontal_advection(
     const WindTendencyFieldViews<Real> field,
     const WindTendencyConfig<Real> config) noexcept {
   const auto i_begin = field.target.halo.i_lower;
@@ -151,6 +162,73 @@ void apply_first_order_horizontal_advection(
   }
 }
 
+template <typename Real>
+void apply_upwind_horizontal_advection(
+    const WindTendencyFieldViews<Real> field,
+    const WindTendencyConfig<Real> config) noexcept {
+  const auto i_begin = field.target.halo.i_lower;
+  const auto i_end = field.target.nx - field.target.halo.i_upper;
+  const auto j_begin = field.target.halo.j_lower;
+  const auto j_end = field.target.ny - field.target.halo.j_upper;
+  const auto k_begin = field.target.halo.k_lower;
+  const auto k_end = field.target.nz - field.target.halo.k_upper;
+  const auto inv_dx = static_cast<Real>(1) / config.dx_m;
+  const auto inv_dy = static_cast<Real>(1) / config.dy_m;
+
+  for (std::int32_t j = j_begin; j < j_end; ++j) {
+    for (std::int32_t k = k_begin; k < k_end; ++k) {
+      const auto plane =
+          static_cast<std::size_t>(j) *
+              static_cast<std::size_t>(field.target.stride_j) +
+          static_cast<std::size_t>(k) *
+              static_cast<std::size_t>(field.target.stride_k);
+      for (std::int32_t i = i_begin; i < i_end; ++i) {
+        const auto idx = plane + static_cast<std::size_t>(i);
+        const auto x_wind = field.advect_x.data[idx];
+        const auto y_wind = field.advect_y.data[idx];
+        const auto x_left_idx = field.source.index(i - 1, j, k);
+        const auto y_down_idx = field.source.index(i, j - 1, k);
+        const auto flux_x_right =
+            x_wind >= static_cast<Real>(0)
+                ? x_wind * field.source.data[idx]
+                : x_wind * field.source.data[field.source.index(i + 1, j, k)];
+        const auto x_left_wind = field.advect_x.data[x_left_idx];
+        const auto flux_x_left =
+            x_left_wind >= static_cast<Real>(0)
+                ? x_left_wind * field.source.data[x_left_idx]
+                : x_left_wind * field.source.data[idx];
+        const auto flux_y_up =
+            y_wind >= static_cast<Real>(0)
+                ? y_wind * field.source.data[idx]
+                : y_wind * field.source.data[field.source.index(i, j + 1, k)];
+        const auto y_down_wind = field.advect_y.data[y_down_idx];
+        const auto flux_y_down =
+            y_down_wind >= static_cast<Real>(0)
+                ? y_down_wind * field.source.data[y_down_idx]
+                : y_down_wind * field.source.data[idx];
+        field.target.data[idx] +=
+            config.dt_seconds *
+            (-(flux_x_right - flux_x_left) * inv_dx -
+             (flux_y_up - flux_y_down) * inv_dy);
+      }
+    }
+  }
+}
+
+template <typename Real>
+void apply_horizontal_advection(
+    const WindTendencyFieldViews<Real> field,
+    const WindTendencyConfig<Real> config) noexcept {
+  switch (config.advection_form) {
+    case WindTendencyAdvectionForm::centered:
+      apply_centered_horizontal_advection(field, config);
+      return;
+    case WindTendencyAdvectionForm::upwind:
+      apply_upwind_horizontal_advection(field, config);
+      return;
+  }
+}
+
 }  // namespace
 
 template <typename Real>
@@ -170,8 +248,8 @@ WindTendencyReport apply_horizontal_wind_tendency(
     return report;
   }
 
-  apply_first_order_horizontal_advection(views.u, config);
-  apply_first_order_horizontal_advection(views.v, config);
+  apply_horizontal_advection(views.u, config);
+  apply_horizontal_advection(views.v, config);
   report.updated_u_points = report.active_u_points;
   report.updated_v_points = report.active_v_points;
   return report;

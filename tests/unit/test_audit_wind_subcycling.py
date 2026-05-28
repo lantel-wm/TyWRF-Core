@@ -60,6 +60,10 @@ def _wind_attrs() -> dict[str, object]:
         "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT": 75,
         "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS": 8.0,
         "TYWRF_WIND_TENDENCY_TOTAL_SECONDS": 600.0,
+        "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE": "refreshed",
+        "TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS": "cross_component",
+        "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION": "average",
+        "TYWRF_WIND_TENDENCY_ADVECTION_FORM": "conservative",
     }
 
 
@@ -106,6 +110,10 @@ def test_function_report_contains_global_boundary_vertical_delta_and_metadata(
     assert metadata["TYWRF_WIND_TENDENCY_SUBSTEP_COUNT"] == 75
     assert metadata["TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS"] == 8.0
     assert metadata["TYWRF_WIND_TENDENCY_TOTAL_SECONDS"] == 600.0
+    assert metadata["TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE"] == "refreshed"
+    assert metadata["TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS"] == "cross_component"
+    assert metadata["TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION"] == "average"
+    assert metadata["TYWRF_WIND_TENDENCY_ADVECTION_FORM"] == "conservative"
 
     by_name = _variables_by_name(payload)
     u = by_name["U"]
@@ -117,6 +125,10 @@ def test_function_report_contains_global_boundary_vertical_delta_and_metadata(
     assert u["global"]["valid_count"] == 24
 
     assert u["delta_vs_baseline"]["status"] == "computed"
+    assert u["delta_vs_baseline"]["changed_count"] == 24
+    assert math.isclose(u["delta_vs_baseline"]["rmse"], 1.0)
+    assert math.isclose(u["delta_vs_baseline"]["normalized_rmse"], 0.1)
+    assert u["delta_vs_baseline"]["max_abs_diff"] == 1.0
     assert u["delta_vs_baseline"]["differing_count"] == 24
     assert u["delta_vs_baseline"]["max_abs_delta"] == 1.0
 
@@ -138,8 +150,43 @@ def test_function_report_contains_global_boundary_vertical_delta_and_metadata(
     v = by_name["V"]
     assert v["status"] == "computed"
     assert v["reference_shape"] == [2, 4, 3]
+    assert v["delta_vs_baseline"]["changed_count"] == 6
+    assert math.isclose(v["delta_vs_baseline"]["rmse"], 1.0)
+    assert math.isclose(v["delta_vs_baseline"]["normalized_rmse"], 0.05)
+    assert v["delta_vs_baseline"]["max_abs_diff"] == 2.0
     assert v["delta_vs_baseline"]["differing_count"] == 6
     assert v["boundary_bands"]["horizontal_shape"] == [4, 3]
+
+
+def test_same_candidate_and_baseline_path_reports_zero_delta(tmp_path: Path) -> None:
+    reference = tmp_path / "reference.nc"
+    candidate = tmp_path / "candidate.nc"
+
+    ref_u = np.full((1, 2, 3), 3.0)
+    ref_v = np.full((1, 3, 2), 4.0)
+    cand_u = ref_u + 2.0
+    cand_v = ref_v - 1.0
+
+    _write_wrfout(reference, {"U": ref_u, "V": ref_v})
+    _write_wrfout(candidate, {"U": cand_u, "V": cand_v}, attrs=_wind_attrs())
+
+    payload = audit_wind_subcycling(
+        reference,
+        {"same": candidate},
+        baseline_wrfout=candidate,
+    )
+    by_name = _variables_by_name(payload)
+
+    for variable in ("U", "V"):
+        delta = by_name[variable]["delta_vs_baseline"]
+        assert delta["status"] == "computed"
+        assert delta["same_path_as_baseline"] is True
+        assert delta["changed_count"] == 0
+        assert delta["rmse"] == 0.0
+        assert delta["normalized_rmse"] == 0.0
+        assert delta["max_abs_diff"] == 0.0
+        assert delta["differing_count"] == 0
+        assert delta["max_abs_delta"] == 0.0
 
 
 def test_baseline_only_nonwind_is_ignored_and_staggered_uv_shapes_compute(
@@ -174,6 +221,8 @@ def test_baseline_only_nonwind_is_ignored_and_staggered_uv_shapes_compute(
     assert by_name["V"]["vertical_levels"]["status"] == "no_vertical_dimension"
     assert by_name["U"]["delta_vs_baseline"]["status"] == "missing_baseline_variable"
     assert by_name["V"]["delta_vs_baseline"]["status"] == "missing_baseline_variable"
+    assert by_name["U"]["delta_vs_baseline"]["changed_count"] is None
+    assert by_name["V"]["delta_vs_baseline"]["max_abs_diff"] is None
     assert by_name["U"]["delta_vs_baseline"]["differing_count"] is None
     assert by_name["V"]["delta_vs_baseline"]["max_abs_delta"] is None
 
@@ -226,3 +275,6 @@ def test_main_writes_pretty_json_output_path(tmp_path: Path) -> None:
     assert payload["candidates"][0]["metadata"]["global_attrs"][
         "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT"
     ] == 75
+    assert payload["candidates"][0]["metadata"]["global_attrs"][
+        "TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS"
+    ] == "cross_component"

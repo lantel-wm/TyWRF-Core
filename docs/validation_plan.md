@@ -1654,14 +1654,47 @@ error `43.4827156063485 km` failed; minimum SLP error
 `0.36407470703125 hPa` passed; Vmax10m error
 `0.7686817572680305 m s-1` passed. Frozen advecting velocity is not a fix.
 
-D90 validation scope is only default-off/default-preserving selected-field
-`U`/`V` `self_advection` A/B for `same_component|cross_component`. The default
-`same_component` mode must preserve D89. A `cross_component` experiment may be
-gate-eligible only through normal positive candidate metadata, and that
-metadata still cannot be reported as validation success. No D90 result may use
-reference-end/oracle sources, handle `P`, `MU`, `PB`, or `PHB`, invoke pressure
-refresh, physics, or best-track nudging, lower d02 below `2 km`, or advance the
-progressive sequence to `00:20`.
+D90 is complete, verified, and pushed at commit `34e2213`
+(`Add cross-component wind advecting mode`). It adds the validation option
+`--wind-tendency-advecting-components same_component|cross_component` for
+selected-field `U`/`V` `self_advection`. The default `same_component` mode
+preserves D89 exactly. Positive candidate metadata records
+`TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS=same_component|cross_component` and
+uses `TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION=same_grid` for
+`same_component`, or `TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION=average` for
+`cross_component`.
+
+The D90 real KROSA d02 `00:10` matrix still fails the strict gate. With
+same-component/refreshed, `U` normalized RMSE is `0.13578703428452885` and `V`
+normalized RMSE is `0.15517830284022266`. With same-component/frozen, `U`
+normalized RMSE is `0.13553969712614714` and `V` normalized RMSE is
+`0.15933552812814994`. With cross-component/refreshed, `U` normalized RMSE is
+`0.1271909426315702` and `V` normalized RMSE is `0.13542621105084265`. With
+cross-component/frozen, `U` normalized RMSE is `0.1262784410537921` and `V`
+normalized RMSE is `0.1343751747688221`. The derived SLP diagnostic still
+fails storm-center distance at `43.4827156063485 km`; minimum SLP error and
+Vmax10m error pass. These improvements do not satisfy the field thresholds or
+TC diagnostic threshold, so no `00:20` validation is allowed.
+
+D91 validation scope is residual localization, audit metadata/delta
+improvements, and default-off advection-form or upwind sensitivity only if such
+work is implemented. D91 cannot report any metadata pass as validation success,
+cannot use reference-end/oracle sources, cannot handle `P`, `MU`, `PB`, or
+`PHB`, cannot invoke pressure refresh, physics, or best-track nudging, cannot
+lower d02 below `2 km`, and cannot advance the progressive sequence to
+`00:20`.
+
+D91 implements `--wind-tendency-advection-form centered|upwind` for
+`self_advection` and keeps `centered` as the default. The D91 centered
+cross/frozen real output is value-identical to D90 cross/frozen for all
+compared fields and records `TYWRF_WIND_TENDENCY_ADVECTION_FORM=centered`.
+Strict `00:10` results remain failed: centered cross/frozen reports `U`
+normalized RMSE `0.1262784410537921` and `V` normalized RMSE
+`0.1343751747688221`; cross/frozen/upwind reports `U` normalized RMSE
+`0.16812017042527477` and `V` normalized RMSE `0.17567799996961442`; and
+cross/refreshed/upwind reports `U` normalized RMSE `0.16408002949211245` and
+`V` normalized RMSE `0.17946073108932759`. Upwind worsens this selected-field
+wind-only run and cannot justify `00:20` progression.
 
 Example:
 

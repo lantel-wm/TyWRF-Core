@@ -17,6 +17,11 @@ enum class WindTendencyStatus : std::uint8_t {
   mismatched_wind_layout,
 };
 
+enum class WindTendencyAdvectionForm : std::uint8_t {
+  centered,
+  upwind,
+};
+
 template <typename Real>
 struct WindTendencyFieldViews {
   FieldView3D<Real> target;
@@ -36,6 +41,7 @@ struct WindTendencyConfig {
   Real dt_seconds = 0;
   Real dx_m = 1;
   Real dy_m = 1;
+  WindTendencyAdvectionForm advection_form = WindTendencyAdvectionForm::centered;
   bool enable_horizontal_advection = true;
   bool diagnostic_only = true;
   bool gate_candidate = false;

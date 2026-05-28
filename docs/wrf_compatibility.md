@@ -1889,15 +1889,48 @@ gate, not a pass. With refreshed advecting velocity and `N=75`,
 Vmax10m error `0.7686817572680305 m s-1` passed. Frozen advecting velocity is
 therefore not a fix; the next wind compatibility step is cross-component A/B.
 
-D90 may only define default-off/default-preserving selected-field `U`/`V`
-`self_advection` A/B for `same_component|cross_component`. The default
-`same_component` behavior must preserve D89. Any `cross_component` mode must
-stay non-oracle and selected-field-only: no reference-end truth, no
-oracle/reference-copy source, no `P`, `MU`, `PB`, or `PHB` handling, no
-pressure refresh, no physics, no best-track nudging, and no d02 resolution
-change below `2 km`. `candidate_metadata` passing remains only gate
-eligibility; the strict `00:10` gate is still failed and validation must not
-advance to `00:20`.
+D90 is complete, verified, and pushed at commit `34e2213`
+(`Add cross-component wind advecting mode`). It added
+`--wind-tendency-advecting-components same_component|cross_component` for
+selected-field `U`/`V` `self_advection`. The default `same_component` mode
+preserves D89 exactly. D90 records
+`TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS=same_component|cross_component`;
+`TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION=same_grid` is used for
+`same_component`, and `TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION=average` is
+used for `cross_component`.
+
+The D90 real KROSA d02 `00:10` results remain failed-gate evidence, not a
+validation pass. Same-component/refreshed reported `U` normalized RMSE
+`0.13578703428452885` and `V` normalized RMSE `0.15517830284022266`.
+Same-component/frozen reported `U` normalized RMSE `0.13553969712614714` and
+`V` normalized RMSE `0.15933552812814994`. Cross-component/refreshed reported
+`U` normalized RMSE `0.1271909426315702` and `V` normalized RMSE
+`0.13542621105084265`. Cross-component/frozen reported `U` normalized RMSE
+`0.1262784410537921` and `V` normalized RMSE `0.1343751747688221`. The derived
+SLP diagnostic still failed storm-center distance at `43.4827156063485 km`;
+minimum SLP error and Vmax10m error passed. The strict `00:10` gate remains
+failed and validation must not advance to `00:20`.
+
+D91 scope is limited to residual localization, audit metadata/delta
+improvements, and default-off advection-form or upwind sensitivity work if it
+is implemented. D91 must not claim a validation pass, must not advance to
+`00:20`, must not use reference-end/oracle data, must not reduce d02 below
+`2 km`, must not introduce best-track nudging, and must not couple this wind
+sensitivity work to pressure refresh, physics, `P`, `MU`, `PB`, or `PHB`.
+
+D91 adds `--wind-tendency-advection-form centered|upwind` for selected-field
+`self_advection` and keeps `centered` as the default. The centered
+cross/frozen KROSA `00:10` candidate is value-identical to D90 cross/frozen for
+all compared fields while writing `TYWRF_WIND_TENDENCY_ADVECTION_FORM=centered`.
+The strict gate remains failed: centered cross/frozen reports `U` normalized
+RMSE `0.1262784410537921` and `V` normalized RMSE `0.1343751747688221`;
+cross/frozen/upwind reports `U` normalized RMSE `0.16812017042527477` and `V`
+normalized RMSE `0.17567799996961442`; cross/refreshed/upwind reports `U`
+normalized RMSE `0.16408002949211245` and `V` normalized RMSE
+`0.17946073108932759`. This upwind sensitivity degrades the current
+selected-field wind-only result, so the next compatibility step should move
+toward tendency decomposition and pressure-gradient/mass-coupled wind
+experiments rather than declaring an advection-form closure.
 
 ## Physics Bridge Compatibility Notes
 

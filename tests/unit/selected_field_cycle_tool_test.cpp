@@ -919,6 +919,7 @@ void assert_no_wind_tendency_attrs(const int file_id) {
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTION_FORM"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_TOTAL_SECONDS"));
@@ -1667,6 +1668,7 @@ void assert_hidden_apply_flag_absent_from_help(
   assert(help.find("--wind-tendency-substeps") != std::string::npos);
   assert(help.find("--wind-tendency-advecting-velocity") != std::string::npos);
   assert(help.find("--wind-tendency-advecting-components") != std::string::npos);
+  assert(help.find("--wind-tendency-advection-form") != std::string::npos);
   assert(help.find("--pressure-refresh") != std::string::npos);
   assert(help.find("--pressure-column-probe") != std::string::npos);
   assert(help.find("--pressure-column-levels") != std::string::npos);
@@ -2292,7 +2294,8 @@ void assert_wind_tendency_opt_in_output(
     const int expected_self_advection_substeps = 0,
     const std::string_view expected_advecting_velocity_mode = "",
     const std::string_view expected_advecting_components = "",
-    const std::string_view expected_advecting_collocation = "") {
+    const std::string_view expected_advecting_collocation = "",
+    const std::string_view expected_advection_form = "") {
   int baseline_file_id = -1;
   int file_id = -1;
   check_nc(nc_open(baseline_output.string().c_str(), NC_NOWRITE, &baseline_file_id), "open wind baseline");
@@ -2310,6 +2313,10 @@ void assert_wind_tendency_opt_in_output(
       expected_advecting_collocation.empty() && expect_self_advection
           ? (expected_advecting_components_text == "cross_component" ? "average" : "same_grid")
           : std::string(expected_advecting_collocation);
+  const std::string expected_advection_form_text =
+      expected_advection_form.empty() && expect_self_advection
+          ? "centered"
+          : std::string(expected_advection_form);
 
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_OPT_IN") == "true");
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_APPLIED") == "true");
@@ -2340,6 +2347,9 @@ void assert_wind_tendency_opt_in_output(
         read_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION") ==
         expected_advecting_collocation_text);
     assert(
+        read_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTION_FORM") ==
+        expected_advection_form_text);
+    assert(
         read_int_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT") ==
         expected_self_advection_substeps);
     assert(read_double_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS") == 8.0);
@@ -2358,6 +2368,7 @@ void assert_wind_tendency_opt_in_output(
     assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE"));
     assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS"));
     assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION"));
+    assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ADVECTION_FORM"));
     assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT"));
     assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS"));
     assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_TOTAL_SECONDS"));
@@ -2427,6 +2438,9 @@ void assert_wind_tendency_opt_in_output(
         timeline_field_value(events, "wind_tendency_apply", "advecting_collocation") ==
         expected_advecting_collocation_text);
     assert(
+        timeline_field_value(events, "wind_tendency_apply", "advection_form") ==
+        expected_advection_form_text);
+    assert(
         timeline_field_value(events, "wind_tendency_apply", "substep_count") ==
         std::to_string(expected_self_advection_substeps));
     assert(timeline_field_value(events, "wind_tendency_apply", "substep_dt_seconds") == "8");
@@ -2481,6 +2495,10 @@ void assert_wind_tendency_opt_in_output(
             expected_advecting_collocation_text + "\"") != std::string::npos);
     assert(
         log.find(
+            "\"wind_tendency_advection_form\": \"" + expected_advection_form_text +
+            "\"") != std::string::npos);
+    assert(
+        log.find(
             "\"wind_tendency_substep_count\": " +
             std::to_string(expected_self_advection_substeps)) != std::string::npos);
     assert(log.find("\"wind_tendency_substep_dt_seconds\": 8") != std::string::npos);
@@ -2493,6 +2511,7 @@ void assert_wind_tendency_opt_in_output(
     assert(log.find("wind_tendency_advecting_velocity_mode") == std::string::npos);
     assert(log.find("wind_tendency_advecting_components") == std::string::npos);
     assert(log.find("wind_tendency_advecting_collocation") == std::string::npos);
+    assert(log.find("wind_tendency_advection_form") == std::string::npos);
   }
 }
 
@@ -2509,8 +2528,12 @@ void assert_wind_tendency_paths(
   const auto self_advection_output = root / "tywrf_selected_field_wind_self_advection";
   const auto self_advection_explicit_same_output =
       root / "tywrf_selected_field_wind_self_advection_explicit_same";
+  const auto self_advection_explicit_centered_output =
+      root / "tywrf_selected_field_wind_self_advection_explicit_centered";
   const auto self_advection_alias_output =
       root / "tywrf_selected_field_wind_self_advection_alias";
+  const auto self_advection_upwind_output =
+      root / "tywrf_selected_field_wind_self_advection_upwind";
   const auto self_advection_substeps_output =
       root / "tywrf_selected_field_wind_self_advection_substeps";
   const auto self_advection_refreshed_substeps_output =
@@ -2521,12 +2544,17 @@ void assert_wind_tendency_paths(
       root / "tywrf_selected_field_wind_self_advection_cross_frozen_substeps";
   const auto self_advection_frozen_substeps_output =
       root / "tywrf_selected_field_wind_self_advection_frozen_substeps";
+  const auto self_advection_cross_upwind_frozen_substeps_output =
+      root / "tywrf_selected_field_wind_self_advection_cross_upwind_frozen_substeps";
   const auto explicit_none_log = root / "wind_none.log";
   const auto zero_log = root / "wind_zero.log";
   const auto identity_log = root / "wind_identity.log";
   const auto self_advection_log = root / "wind_self_advection.log";
   const auto self_advection_explicit_same_log = root / "wind_self_advection_explicit_same.log";
+  const auto self_advection_explicit_centered_log =
+      root / "wind_self_advection_explicit_centered.log";
   const auto self_advection_alias_log = root / "wind_self_advection_alias.log";
+  const auto self_advection_upwind_log = root / "wind_self_advection_upwind.log";
   const auto self_advection_substeps_log = root / "wind_self_advection_substeps.log";
   const auto self_advection_refreshed_substeps_log =
       root / "wind_self_advection_refreshed_substeps.log";
@@ -2536,6 +2564,8 @@ void assert_wind_tendency_paths(
       root / "wind_self_advection_cross_frozen_substeps.log";
   const auto self_advection_frozen_substeps_log =
       root / "wind_self_advection_frozen_substeps.log";
+  const auto self_advection_cross_upwind_frozen_substeps_log =
+      root / "wind_self_advection_cross_upwind_frozen_substeps.log";
 
   run_command(
       base_command(executable, d01_start, d02_start, template_path, explicit_none_output) +
@@ -2619,6 +2649,76 @@ void assert_wind_tendency_paths(
       default_same_file_id, explicit_same_file_id, "explicit same-component default");
   check_nc(nc_close(explicit_same_file_id), "close explicit same-component self advection");
   check_nc(nc_close(default_same_file_id), "close default same-component self advection");
+
+  run_command(
+      base_command(
+          executable, d01_start, d02_start, template_path, self_advection_explicit_centered_output) +
+      " --wind-tendency-source self_advection"
+      " --wind-tendency-advection-form centered >" +
+      shell_quote(self_advection_explicit_centered_log) + " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output,
+      self_advection_explicit_centered_output,
+      self_advection_explicit_centered_log,
+      "self_advection",
+      true,
+      true,
+      false,
+      1,
+      "refreshed",
+      "same_component",
+      "same_grid",
+      "centered");
+  int explicit_centered_file_id = -1;
+  check_nc(
+      nc_open(
+          self_advection_explicit_centered_output.string().c_str(),
+          NC_NOWRITE,
+          &explicit_centered_file_id),
+      "open explicit centered self advection");
+  check_nc(
+      nc_open(self_advection_output.string().c_str(), NC_NOWRITE, &default_same_file_id),
+      "open default self advection for explicit centered comparison");
+  expect_float_variable_match(
+      explicit_centered_file_id, default_same_file_id, "U", "explicit centered default U");
+  expect_float_variable_match(
+      explicit_centered_file_id, default_same_file_id, "V", "explicit centered default V");
+  assert_nonwind_fields_match(
+      default_same_file_id, explicit_centered_file_id, "explicit centered default");
+  check_nc(nc_close(default_same_file_id), "close default self advection comparison");
+  check_nc(nc_close(explicit_centered_file_id), "close explicit centered self advection");
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, self_advection_upwind_output) +
+      " --wind-tendency-source self_advection"
+      " --wind-tendency-advection-form upwind >" +
+      shell_quote(self_advection_upwind_log) + " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output,
+      self_advection_upwind_output,
+      self_advection_upwind_log,
+      "self_advection",
+      true,
+      true,
+      false,
+      1,
+      "refreshed",
+      "same_component",
+      "same_grid",
+      "upwind");
+  int upwind_file_id = -1;
+  check_nc(
+      nc_open(self_advection_output.string().c_str(), NC_NOWRITE, &default_same_file_id),
+      "open default self advection for upwind comparison");
+  check_nc(
+      nc_open(self_advection_upwind_output.string().c_str(), NC_NOWRITE, &upwind_file_id),
+      "open upwind self advection");
+  assert(max_abs_float_variable_diff(upwind_file_id, default_same_file_id, "U") > kTolerance);
+  assert(max_abs_float_variable_diff(upwind_file_id, default_same_file_id, "V") > kTolerance);
+  assert_nonwind_fields_match(
+      default_same_file_id, upwind_file_id, "upwind versus centered self advection");
+  check_nc(nc_close(upwind_file_id), "close upwind self advection");
+  check_nc(nc_close(default_same_file_id), "close default self advection after upwind");
 
   run_command(
       base_command(executable, d01_start, d02_start, template_path, self_advection_alias_output) +
@@ -2725,11 +2825,37 @@ void assert_wind_tendency_paths(
       "frozen",
       "cross_component",
       "average");
+  run_command(
+      base_command(
+          executable,
+          d01_start,
+          d02_start,
+          template_path,
+          self_advection_cross_upwind_frozen_substeps_output) +
+      " --wind-tendency-source self_advection --wind-tendency-substeps 3"
+      " --wind-tendency-advecting-velocity frozen"
+      " --wind-tendency-advecting-components cross_component"
+      " --wind-tendency-advection-form upwind >" +
+      shell_quote(self_advection_cross_upwind_frozen_substeps_log) + " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output,
+      self_advection_cross_upwind_frozen_substeps_output,
+      self_advection_cross_upwind_frozen_substeps_log,
+      "self_advection",
+      true,
+      true,
+      false,
+      3,
+      "frozen",
+      "cross_component",
+      "average",
+      "upwind");
   int one_step_file_id = -1;
   int substeps_file_id = -1;
   int refreshed_substeps_file_id = -1;
   int cross_refreshed_substeps_file_id = -1;
   int cross_frozen_substeps_file_id = -1;
+  int cross_upwind_frozen_substeps_file_id = -1;
   int frozen_substeps_file_id = -1;
   check_nc(nc_open(self_advection_output.string().c_str(), NC_NOWRITE, &one_step_file_id), "open one-step self advection");
   check_nc(nc_open(self_advection_substeps_output.string().c_str(), NC_NOWRITE, &substeps_file_id), "open substep self advection");
@@ -2757,6 +2883,12 @@ void assert_wind_tendency_paths(
           NC_NOWRITE,
           &cross_frozen_substeps_file_id),
       "open cross-component frozen substep self advection");
+  check_nc(
+      nc_open(
+          self_advection_cross_upwind_frozen_substeps_output.string().c_str(),
+          NC_NOWRITE,
+          &cross_upwind_frozen_substeps_file_id),
+      "open cross-component upwind frozen substep self advection");
   assert(
       std::fabs(
           read_3d_value(substeps_file_id, "U", 1, 2, 0) -
@@ -2790,6 +2922,23 @@ void assert_wind_tendency_paths(
       frozen_substeps_file_id,
       cross_frozen_substeps_file_id,
       "cross-component frozen versus same-component frozen");
+  assert(
+      max_abs_float_variable_diff(
+          cross_upwind_frozen_substeps_file_id,
+          cross_frozen_substeps_file_id,
+          "U") > kTolerance);
+  assert(
+      max_abs_float_variable_diff(
+          cross_upwind_frozen_substeps_file_id,
+          cross_frozen_substeps_file_id,
+          "V") > kTolerance);
+  assert_nonwind_fields_match(
+      cross_frozen_substeps_file_id,
+      cross_upwind_frozen_substeps_file_id,
+      "cross-component upwind frozen versus centered frozen");
+  check_nc(
+      nc_close(cross_upwind_frozen_substeps_file_id),
+      "close cross-component upwind frozen substep self advection");
   check_nc(
       nc_close(cross_frozen_substeps_file_id),
       "close cross-component frozen substep self advection");
@@ -2935,6 +3084,23 @@ void run_rejection_tests(
     const auto status = run_command_status(
         base_command(executable, d01_start, d02_start, template_path, output) + " " +
         bad_wind_advecting_components_options[index] + " >/dev/null 2>&1");
+    assert(status != 0);
+    assert(!std::filesystem::exists(output));
+  }
+
+  const std::vector<std::string> bad_wind_advection_form_options = {
+      "--wind-tendency-advection-form centered",
+      "--wind-tendency-source none --wind-tendency-advection-form centered",
+      "--wind-tendency-source zero --wind-tendency-advection-form centered",
+      "--wind-tendency-source identity --wind-tendency-advection-form upwind",
+      "--wind-tendency-source self_advection --wind-tendency-advection-form stale",
+      "--wind-tendency-source self_advection --wind-tendency-advection-form=",
+  };
+  for (std::size_t index = 0; index < bad_wind_advection_form_options.size(); ++index) {
+    const auto output = root / ("bad_wind_advection_form_" + std::to_string(index));
+    const auto status = run_command_status(
+        base_command(executable, d01_start, d02_start, template_path, output) + " " +
+        bad_wind_advection_form_options[index] + " >/dev/null 2>&1");
     assert(status != 0);
     assert(!std::filesystem::exists(output));
   }

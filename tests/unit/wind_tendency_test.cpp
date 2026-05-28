@@ -73,6 +73,20 @@ void fill_y_gradient(Storage& storage, const double intercept, const double slop
   }
 }
 
+template <typename Storage>
+void fill_quadratic_xy(Storage& storage) {
+  const auto view = storage.view();
+  for (std::int32_t j = 0; j < view.ny; ++j) {
+    for (std::int32_t k = 0; k < view.nz; ++k) {
+      for (std::int32_t i = 0; i < view.nx; ++i) {
+        view(i, j, k) =
+            static_cast<double>(i * i) + 10.0 * static_cast<double>(j) +
+            0.5 * static_cast<double>(k);
+      }
+    }
+  }
+}
+
 [[nodiscard]] bool active(
     const tywrf::FieldLayout3D layout,
     const std::int32_t i,
@@ -108,6 +122,10 @@ void test_reports_pod_flags_and_active_counts() {
       std::is_standard_layout_v<tywrf::dynamics::WindTendencyConfig<double>>);
   static_assert(
       std::is_trivially_copyable_v<tywrf::dynamics::WindTendencyConfig<double>>);
+  static_assert(
+      std::is_standard_layout_v<tywrf::dynamics::WindTendencyAdvectionForm>);
+  static_assert(
+      std::is_trivially_copyable_v<tywrf::dynamics::WindTendencyAdvectionForm>);
   static_assert(
       std::is_standard_layout_v<tywrf::dynamics::WindTendencyFieldViews<double>>);
   static_assert(
@@ -347,6 +365,129 @@ void test_simple_gradient_sign_and_magnitude() {
          "negative y wind with negative V gradient has negative tendency");
 }
 
+void test_centered_default_equivalence() {
+  const auto grid = make_grid();
+  tywrf::FieldStorage3D<double> default_u_target(grid.u_layout());
+  tywrf::FieldStorage3D<double> default_v_target(grid.v_layout());
+  tywrf::FieldStorage3D<double> u_source(grid.u_layout());
+  tywrf::FieldStorage3D<double> v_source(grid.v_layout());
+  tywrf::FieldStorage3D<double> u_wind_x(grid.u_layout());
+  tywrf::FieldStorage3D<double> u_wind_y(grid.u_layout());
+  tywrf::FieldStorage3D<double> v_wind_x(grid.v_layout());
+  tywrf::FieldStorage3D<double> v_wind_y(grid.v_layout());
+  fill_storage(default_u_target, 50.0);
+  fill_storage(default_v_target, 70.0);
+  fill_quadratic_xy(u_source);
+  fill_quadratic_xy(v_source);
+  fill_storage(u_wind_x, -1.25);
+  fill_storage(u_wind_y, 0.75);
+  fill_storage(v_wind_x, 1.5);
+  fill_storage(v_wind_y, -0.5);
+
+  auto centered_u_target = default_u_target;
+  auto centered_v_target = default_v_target;
+
+  const auto default_report = tywrf::dynamics::apply_horizontal_wind_tendency(
+      views(default_u_target, default_v_target, u_source, v_source, u_wind_x,
+            u_wind_y, v_wind_x, v_wind_y),
+      {.dt_seconds = 2.0, .dx_m = 2.0, .dy_m = 4.0});
+  const auto centered_report = tywrf::dynamics::apply_horizontal_wind_tendency(
+      views(centered_u_target, centered_v_target, u_source, v_source, u_wind_x,
+            u_wind_y, v_wind_x, v_wind_y),
+      {.dt_seconds = 2.0,
+       .dx_m = 2.0,
+       .dy_m = 4.0,
+       .advection_form = tywrf::dynamics::WindTendencyAdvectionForm::centered});
+
+  expect(default_report.status == tywrf::dynamics::WindTendencyStatus::ok,
+         "default centered status");
+  expect(centered_report.status == tywrf::dynamics::WindTendencyStatus::ok,
+         "explicit centered status");
+  for (std::size_t idx = 0; idx < default_u_target.size(); ++idx) {
+    expect(nearly_equal(default_u_target.data()[idx], centered_u_target.data()[idx]),
+           "default matches explicit centered U");
+  }
+  for (std::size_t idx = 0; idx < default_v_target.size(); ++idx) {
+    expect(nearly_equal(default_v_target.data()[idx], centered_v_target.data()[idx]),
+           "default matches explicit centered V");
+  }
+}
+
+void test_upwind_sign_dependent_behavior() {
+  const auto grid = make_grid();
+  tywrf::FieldStorage3D<double> upwind_u_target(grid.u_layout());
+  tywrf::FieldStorage3D<double> upwind_v_target(grid.v_layout());
+  tywrf::FieldStorage3D<double> centered_u_target(grid.u_layout());
+  tywrf::FieldStorage3D<double> centered_v_target(grid.v_layout());
+  tywrf::FieldStorage3D<double> u_source(grid.u_layout());
+  tywrf::FieldStorage3D<double> v_source(grid.v_layout());
+  tywrf::FieldStorage3D<double> u_wind_x(grid.u_layout());
+  tywrf::FieldStorage3D<double> u_wind_y(grid.u_layout());
+  tywrf::FieldStorage3D<double> v_wind_x(grid.v_layout());
+  tywrf::FieldStorage3D<double> v_wind_y(grid.v_layout());
+  fill_storage(upwind_u_target, 100.0);
+  fill_storage(upwind_v_target, 200.0);
+  fill_storage(centered_u_target, 100.0);
+  fill_storage(centered_v_target, 200.0);
+  fill_quadratic_xy(u_source);
+  fill_quadratic_xy(v_source);
+  fill_storage(u_wind_x, 0.0);
+  fill_storage(u_wind_y, 0.0);
+  fill_storage(v_wind_x, 0.0);
+  fill_storage(v_wind_y, 0.0);
+
+  const auto ui = grid.u_layout().i_begin() + 2;
+  const auto uj = grid.u_layout().j_begin() + 1;
+  const auto uk = grid.u_layout().k_begin();
+  u_wind_x.view()(ui, uj, uk) = 2.0;
+  u_wind_x.view()(ui - 1, uj, uk) = -3.0;
+
+  const auto vi = grid.v_layout().i_begin() + 1;
+  const auto vj = grid.v_layout().j_begin() + 2;
+  const auto vk = grid.v_layout().k_begin();
+  v_wind_y.view()(vi, vj, vk) = -4.0;
+  v_wind_y.view()(vi, vj - 1, vk) = 1.5;
+
+  const auto centered_report = tywrf::dynamics::apply_horizontal_wind_tendency(
+      views(centered_u_target, centered_v_target, u_source, v_source, u_wind_x,
+            u_wind_y, v_wind_x, v_wind_y),
+      {.dt_seconds = 1.0,
+       .dx_m = 1.0,
+       .dy_m = 1.0,
+       .advection_form = tywrf::dynamics::WindTendencyAdvectionForm::centered});
+  const auto upwind_report = tywrf::dynamics::apply_horizontal_wind_tendency(
+      views(upwind_u_target, upwind_v_target, u_source, v_source, u_wind_x,
+            u_wind_y, v_wind_x, v_wind_y),
+      {.dt_seconds = 1.0,
+       .dx_m = 1.0,
+       .dy_m = 1.0,
+       .advection_form = tywrf::dynamics::WindTendencyAdvectionForm::upwind});
+
+  expect(centered_report.status == tywrf::dynamics::WindTendencyStatus::ok,
+         "centered comparison status");
+  expect(upwind_report.status == tywrf::dynamics::WindTendencyStatus::ok,
+         "upwind status");
+  const auto u_q = u_source.view()(ui, uj, uk);
+  const auto expected_u = 100.0 - (2.0 * u_q - (-3.0 * u_q));
+  expect(nearly_equal(upwind_u_target.view()(ui, uj, uk), expected_u),
+         "upwind U uses positive right and negative left donors");
+  const auto v_q_up = v_source.view()(vi, vj + 1, vk);
+  const auto v_q_down = v_source.view()(vi, vj - 1, vk);
+  const auto expected_v = 200.0 - ((-4.0 * v_q_up) - (1.5 * v_q_down));
+  expect(nearly_equal(upwind_v_target.view()(vi, vj, vk), expected_v),
+         "upwind V uses negative up and positive down donors");
+  expect(
+      !nearly_equal(
+          upwind_u_target.view()(ui, uj, uk),
+          centered_u_target.view()(ui, uj, uk)),
+      "upwind U sensitivity differs from centered");
+  expect(
+      !nearly_equal(
+          upwind_v_target.view()(vi, vj, vk),
+          centered_v_target.view()(vi, vj, vk)),
+      "upwind V sensitivity differs from centered");
+}
+
 void test_invalid_contracts_fail_closed() {
   const auto grid = make_grid();
   tywrf::FieldStorage3D<double> u_target(grid.u_layout());
@@ -415,6 +556,25 @@ void test_invalid_contracts_fail_closed() {
     expect(nearly_equal(v_target.data()[idx], 12.0),
            "invalid config leaves V unchanged");
   }
+
+  report = tywrf::dynamics::apply_horizontal_wind_tendency(
+      views(u_target, v_target, u_source, v_source, u_wind_x, u_wind_y, v_wind_x,
+            v_wind_y),
+      {.dt_seconds = 4.0,
+       .dx_m = 2.0,
+       .dy_m = 3.0,
+       .advection_form =
+           static_cast<tywrf::dynamics::WindTendencyAdvectionForm>(99)});
+  expect(report.status == tywrf::dynamics::WindTendencyStatus::invalid_config,
+         "invalid advection form status");
+  for (std::size_t idx = 0; idx < u_target.size(); ++idx) {
+    expect(nearly_equal(u_target.data()[idx], 11.0),
+           "invalid advection form leaves U unchanged");
+  }
+  for (std::size_t idx = 0; idx < v_target.size(); ++idx) {
+    expect(nearly_equal(v_target.data()[idx], 12.0),
+           "invalid advection form leaves V unchanged");
+  }
 }
 
 }  // namespace
@@ -425,6 +585,8 @@ int main() {
   test_i_contiguous_expectation();
   test_zero_gradient_and_zero_wind_noop();
   test_simple_gradient_sign_and_magnitude();
+  test_centered_default_equivalence();
+  test_upwind_sign_dependent_behavior();
   test_invalid_contracts_fail_closed();
 
   if (failures != 0) {

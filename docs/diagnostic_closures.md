@@ -1427,13 +1427,47 @@ error `0.7686817572680305 m s-1` passed. A closure must not treat frozen
 advecting velocity as a fix, relabel metadata as a pass, or patch the remaining
 wind/center failures.
 
-D90 remains outside diagnostic closures as well. It may only document or stage
-default-off/default-preserving selected-field `U`/`V` `self_advection` A/B for
-`same_component|cross_component`, with default `same_component` preserving D89.
-`cross_component` must not borrow closure metadata, reference-end truth, oracle
-sources, or reference-copy data. It must not touch `P`, `MU`, `PB`, or `PHB`,
-invoke pressure refresh, physics, or best-track nudging, lower d02 below
-`2 km`, or justify any `00:20` validation progress.
+D90 remains outside diagnostic closures as well. It is complete, verified, and
+pushed at commit `34e2213` (`Add cross-component wind advecting mode`). The new
+`--wind-tendency-advecting-components same_component|cross_component` option is
+selected-field wind-tendency plumbing, not a diagnostic closure. The default
+`same_component` mode preserves D89 exactly. Its metadata records
+`TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS=same_component|cross_component`,
+with `TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION=same_grid` for
+`same_component` and `TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION=average` for
+`cross_component`.
+
+The D90 real KROSA `00:10` results remain failed-gate evidence.
+Same-component/refreshed reported `U` normalized RMSE `0.13578703428452885` and
+`V` normalized RMSE `0.15517830284022266`; same-component/frozen reported `U`
+normalized RMSE `0.13553969712614714` and `V` normalized RMSE
+`0.15933552812814994`; cross-component/refreshed reported `U` normalized RMSE
+`0.1271909426315702` and `V` normalized RMSE `0.13542621105084265`; and
+cross-component/frozen reported `U` normalized RMSE `0.1262784410537921` and
+`V` normalized RMSE `0.1343751747688221`. The derived SLP diagnostic still
+failed storm-center distance at `43.4827156063485 km`; minimum SLP error and
+Vmax10m error passed. A closure must not treat these A/B improvements as a
+validation pass, patch the remaining wind/center failures, or justify any
+`00:20` validation progress.
+
+D91 remains outside diagnostic closures. Its scope is residual localization,
+audit metadata/delta improvements, and default-off advection-form or upwind
+sensitivity if implemented. D91 must not borrow closure metadata, use
+reference-end truth, oracle sources, or reference-copy data. It must not touch
+`P`, `MU`, `PB`, or `PHB`, invoke pressure refresh, physics, or best-track
+nudging, lower d02 below `2 km`, or justify any `00:20` validation progress.
+
+D91 implemented the default-off `--wind-tendency-advection-form
+centered|upwind` sensitivity and the wind-audit metadata/delta extension. The
+default `centered` path is value-identical to D90 `cross_component/frozen` for
+all compared fields while adding `TYWRF_WIND_TENDENCY_ADVECTION_FORM=centered`.
+The real KROSA `00:10` gate remains failed: centered control reports `U`
+normalized RMSE `0.1262784410537921` and `V` normalized RMSE
+`0.1343751747688221`; cross/frozen/upwind reports `U` normalized RMSE
+`0.16812017042527477` and `V` normalized RMSE `0.17567799996961442`;
+cross/refreshed/upwind reports `U` normalized RMSE `0.16408002949211245` and
+`V` normalized RMSE `0.17946073108932759`. Upwind is therefore a negative
+sensitivity result, not a closure or fix.
 
 ## Hard Prohibitions
 

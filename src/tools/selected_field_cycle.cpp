@@ -121,6 +121,11 @@ enum class WindTendencyAdvectingComponents {
   cross_component,
 };
 
+enum class WindTendencyAdvectionForm {
+  centered,
+  upwind,
+};
+
 struct Options {
   std::filesystem::path d01_start_state_path;
   std::filesystem::path d02_start_state_path;
@@ -145,9 +150,12 @@ struct Options {
       WindTendencyAdvectingVelocityMode::refreshed;
   WindTendencyAdvectingComponents wind_tendency_advecting_components =
       WindTendencyAdvectingComponents::same_component;
+  WindTendencyAdvectionForm wind_tendency_advection_form =
+      WindTendencyAdvectionForm::centered;
   std::size_t wind_tendency_substeps = kDefaultWindTendencySubsteps;
   bool has_wind_tendency_advecting_velocity_mode = false;
   bool has_wind_tendency_advecting_components = false;
+  bool has_wind_tendency_advection_form = false;
   bool has_wind_tendency_substeps = false;
   bool pretty = false;
   std::vector<std::string> variables;
@@ -215,6 +223,7 @@ struct WindTendencyOptInReport {
       WindTendencyAdvectingVelocityMode::refreshed;
   WindTendencyAdvectingComponents advecting_components =
       WindTendencyAdvectingComponents::same_component;
+  WindTendencyAdvectionForm advection_form = WindTendencyAdvectionForm::centered;
   tywrf::dynamics::WindTendencyReport kernel;
   std::size_t substep_count = kDefaultWindTendencySubsteps;
   double dt_seconds = kWindTendencySubstepSeconds;
@@ -372,6 +381,28 @@ struct DiagnosticAdapterProviderSource {
   return "same_grid";
 }
 
+[[nodiscard]] std::string_view wind_tendency_advection_form_name(
+    const WindTendencyAdvectionForm form) noexcept {
+  switch (form) {
+    case WindTendencyAdvectionForm::centered:
+      return "centered";
+    case WindTendencyAdvectionForm::upwind:
+      return "upwind";
+  }
+  return "centered";
+}
+
+[[nodiscard]] tywrf::dynamics::WindTendencyAdvectionForm
+kernel_wind_tendency_advection_form(const WindTendencyAdvectionForm form) noexcept {
+  switch (form) {
+    case WindTendencyAdvectionForm::centered:
+      return tywrf::dynamics::WindTendencyAdvectionForm::centered;
+    case WindTendencyAdvectionForm::upwind:
+      return tywrf::dynamics::WindTendencyAdvectionForm::upwind;
+  }
+  return tywrf::dynamics::WindTendencyAdvectionForm::centered;
+}
+
 [[nodiscard]] constexpr bool wind_tendency_zero_or_identity_only(
     const WindTendencySourceKind kind) noexcept {
   return kind == WindTendencySourceKind::zero || kind == WindTendencySourceKind::identity;
@@ -452,6 +483,30 @@ struct DiagnosticAdapterProviderSource {
   }
   throw std::invalid_argument(
       std::string(option) + " expects one of: same_component, cross_component");
+}
+
+[[nodiscard]] WindTendencyAdvectionForm parse_wind_tendency_advection_form(
+    const std::string& value,
+    const std::string_view option) {
+  auto trimmed = value;
+  trimmed.erase(
+      trimmed.begin(),
+      std::find_if(trimmed.begin(), trimmed.end(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }));
+  trimmed.erase(
+      std::find_if(trimmed.rbegin(), trimmed.rend(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }).base(),
+      trimmed.end());
+  if (trimmed == "centered") {
+    return WindTendencyAdvectionForm::centered;
+  }
+  if (trimmed == "upwind") {
+    return WindTendencyAdvectionForm::upwind;
+  }
+  throw std::invalid_argument(
+      std::string(option) + " expects one of: centered, upwind");
 }
 
 [[nodiscard]] std::string_view wind_tendency_status_name(
@@ -694,6 +749,9 @@ Options:
                                   self_advection-only advecting component collocation policy.
                                   MODE is same_component or cross_component; default
                                   same_component.
+  --wind-tendency-advection-form FORM
+                                  self_advection-only horizontal advection form.
+                                  FORM is centered or upwind; default centered.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
@@ -967,6 +1025,16 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
               arg.substr(std::string("--wind-tendency-advecting-components=").size()),
               "--wind-tendency-advecting-components");
       options.has_wind_tendency_advecting_components = true;
+    } else if (arg == "--wind-tendency-advection-form") {
+      options.wind_tendency_advection_form =
+          parse_wind_tendency_advection_form(require_value(arg), arg);
+      options.has_wind_tendency_advection_form = true;
+    } else if (arg.rfind("--wind-tendency-advection-form=", 0) == 0) {
+      options.wind_tendency_advection_form =
+          parse_wind_tendency_advection_form(
+              arg.substr(std::string("--wind-tendency-advection-form=").size()),
+              "--wind-tendency-advection-form");
+      options.has_wind_tendency_advection_form = true;
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
     } else if (arg == "--diagnostic-base-state-adapter-report") {
@@ -1029,6 +1097,12 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       options.wind_tendency_source != WindTendencySourceKind::self_advection) {
     throw std::invalid_argument(
         "--wind-tendency-advecting-components is only valid with "
+        "--wind-tendency-source self_advection");
+  }
+  if (options.has_wind_tendency_advection_form &&
+      options.wind_tendency_source != WindTendencySourceKind::self_advection) {
+    throw std::invalid_argument(
+        "--wind-tendency-advection-form is only valid with "
         "--wind-tendency-source self_advection");
   }
   if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
@@ -1601,6 +1675,7 @@ void apply_selected_field_wind_tendency(
       WindTendencyAdvectingVelocityMode::refreshed;
   wind_report.advecting_velocity_mode = options.wind_tendency_advecting_velocity_mode;
   wind_report.advecting_components = options.wind_tendency_advecting_components;
+  wind_report.advection_form = options.wind_tendency_advection_form;
   for (std::size_t substep = 0; substep < wind_report.substep_count; ++substep) {
     const auto kernel_report = tywrf::dynamics::apply_horizontal_wind_tendency(
         tywrf::dynamics::WindTendencyViews<float>{
@@ -1616,6 +1691,8 @@ void apply_selected_field_wind_tendency(
             .dt_seconds = kWindTendencySubstepSeconds,
             .dx_m = static_cast<float>(kD02TargetDxMeters),
             .dy_m = static_cast<float>(kD02TargetDxMeters),
+            .advection_form =
+                kernel_wind_tendency_advection_form(options.wind_tendency_advection_form),
             .enable_horizontal_advection = true,
             .diagnostic_only = false,
             .gate_candidate = gate_evidence,
@@ -1682,6 +1759,9 @@ void apply_selected_field_wind_tendency(
         "advecting_collocation",
         std::string(wind_tendency_advecting_collocation_name(
             wind_report.advecting_components))));
+    timeline_fields.push_back(timeline_field(
+        "advection_form",
+        std::string(wind_tendency_advection_form_name(wind_report.advection_form))));
     timeline_fields.push_back(
         timeline_field("substep_count", static_cast<std::uint64_t>(wind_report.substep_count)));
     timeline_fields.push_back(timeline_field(
@@ -4701,6 +4781,10 @@ void write_wind_tendency_attrs(
         file,
         "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION",
         wind_tendency_advecting_collocation_name(wind.advecting_components));
+    write_text_attr(
+        file,
+        "TYWRF_WIND_TENDENCY_ADVECTION_FORM",
+        wind_tendency_advection_form_name(wind.advection_form));
     write_int_attr(
         file,
         "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT",
@@ -5574,6 +5658,12 @@ void write_wind_tendency_json(
         stream,
         "wind_tendency_advecting_collocation",
         wind_tendency_advecting_collocation_name(wind.advecting_components),
+        true,
+        pretty);
+    write_json_string(
+        stream,
+        "wind_tendency_advection_form",
+        wind_tendency_advection_form_name(wind.advection_form),
         true,
         pretty);
     write_json_number(
