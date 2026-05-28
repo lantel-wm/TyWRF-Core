@@ -1437,11 +1437,12 @@ open the selected-field numerical path yet, generate reference-end or oracle
 candidates, treat audit/probe/hidden-seam output as gate evidence, reduce d02
 below `2 km`, or introduce best-track nudging.
 
-At D67 start, D66 was locally committed as `09d6ba2`
-(`Add moving-nest base-state exchange contract`) but not yet pushed. Local
-`main` was ahead of `origin/main` by one commit; `origin/main` remained
-`07908b1` because SSH push on port `22` timed out and SSH-over-443 failed with
-`Permission denied (publickey)`.
+At D68 start, D66 commit `09d6ba2`
+(`Add moving-nest base-state exchange contract`) and D67 commit `5a78fbb`
+(`Add base-state exchange action diagnostics`) have both been pushed.
+`main` and `origin/main` are synchronized at `5a78fbb`. The strict d02
+`2025-07-26_00:10:00` gate still fails; no D66 or D67 diagnostic report is a
+compatibility gate pass.
 
 The D66 contract is diagnostic-only. It reports active selected fields
 `U`, `V`, `MU`, `QVAPOR`, `T`, and `PH`, while the WRF broad base-state
@@ -1467,19 +1468,27 @@ overlap remap, exposed-mask parent/base interpolation, static/provider
 generation, and `start_domain` recompute provenance instead of treating these
 fields as ordinary selected-field numerical outputs.
 
-D67 compatibility direction is an opt-in diagnostic base-field
-provenance/action report plus exposed-mask regression design. The report should
-make base-field action and source state explicit for exposed d02 cells, and
-the regression design should pin WRF-style unstaggered exposed-mask geometry.
-The intended action vocabulary is diagnostic-only:
+D67 completed an opt-in diagnostic moving-nest base-field provenance/action
+report and prepared exposed-mask regression coverage. The report makes
+base-field action and source state explicit for exposed d02 cells, and D68 is
+the first helper/regression slice to pin WRF-style unstaggered exposed-mask
+geometry. The action vocabulary is diagnostic-only:
 `interpolate_exposed_cells` for `MUB`,
 `recompute_from_mub_after_interpolation` for `PB`, `ALB`, and `T_INIT`,
 `preserve_interpolated_when_rebalance_zero` for `PHB`, and
 `static_height_input` for `HT`/`HGT`.
-D67 still must not open the selected-field numerical path, generate
-reference-end or oracle candidates, treat audit/probe/hidden-seam output as
-gate evidence, advance validation to `00:20`, reduce d02 below `2 km`, or
-introduce best-track nudging.
+
+D68 compatibility direction is a diagnostic-only exposed base-state exchange
+helper and regression slice. The helper/test may expose WRF-style
+`PHB`/`MUB`/`HT` exposed interpolation semantics and mark
+`PB`/`T_INIT`/`ALB` for recompute, but these are diagnostic/helper semantics,
+not selected-field numerical production and not gate evidence. D68 must not
+wire the helper into the production selected-field numerical path, generate
+reference-end or oracle candidates, treat diagnostic/probe/helper output as a
+gate pass, advance validation to `00:20`, reduce d02 below `2 km`, or
+introduce best-track nudging. D69 or later may consider migrating
+`state_remap`/parent-fill semantics into a WRF-style exposed base-state policy
+after this diagnostic boundary is reviewed.
 
 ## Physics Bridge Compatibility Notes
 

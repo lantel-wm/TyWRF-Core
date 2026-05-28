@@ -1207,12 +1207,12 @@ advance to `00:20`, must not generate reference-end/oracle candidates, must not
 promote audit/probe/hidden-seam output to gate evidence, must not reduce d02
 below `2 km`, and must not add best-track nudging.
 
-At D67 start, D66 was locally committed as `09d6ba2`
-(`Add moving-nest base-state exchange contract`) but not yet pushed. Local
-`main` was ahead of `origin/main` by one commit; `origin/main` remained
-`07908b1` because SSH push on port `22` timed out and SSH-over-443 failed with
-`Permission denied (publickey)`. D66 validation before the local commit passed
-CTest `29/29` and pytest `197/197`.
+At D68 start, D66 commit `09d6ba2`
+(`Add moving-nest base-state exchange contract`) and D67 commit `5a78fbb`
+(`Add base-state exchange action diagnostics`) have both been pushed.
+`main` and `origin/main` are synchronized at `5a78fbb`. D66 validation before
+the local commit passed CTest `29/29` and pytest `197/197`; D67 does not
+change the strict gate result.
 
 The D66 artifact is a diagnostic contract, not gate evidence. It records the
 current selected-field exchange set as `U`, `V`, `MU`, `QVAPOR`, `T`, and
@@ -1231,17 +1231,26 @@ must be represented separately from selected-field interpolation. Validation
 reports must therefore separate exposed-mask provenance/action facts from
 validated numerical production.
 
-D67 validation direction is to design an opt-in diagnostic base-field
-provenance/action report and exposed-mask regressions. These diagnostics may
+D67 completed an opt-in diagnostic moving-nest base-field provenance/action
+report and prepared the exposed-mask regression direction. These diagnostics
 describe whether exposed d02 base fields came from overlap remap, parent/base
 interpolation, static/provider generation, recompute staging, or remained
-missing. The diagnostic action vocabulary should include
+missing. The diagnostic action vocabulary includes
 `interpolate_exposed_cells`, `recompute_from_mub_after_interpolation`,
 `preserve_interpolated_when_rebalance_zero`, and `static_height_input`, but
-these labels are report facts only. They still must not open the selected-field
-numerical path, generate reference-end/oracle candidates, promote
-audit/probe/hidden-seam output to gate evidence, advance validation to
-`00:20`, reduce d02 below `2 km`, or add best-track nudging.
+these labels are report facts only.
+
+D68 validation direction is a diagnostic-only exposed base-state exchange
+helper and regression. The helper/test may expose `PHB`/`MUB`/`HT` exposed
+interpolation semantics and `PB`/`T_INIT`/`ALB` recompute marks for newly
+exposed d02 cells, but those facts are helper/report semantics only. They must
+not be connected to the production selected-field numerical path, must not be
+treated as evidence for a gate pass, and must not produce reference-end truth
+or oracle candidates. The strict d02 `2025-07-26_00:10:00` gate remains failed;
+validation must not advance to `00:20`, must not reduce d02 below `2 km`, and
+must not add best-track nudging. D69 or later may consider migrating
+`state_remap`/parent-fill semantics into a WRF-style exposed base-state policy;
+D68 should keep the migration as documented future work only.
 
 Example:
 

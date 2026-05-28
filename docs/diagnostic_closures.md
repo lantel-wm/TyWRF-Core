@@ -980,12 +980,12 @@ but it must not generate reference-end or oracle candidates, convert
 audit/probe/hidden-seam output into gate evidence, reduce d02 below `2 km`, or
 introduce best-track nudging.
 
-At D67 start, D66 was locally committed as `09d6ba2`
-(`Add moving-nest base-state exchange contract`) but not yet pushed. Local
-`main` was ahead of `origin/main` by one commit; `origin/main` remained
-`07908b1` because SSH push on port `22` timed out and SSH-over-443 failed with
-`Permission denied (publickey)`. D66 validation before the local commit passed
-CTest `29/29` and pytest `197/197`.
+At D68 start, D66 commit `09d6ba2`
+(`Add moving-nest base-state exchange contract`) and D67 commit `5a78fbb`
+(`Add base-state exchange action diagnostics`) have both been pushed.
+`main` and `origin/main` are synchronized at `5a78fbb`. D66 validation before
+the local commit passed CTest `29/29` and pytest `197/197`; D67 did not make
+the strict d02 `00:10` gate pass.
 
 The D66 contract remains outside diagnostic-closure authority. It records
 selected fields `U`, `V`, `MU`, `QVAPOR`, `T`, and `PH`; base-state candidates
@@ -1005,16 +1005,25 @@ patches or selected-field numerical interpolation. A closure must not use those
 facts to overwrite base fields, hide missing exposed-mask actions, or repair a
 candidate with reference-end truth.
 
-D67 closure boundary: an opt-in diagnostic base-field provenance/action report
-and exposed-mask regression design are allowed, but only as audit artifacts.
-They may expose base-field source/action categories for newly exposed d02
-cells and test WRF-style mask geometry. Action labels such as
+D67 closure boundary: the opt-in diagnostic moving-nest base-field
+provenance/action report is an audit artifact only. It exposes base-field
+source/action categories for newly exposed d02 cells and prepares WRF-style
+mask geometry checks. Action labels such as
 `interpolate_exposed_cells`, `recompute_from_mub_after_interpolation`,
 `preserve_interpolated_when_rebalance_zero`, and `static_height_input` are
-diagnostic report labels, not closure permissions. They must not open the
-selected-field numerical path, generate reference-end or oracle candidates,
-convert audit/probe/hidden-seam output into gate evidence, advance validation
-to `00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
+diagnostic report labels, not closure permissions.
+
+D68 may add only a diagnostic exposed base-state exchange helper/regression.
+`PHB`/`MUB`/`HT` exposed interpolation and `PB`/`T_INIT`/`ALB` recompute marks
+are helper semantics, not closure authority, not production selected-field
+numerics, and not gate evidence. A closure must not use them to patch exposed
+base fields, hide missing parent-fill work, or convert a diagnostic artifact
+into a candidate. D68 must not use reference-end truth, generate oracle
+candidates, promote diagnostic/probe/helper output to gate evidence, advance
+validation to `00:20`, reduce d02 below `2 km`, or introduce best-track
+nudging. Only D69 or later should consider migrating `state_remap`/parent-fill
+semantics into a WRF-style exposed base-state policy, and that migration must
+remain outside diagnostic-closure shortcuts.
 
 ## Hard Prohibitions
 
