@@ -1165,22 +1165,34 @@ weaken strict gate rejection, or advance validation to `00:20`. The strict d02
 `00:10` gate remains failed, d02 must remain `2 km`, and best-track nudging
 remains forbidden.
 
-D77 remains inside the hidden diagnostic adapter source-staging boundary. It
-may use `KrosaBaseStateProvider` with `moved_candidate_HGT` only to derive a
-hidden source for adapter staging; it is not a closure permission, not a normal
+D77 is complete, verified, pushed, and synchronized at commit `c7e46a7`. It
+remains inside the hidden diagnostic adapter source-staging boundary. The hidden
+adapter source now uses provider-derived `PB`, `T_INIT`, `MUB`, `ALB`, and
+`PHB` plus `output_static` `HGT`/`HT`, with provider-source metadata and
+strict-gate regression coverage. It is not a closure permission, not a normal
 candidate writer, not a pressure-refresh producer, and not selected-field gate
-evidence. Provider-derived source metadata and source-child deltas remain
-disqualifying diagnostic context even when they explain or reduce source/child
-differences. A closure must not use that metadata to patch candidate fields,
-refresh candidate `P`, borrow positive selected-field metadata, or weaken strict
-gate rejection.
+evidence; normal selected-field candidate and strict-gate eligibility are
+unchanged.
+
+Provider-derived source metadata, source-staging metadata, and source-child
+delta summaries remain disqualifying diagnostic context even when they explain
+or reduce source/child differences. A closure must not use that metadata to
+patch candidate fields, refresh candidate `P`, borrow positive selected-field
+metadata, weaken strict gate rejection, or prove that the strict
+`2025-07-26_00:10:00` gate passed.
 
 Any D77 `PHB` reconstruction is diagnostic provider evidence only. It must not
 be described as WRF rebalance semantics, must not be treated as a candidate
 `PHB` producer, and must not be used to close pressure-refresh or base-state
-validation. D77 must not write normal candidates, change normal
-pressure-refresh behavior, advance validation to `00:20`, reduce d02 below
-`2 km`, or introduce best-track nudging.
+validation.
+
+D78 may add a diagnostic Python audit tool for provider/source-staging/
+source-child-delta attributes. The audit may summarize those attributes and
+identify the largest deltas for debugging, but it cannot write candidate
+fields, refresh candidate `P`, change pressure-refresh behavior, relax strict
+gate metadata, produce closure candidates, advance validation to `00:20`,
+reduce d02 below `2 km`, or introduce best-track nudging. A closure must not
+convert any D78 audit output into strict-gate evidence or `00:10` pass proof.
 
 ## Hard Prohibitions
 

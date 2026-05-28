@@ -1384,22 +1384,34 @@ relax strict metadata rejection, or proceed to `00:20`. The strict d02
 `2025-07-26_00:10:00` gate still fails; d02 stays `2 km`, and best-track
 nudging remains prohibited.
 
-D77 validation scope is hidden diagnostic provider-derived base-state source
-work. It may use `KrosaBaseStateProvider` plus `moved_candidate_HGT` only to
-populate or report hidden adapter source staging; this is not the normal
-pressure-refresh path and not selected-field candidate production. Default
-strict-gate tooling must keep provider-derived source metadata and source-child
-deltas as disqualifying diagnostic context before interpreting RMSE or TC
-diagnostics. A provider-derived hidden source report cannot prove integrator
-output, cannot satisfy the pressure-refresh contract, cannot refresh candidate
-`P`, and cannot permit validation to advance beyond the failed `00:10` gate.
+D77 is complete, verified, pushed, and synchronized at commit `c7e46a7`. Its
+validation scope remained hidden diagnostic provider-derived base-state source
+staging only. The hidden adapter source now uses provider-derived `PB`,
+`T_INIT`, `MUB`, `ALB`, and `PHB` plus `output_static` `HGT`/`HT`, with
+provider-source metadata and strict-gate regression coverage. This does not
+change normal selected-field candidate eligibility or strict-gate eligibility.
+
+Default strict-gate tooling must keep provider-derived source metadata,
+source-staging metadata, and source-child delta summaries as diagnostic-only
+disqualifying context before interpreting RMSE or TC diagnostics. These
+attributes cannot prove integrator output, cannot satisfy the pressure-refresh
+contract, cannot refresh candidate `P`, cannot prove that the strict
+`2025-07-26_00:10:00` gate passed, and cannot permit validation to advance to
+`00:20`.
 
 Any `PHB` reconstruction observed in D77 provider-derived source staging is
 diagnostic evidence only. It is not WRF rebalance semantics, not a validated
 candidate `PHB` producer, and not a substitute for a normal pressure-refresh or
-base-state producer. D77 must not write normal candidates, change normal
-pressure-refresh behavior, relax strict metadata rejection, proceed to `00:20`,
-reduce d02 below `2 km`, or introduce best-track nudging.
+base-state producer.
+
+D78 may add a diagnostic Python audit tool for provider/source-staging/
+source-child-delta attributes. The audit may summarize those attributes and
+identify the largest deltas for debugging only. It must not write candidate
+fields, refresh candidate `P`, change pressure-refresh behavior, relax strict
+metadata rejection, produce gate candidates, proceed to `00:20`, reduce d02
+below `2 km`, or introduce best-track nudging. D78 audit output must not be
+used as strict gate evidence or as proof that the failed `00:10` endpoint
+passed.
 
 Example:
 

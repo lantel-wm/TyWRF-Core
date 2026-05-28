@@ -1623,20 +1623,30 @@ candidate `P`, change the normal pressure-refresh path, relax strict gate
 metadata, advance validation to `00:20`, reduce d02 below `2 km`, or introduce
 best-track nudging. The strict d02 `2025-07-26_00:10:00` gate remains failed.
 
-D77 compatibility scope is hidden diagnostic provider-derived base-state source
-work only. It may use `KrosaBaseStateProvider` with `moved_candidate_HGT` as the
-source for hidden adapter source staging, but only inside that hidden diagnostic
-scratch/source boundary. Provider-derived source metadata and source-child
-deltas remain disqualifying diagnostic context; they cannot be used as strict
-gate evidence, cannot borrow positive selected-field metadata, and cannot make a
-normal candidate compatible by report wording. Any `PHB` reconstruction in this
-provider-derived hidden source path is diagnostic evidence about provider
+D77 is complete, verified, pushed, and synchronized at commit `c7e46a7`. It
+kept compatibility scope inside the hidden diagnostic provider-derived
+base-state source path. The hidden adapter source now uses provider-derived
+`PB`, `T_INIT`, `MUB`, `ALB`, and `PHB` plus `output_static` `HGT`/`HT`, with
+provider-source metadata and strict-gate regression coverage. This does not
+change normal selected-field candidate eligibility or strict-gate eligibility.
+
+Provider-derived source metadata, source-staging metadata, and source-child
+delta summaries remain diagnostic-only and disqualifying context. They cannot
+be used as strict gate evidence, cannot prove a `2025-07-26_00:10:00` pass,
+cannot borrow positive selected-field metadata, and cannot make a normal
+candidate compatible by report wording. Any `PHB` reconstruction in this
+provider-derived hidden source path remains diagnostic evidence about provider
 staging only, not WRF rebalance semantics and not proof that candidate `PHB`,
 `P`, or pressure refresh is physically produced.
 
-D77 must not write normal candidates, refresh candidate `P`, change the normal
-pressure-refresh path, relax strict gate metadata, advance validation to
-`00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
+D78 may add a Python audit tool for these hidden diagnostic attributes. That
+tool may summarize provider-source, source-staging, and source-child-delta
+attributes, and may identify the largest deltas for debugging. It must not write
+candidate fields, refresh candidate `P`, change pressure-refresh behavior,
+relax strict gate metadata, generate oracle candidates, advance validation to
+`00:20`, reduce d02 below `2 km`, or introduce best-track nudging. Any D78
+audit output is diagnostic-only and cannot be used as strict-gate evidence or
+as proof that the failed `00:10` endpoint passed.
 
 ## Physics Bridge Compatibility Notes
 
