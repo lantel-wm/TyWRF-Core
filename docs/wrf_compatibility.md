@@ -1060,6 +1060,50 @@ diagnostic/probe/hidden-seam artifacts into gate evidence. The validation
 sequence remains stopped at `2025-07-26_00:10:00`; no `00:20` progression is
 compatible until the strict `00:10` gate passes.
 
+## Round D57 Diagnostic Continuation
+
+D56 commit `985a38f` (`Audit pressure vertical and state evolution`) preserves
+the same compatibility state after full validation: CMake build passed, CTest
+passed `29/29`, pytest passed `150/150`, and push to `origin/main` succeeded.
+This is codebase validation, not a WRF-compatible numerical pass. The strict
+d02 `2025-07-26_00:10:00` gate remains failed, and no `00:20` progression is
+compatible until that endpoint passes.
+
+The pressure source audit top-level status may remain failed because real
+start `wrfout` source entries still miss `ALB`. That status describes
+source-seed audit semantics for the pressure diagnostic inputs; it is not a
+model pass/fail override and must not be used to promote or demote a candidate
+outside the normal strict gate.
+
+The D56 pressure diagnostic subreport keeps the pressure-refresh failure
+localized to low-level target-region perturbation pressure. Target-region `P`
+RMSE is `1560.573 Pa`, normalized RMSE is `10.335362`, and mean bias is
+`-805.059 Pa`. The worst levels by RMSE and bias are low-level mass levels
+`0..4`; level `0` has RMSE `4170.444 Pa` and bias `-4167.791 Pa`. The
+source/start evolution fraction is `6.57739`, so the compatibility issue
+currently looks like a low-level target-region pressure formula/source problem,
+not a metadata eligibility problem.
+
+The selected-field evolution audit also remains diagnostic-only. Evolution
+normalized RMSE is `U = 0.156800`, `V = 0.160006`, and `MU = 0.197589`.
+Target-region fractions are `U = 0.414932`, `V = 0.362148`, and
+`MU = 0.329146`; amplitude ratios are close to `1`, and capture fractions are
+high but imperfect. This points to a spatial, phase, or timing mismatch in the
+selected-field evolution rather than an amplitude-only failure or an error
+confined only to the target region.
+
+D57 compatibility work should therefore add observation-only diagnostics:
+
+- a pressure vertical-bias companion-field attribution audit for the low-level
+  `P` error, keeping perturbation-pressure `P` as the strict gate field;
+- a selected-field spatial alignment/shift diagnostic audit for `U`, `V`, and
+  `MU` end/evolution errors.
+
+Both diagnostics may compare with WRF reference output for attribution, but
+they must not generate candidates, patch fields, tune formulas with
+reference-end truth, or describe diagnostic/audit/probe/hidden-seam artifacts
+as gate passes.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

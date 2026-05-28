@@ -683,6 +683,33 @@ Round D56 keeps the integrated D55 outcome outside closure scope:
   generate closure candidates, patch fields, tune formulas from reference-end
   truth, or convert diagnostic/probe/hidden-seam output into gate evidence.
 
+Round D57 keeps the D56 audit results outside closure scope:
+
+- D56 commit `985a38f` passed code validation (`cmake --build`, CTest `29/29`,
+  pytest `150/150`) and pushed to `origin/main`, but that is still not a
+  scientific validation pass. The strict d02 `2025-07-26_00:10:00` gate remains
+  failed and validation must not advance to `00:20`.
+- The pressure source audit can keep a failed top-level status because real
+  start `wrfout` source entries still miss `ALB`. A closure must not interpret
+  that source-seed audit status as a model pass/fail override or use it to
+  bypass the normal strict gate.
+- The pressure diagnostic subreport shows target-region `P` RMSE
+  `1560.573 Pa`, normalized RMSE `10.335362`, and mean bias `-805.059 Pa`.
+  The worst levels by RMSE and bias are low-level mass levels `0..4`, with
+  level `0` RMSE `4170.444 Pa` and bias `-4167.791 Pa`; the source/start
+  evolution fraction is `6.57739`. This points to a low-level target-region
+  pressure formula/source issue, not an invitation to patch `P` with a closure.
+- The selected-field evolution audit reports evolution normalized RMSE
+  `U = 0.156800`, `V = 0.160006`, and `MU = 0.197589`, with target-region
+  fractions `U = 0.414932`, `V = 0.362148`, and `MU = 0.329146`. Amplitude
+  ratios are close to `1` and capture fractions are high but imperfect, so a
+  closure must not treat the failure as amplitude-only or target-region-only.
+- D57 may add a pressure vertical-bias companion-field attribution audit and a
+  selected-field spatial alignment/shift diagnostic audit. Both are
+  observation-only; they cannot patch fields, generate candidates, tune
+  formulas from reference-end truth, or turn diagnostic/audit/probe/hidden-seam
+  artifacts into gate evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

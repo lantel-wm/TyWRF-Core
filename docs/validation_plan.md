@@ -860,6 +860,44 @@ regional attribution, and source-level summaries, but they must not generate or
 patch candidates, cannot count as gate passes, and cannot describe audit/probe/
 hidden-seam output as strict-gate evidence.
 
+D57 starts from D56 commit `985a38f`, where full code validation passed
+(`cmake --build`, CTest `29/29`, pytest `150/150`) and the branch was pushed to
+`origin/main`. This does not change scientific validation status: the strict
+d02 `2025-07-26_00:10:00` gate remains failed, and validation must not advance
+to `00:20`.
+
+The D56 pressure source audit may keep a failed top-level status because real
+start `wrfout` source entries still do not contain `ALB`. That is a
+source-seed audit result for diagnostic readiness, not a strict-gate override
+and not an integrator pass/fail substitute.
+
+The pressure vertical diagnostic subreport computed target-region `P` RMSE
+`1560.573 Pa`, normalized RMSE `10.335362`, and mean bias `-805.059 Pa`. The
+largest level errors are at low-level mass levels `0..4`; level `0` has RMSE
+`4170.444 Pa` and bias `-4167.791 Pa`. The source/start evolution fraction is
+`6.57739`. Validation should therefore treat current pressure-refresh failure
+as a low-level target-region perturbation-pressure formula/source issue until a
+non-oracle producer proves otherwise.
+
+The selected-field evolution audit computed evolution normalized RMSE
+`U = 0.156800`, `V = 0.160006`, and `MU = 0.197589`. Target-region fractions
+were `U = 0.414932`, `V = 0.362148`, and `MU = 0.329146`. Amplitude ratios are
+close to `1`, while capture fractions are high but imperfect. This points to a
+spatial/phase/timing mismatch in `U`, `V`, and `MU` evolution rather than an
+amplitude-only error or a target-region-only failure.
+
+D57 validation diagnostics should add two more observation-only audits:
+
+- a pressure vertical-bias companion-field attribution audit for the low-level
+  `P` error;
+- a selected-field spatial alignment/shift diagnostic audit for `U`, `V`, and
+  `MU` end/evolution error.
+
+Both audits may use WRF reference output for diagnostic comparison and error
+attribution only. They must not patch candidates, generate candidate fields,
+advance validation to `00:20`, or describe diagnostic/audit/probe/hidden-seam
+artifacts as gate passes.
+
 Example:
 
 ```bash
