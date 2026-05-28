@@ -1603,16 +1603,25 @@ gate_candidate = false
 integrator_output = false
 ```
 
-D75 may wire the D74 provider only into the hidden diagnostic adapter source
-staging side. That wiring boundary remains report/staging-only: it must not
-write or relabel normal candidates, refresh candidate `P`, change the normal
-pressure-refresh path, or relax strict gate metadata. D75 may add
-provider-backed source provenance and staged/count metadata so the hidden
-adapter report can explain which source populated its scratch buffers, but that
-metadata is itself disqualifying context and cannot be used as strict-gate
-evidence. The strict d02 `2025-07-26_00:10:00` gate remains failed, validation
-must not advance to `00:20`, d02 remains `2 km`, and best-track nudging remains
-out of scope.
+D75 is now complete, verified, pushed, and synchronized at commit `d5a1f99`
+(`Wire diagnostic adapter source staging provider`). It wired the D74 provider
+only into the hidden diagnostic adapter source-staging side. That path remains
+report/staging-only: it does not write or relabel normal candidates, refresh
+candidate `P`, change the normal pressure-refresh path, or relax strict gate
+metadata. Provider-backed source provenance and staged/count metadata explain
+which source populated hidden scratch buffers, but that metadata is itself
+disqualifying context and cannot be used as strict-gate evidence.
+
+D76 compatibility scope is source-vs-child delta/provenance planning for hidden
+base-state adapter source staging only. It may document diagnostic deltas,
+zero-difference cases, source/child provenance, and useful staged/exposed/masked
+counts for the hidden adapter scratch path. The presence of any source-child
+delta or provenance metadata remains a non-gate marker and is disqualifying for
+strict compatibility evidence, even when it shows zero difference or useful
+counts. D76 must not write normal candidates, refresh candidate `P`, change the
+normal pressure-refresh path, relax strict gate metadata, advance validation to
+`00:20`, reduce d02 below `2 km`, or introduce best-track nudging. The strict
+d02 `2025-07-26_00:10:00` gate remains failed.
 
 ## Physics Bridge Compatibility Notes
 

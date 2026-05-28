@@ -1459,6 +1459,107 @@ void assert_experimental_pressure_refresh_apply(
       {true, false, false, "selected_field_pressure_refresh_experimental_apply_v0"});
 }
 
+void assert_diagnostic_adapter_source_child_delta_json_field(
+    const std::string& log,
+    const std::string_view field) {
+  const std::string prefix =
+      "diagnostic_adapter_source_child_delta_" + std::string(field);
+  assert(json_number_field(log, prefix + "_compared_value_count") > 0.0);
+  assert(json_number_field(log, prefix + "_differing_value_count") == 0.0);
+  assert(json_number_field(log, prefix + "_max_abs_diff") == 0.0);
+}
+
+void assert_diagnostic_adapter_source_child_delta_log(const std::string& log) {
+  assert(
+      log.find("\"diagnostic_adapter_source_child_delta_version\": "
+               "\"a76_source_child_delta_v0\"") != std::string::npos);
+  assert(json_bool_field(log, "diagnostic_adapter_source_child_delta_diagnostic_only"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_gate_candidate"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_integrator_output"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_writes_candidate"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_writes_netcdf"));
+  assert(json_bool_field(log, "diagnostic_adapter_source_child_delta_values_identical"));
+  const auto compared =
+      json_number_field(log, "diagnostic_adapter_source_child_delta_compared_value_count");
+  assert(compared > 0.0);
+  assert(
+      compared ==
+      json_number_field(log, "diagnostic_adapter_source_staging_staged_value_count"));
+  assert(
+      json_number_field(log, "diagnostic_adapter_source_child_delta_differing_value_count") ==
+      0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_child_delta_max_abs_diff") == 0.0);
+  assert_diagnostic_adapter_source_child_delta_json_field(log, "phb");
+  assert_diagnostic_adapter_source_child_delta_json_field(log, "mub");
+  assert_diagnostic_adapter_source_child_delta_json_field(log, "ht");
+  assert_diagnostic_adapter_source_child_delta_json_field(log, "pb");
+  assert_diagnostic_adapter_source_child_delta_json_field(log, "t_init");
+  assert_diagnostic_adapter_source_child_delta_json_field(log, "alb");
+}
+
+void assert_diagnostic_adapter_source_child_delta_attr_field(
+    const int file_id,
+    const std::string_view field) {
+  const std::string prefix =
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_" + std::string(field);
+  assert(read_double_attr(file_id, prefix + "_COMPARED_VALUE_COUNT") > 0.0);
+  assert(read_double_attr(file_id, prefix + "_DIFFERING_VALUE_COUNT") == 0.0);
+  assert(read_double_attr(file_id, prefix + "_MAX_ABS_DIFF") == 0.0);
+}
+
+void assert_diagnostic_adapter_source_child_delta_attrs(const int file_id) {
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_VERSION") ==
+      "a76_source_child_delta_v0");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_SOURCE") ==
+      "BaseStateSourceStagingProvider_vs_child_staging_pre_adapter");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_SCOPE") ==
+      "exposed_base_state_values_only");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_FIELDS") ==
+      "PHB,MUB,HT,PB,T_INIT,ALB");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_DIAGNOSTIC_ONLY") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_GATE_CANDIDATE") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_INTEGRATOR_OUTPUT") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_WRITES_CANDIDATE") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_WRITES_NETCDF") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_VALUES_IDENTICAL") ==
+      "true");
+  const auto compared = read_double_attr(
+      file_id,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_COMPARED_VALUE_COUNT");
+  assert(compared > 0.0);
+  assert(
+      compared ==
+      read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_STAGED_VALUE_COUNT"));
+  assert(
+      read_double_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_DIFFERING_VALUE_COUNT") == 0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_MAX_ABS_DIFF") ==
+      0.0);
+  assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "PHB");
+  assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "MUB");
+  assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "HT");
+  assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "PB");
+  assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "T_INIT");
+  assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "ALB");
+}
+
 void assert_diagnostic_adapter_report_path(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
@@ -1526,6 +1627,7 @@ void assert_diagnostic_adapter_report_path(
   assert(json_number_field(log, "diagnostic_adapter_source_staging_masked_mass_cell_count") > 0.0);
   assert(json_number_field(log, "diagnostic_adapter_source_staging_staged_value_count") > 0.0);
   assert(json_number_field(log, "diagnostic_adapter_source_staging_invalid_exposed_value_count") == 0.0);
+  assert_diagnostic_adapter_source_child_delta_log(log);
   assert_disposition_report_matches_metadata(
       output,
       log_path,
@@ -1629,6 +1731,7 @@ void assert_diagnostic_adapter_report_path(
       read_double_attr(
           file_id,
           "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_VALUE_COUNT") == 0.0);
+  assert_diagnostic_adapter_source_child_delta_attrs(file_id);
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
   const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
@@ -1646,6 +1749,46 @@ void assert_diagnostic_adapter_report_path(
   assert(
       timeline_field_value(events, "diagnostic_adapter_source_staging", "aliases_child") ==
       "false");
+  assert(events.find(":diagnostic_adapter_source_child_delta(") != std::string::npos);
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_source_child_delta", "diagnostic_only") ==
+      "true");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_source_child_delta", "gate_candidate") ==
+      "false");
+  assert(
+      timeline_field_value(
+          events,
+          "diagnostic_adapter_source_child_delta",
+          "integrator_output") == "false");
+  assert(
+      timeline_field_value(
+          events,
+          "diagnostic_adapter_source_child_delta",
+          "writes_candidate") == "false");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_source_child_delta", "writes_netcdf") ==
+      "false");
+  assert(
+      timeline_field_value(
+          events,
+          "diagnostic_adapter_source_child_delta",
+          "values_identical") == "true");
+  assert(
+      timeline_u64_field(events, "diagnostic_adapter_source_child_delta", "compared_values") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(
+              file_id,
+              "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_COMPARED_VALUE_COUNT")));
+  assert(
+      timeline_u64_field(events, "diagnostic_adapter_source_child_delta", "differing_values") ==
+      0U);
+  assert(
+      std::stod(
+          timeline_field_value(
+              events,
+              "diagnostic_adapter_source_child_delta",
+              "max_abs_diff")) == 0.0);
   assert(events.find(":diagnostic_adapter_report(") != std::string::npos);
   assert(timeline_field_value(events, "diagnostic_adapter_report", "opt_in") == "true");
   assert(timeline_field_value(events, "diagnostic_adapter_report", "diagnostic_only") == "true");

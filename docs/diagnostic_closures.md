@@ -1142,15 +1142,27 @@ gate_candidate = false
 integrator_output = false
 ```
 
-D75 may use that provider only on the hidden diagnostic adapter source-staging
-side. Provider-backed source provenance and staged/count metadata may be
-reported to explain hidden scratch-buffer inputs, but those facts are
-disqualifiers, not closure evidence and not gate evidence. A closure must not
-use D75 metadata to patch candidate fields, write normal candidates, refresh
+D75 is complete, verified, pushed, and synchronized at commit `d5a1f99`
+(`Wire diagnostic adapter source staging provider`). It used the D74 provider
+only on the hidden diagnostic adapter source-staging side. Provider-backed
+source provenance and staged/count metadata may explain hidden scratch-buffer
+inputs, but those facts are disqualifiers, not closure evidence and not gate
+evidence. A closure must not use D75 metadata to patch candidate fields, write
+normal candidates, refresh candidate `P`, change normal pressure-refresh
+behavior, borrow positive selected-field metadata, or weaken strict gate
+rejection.
+
+D76 is limited to diagnostic source-vs-child delta/provenance planning for the
+same hidden adapter source-staging boundary. A closure must not convert
+source-child delta blocks, zero-difference summaries, source/child provenance,
+or staged/exposed/masked counts into a pressure closure, a candidate-field
+patch, pressure-refresh evidence, or strict-gate evidence. The metadata remains
+disqualifying even when every reported source-child delta is zero or the counts
+are useful for debugging. D76 must not write normal candidates, refresh
 candidate `P`, change normal pressure-refresh behavior, borrow positive
-selected-field metadata, or weaken strict gate rejection. The strict d02
-`00:10` gate remains failed, validation must not advance to `00:20`, d02 must
-remain `2 km`, and best-track nudging remains forbidden.
+selected-field metadata, weaken strict gate rejection, or advance validation to
+`00:20`. The strict d02 `00:10` gate remains failed, d02 must remain `2 km`,
+and best-track nudging remains forbidden.
 
 ## Hard Prohibitions
 
@@ -1170,6 +1182,8 @@ The following schemes are forbidden:
 - silently replacing normal skeleton or integrator fields with closure fields;
 - treating preserved cycle-start `U10`, `V10`, `T2`, `Q2`, `RAINC`, or
   `RAINNC` as a real surface-diagnostics producer;
+- treating hidden adapter source-child delta/provenance metadata as closure or
+  gate evidence, even when the deltas are zero or the counts are useful;
 - allowing a closure-modified file to satisfy the normal validation gate
   without an explicit diagnostic-closure mode;
 - emitting closure fields without metadata that marks them as non-physical

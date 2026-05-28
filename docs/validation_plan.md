@@ -1361,15 +1361,27 @@ gate_candidate = false
 integrator_output = false
 ```
 
-D75 validation scope is hidden diagnostic adapter source staging only. The D74
-provider may back hidden adapter scratch-source staging, and reports may expose
-provider-backed source provenance plus staged/exposed/masked count metadata.
-That metadata remains disqualifying and cannot be used as gate evidence. D75
-must not write or relabel normal candidates, refresh candidate `P`, change the
-normal pressure-refresh path, mark a report as integrator output, or relax
-strict metadata rejection. The strict d02 `2025-07-26_00:10:00` gate still
-fails, so validation must stop at `00:10` and must not proceed to `00:20`;
-d02 stays `2 km`, and best-track nudging remains prohibited.
+D75 is complete, verified, pushed, and synchronized at commit `d5a1f99`
+(`Wire diagnostic adapter source staging provider`). Its validation scope was
+hidden diagnostic adapter source staging only. The D74 provider may back hidden
+adapter scratch-source staging, and reports may expose provider-backed source
+provenance plus staged/exposed/masked count metadata. That metadata remains
+disqualifying and cannot be used as gate evidence. D75 did not write or relabel
+normal candidates, refresh candidate `P`, change the normal pressure-refresh
+path, mark a report as integrator output, or relax strict metadata rejection.
+
+D76 validation scope is diagnostic source-vs-child delta/provenance planning for
+the hidden base-state adapter source-staging path. Default strict-gate tooling
+must treat any such source-child delta/provenance block as disqualifying
+diagnostic context before field RMSE or TC diagnostics are interpreted. This is
+true even if the reported source-child differences are all zero, or if the
+staged/exposed/masked counts are useful for debugging. Source-child provenance
+does not prove integrator output, does not satisfy the pressure-refresh
+contract, and cannot be used as evidence that the strict d02 gate passed. D76
+must not write normal candidates, refresh candidate `P`, change the normal
+pressure-refresh path, relax strict metadata rejection, or proceed to `00:20`.
+The strict d02 `2025-07-26_00:10:00` gate still fails; d02 stays `2 km`, and
+best-track nudging remains prohibited.
 
 Example:
 

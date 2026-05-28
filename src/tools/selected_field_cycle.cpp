@@ -154,6 +154,30 @@ struct PressureColumnObservation {
   double hgt = 0.0;
 };
 
+struct DiagnosticAdapterSourceChildFieldDeltaReport {
+  std::uint64_t compared_value_count = 0;
+  std::uint64_t differing_value_count = 0;
+  double max_abs_diff = 0.0;
+};
+
+struct DiagnosticAdapterSourceChildDeltaReport {
+  bool diagnostic_only = true;
+  bool gate_candidate = false;
+  bool integrator_output = false;
+  bool writes_candidate = false;
+  bool writes_netcdf = false;
+  bool values_identical = false;
+  std::uint64_t compared_value_count = 0;
+  std::uint64_t differing_value_count = 0;
+  double max_abs_diff = 0.0;
+  DiagnosticAdapterSourceChildFieldDeltaReport phb;
+  DiagnosticAdapterSourceChildFieldDeltaReport mub;
+  DiagnosticAdapterSourceChildFieldDeltaReport ht;
+  DiagnosticAdapterSourceChildFieldDeltaReport pb;
+  DiagnosticAdapterSourceChildFieldDeltaReport t_init;
+  DiagnosticAdapterSourceChildFieldDeltaReport alb;
+};
+
 struct CandidateReport {
   std::uint64_t changed_selected_points = 0;
   std::uint64_t changed_static_template_points = 0;
@@ -173,6 +197,8 @@ struct CandidateReport {
   std::optional<tywrf::nest::BaseStateSourceStagingReport>
       diagnostic_adapter_source_staging;
   bool diagnostic_adapter_source_staging_aliases_child = false;
+  std::optional<DiagnosticAdapterSourceChildDeltaReport>
+      diagnostic_adapter_source_child_delta;
   std::filesystem::path diagnostic_adapter_metadata_source;
   std::size_t diagnostic_adapter_metadata_time_index = 0;
   std::filesystem::path pressure_refresh_metadata_source;
@@ -2043,6 +2069,248 @@ void fill_diagnostic_adapter_staging(
   copy_storage(output_static.hgt, staging.ht, "diagnostic adapter HT/HGT");
 }
 
+struct DiagnosticAdapterExposedRegionSet {
+  std::array<tywrf::nest::RemapWindow, 4> regions{};
+  std::uint8_t count = 0;
+};
+
+void append_diagnostic_adapter_exposed_region(
+    DiagnosticAdapterExposedRegionSet& set,
+    const tywrf::nest::HorizontalStagger stagger,
+    const std::int32_t i_begin,
+    const std::int32_t j_begin,
+    const std::int32_t extent_i,
+    const std::int32_t extent_j) noexcept {
+  if (extent_i <= 0 || extent_j <= 0 || set.count >= set.regions.size()) {
+    return;
+  }
+
+  auto& region = set.regions[set.count];
+  region.stagger = stagger;
+  region.new_i_begin = i_begin;
+  region.new_j_begin = j_begin;
+  region.extent_i = extent_i;
+  region.extent_j = extent_j;
+  ++set.count;
+}
+
+[[nodiscard]] DiagnosticAdapterExposedRegionSet
+diagnostic_adapter_exposed_regions_from_overlap(
+    const tywrf::nest::RemapWindow& overlap,
+    const std::int32_t active_nx_value,
+    const std::int32_t active_ny_value) noexcept {
+  DiagnosticAdapterExposedRegionSet set{};
+  const auto overlap_i0 = overlap.new_i_begin;
+  const auto overlap_j0 = overlap.new_j_begin;
+  const auto overlap_i1 = overlap.new_i_begin + overlap.extent_i;
+  const auto overlap_j1 = overlap.new_j_begin + overlap.extent_j;
+
+  append_diagnostic_adapter_exposed_region(
+      set, overlap.stagger, 0, 0, active_nx_value, overlap_j0);
+  append_diagnostic_adapter_exposed_region(
+      set,
+      overlap.stagger,
+      0,
+      overlap_j1,
+      active_nx_value,
+      active_ny_value - overlap_j1);
+  append_diagnostic_adapter_exposed_region(
+      set, overlap.stagger, 0, overlap_j0, overlap_i0, overlap.extent_j);
+  append_diagnostic_adapter_exposed_region(
+      set,
+      overlap.stagger,
+      overlap_i1,
+      overlap_j0,
+      active_nx_value - overlap_i1,
+      overlap.extent_j);
+  return set;
+}
+
+template <typename Real>
+[[nodiscard]] constexpr std::int32_t diagnostic_adapter_active_nx(
+    const tywrf::FieldView2D<Real>& field) noexcept {
+  return field.nx - field.halo.i_lower - field.halo.i_upper;
+}
+
+template <typename Real>
+[[nodiscard]] constexpr std::int32_t diagnostic_adapter_active_ny(
+    const tywrf::FieldView2D<Real>& field) noexcept {
+  return field.ny - field.halo.j_lower - field.halo.j_upper;
+}
+
+template <typename Real>
+[[nodiscard]] constexpr std::int32_t diagnostic_adapter_active_nx(
+    const tywrf::FieldView3D<Real>& field) noexcept {
+  return field.nx - field.halo.i_lower - field.halo.i_upper;
+}
+
+template <typename Real>
+[[nodiscard]] constexpr std::int32_t diagnostic_adapter_active_ny(
+    const tywrf::FieldView3D<Real>& field) noexcept {
+  return field.ny - field.halo.j_lower - field.halo.j_upper;
+}
+
+template <typename Real>
+[[nodiscard]] constexpr std::int32_t diagnostic_adapter_active_nz(
+    const tywrf::FieldView3D<Real>& field) noexcept {
+  return field.nz - field.halo.k_lower - field.halo.k_upper;
+}
+
+template <typename LhsReal, typename RhsReal>
+void require_same_diagnostic_adapter_active_shape(
+    const tywrf::FieldView2D<LhsReal>& lhs,
+    const tywrf::FieldView2D<RhsReal>& rhs,
+    const std::string_view label) {
+  if (diagnostic_adapter_active_nx(lhs) != diagnostic_adapter_active_nx(rhs) ||
+      diagnostic_adapter_active_ny(lhs) != diagnostic_adapter_active_ny(rhs)) {
+    throw std::runtime_error(
+        "diagnostic adapter source-child delta shape mismatch for " +
+        std::string(label));
+  }
+}
+
+template <typename LhsReal, typename RhsReal>
+void require_same_diagnostic_adapter_active_shape(
+    const tywrf::FieldView3D<LhsReal>& lhs,
+    const tywrf::FieldView3D<RhsReal>& rhs,
+    const std::string_view label) {
+  if (diagnostic_adapter_active_nx(lhs) != diagnostic_adapter_active_nx(rhs) ||
+      diagnostic_adapter_active_ny(lhs) != diagnostic_adapter_active_ny(rhs) ||
+      diagnostic_adapter_active_nz(lhs) != diagnostic_adapter_active_nz(rhs)) {
+    throw std::runtime_error(
+        "diagnostic adapter source-child delta shape mismatch for " +
+        std::string(label));
+  }
+}
+
+void accumulate_diagnostic_adapter_delta(
+    DiagnosticAdapterSourceChildFieldDeltaReport& report,
+    const float source_value,
+    const float child_value) noexcept {
+  ++report.compared_value_count;
+  double diff = std::numeric_limits<double>::max();
+  if (std::isfinite(source_value) && std::isfinite(child_value)) {
+    diff = std::fabs(
+        static_cast<double>(source_value) - static_cast<double>(child_value));
+  }
+  if (diff != 0.0) {
+    ++report.differing_value_count;
+  }
+  report.max_abs_diff = std::max(report.max_abs_diff, diff);
+}
+
+[[nodiscard]] DiagnosticAdapterSourceChildFieldDeltaReport
+diagnostic_adapter_source_child_delta_2d(
+    const std::string_view label,
+    const DiagnosticAdapterExposedRegionSet& regions,
+    const tywrf::FieldView2D<const float>& source,
+    const tywrf::FieldView2D<float>& child) {
+  require_same_diagnostic_adapter_active_shape(source, child, label);
+  DiagnosticAdapterSourceChildFieldDeltaReport report{};
+  for (std::uint8_t region_index = 0; region_index < regions.count; ++region_index) {
+    const auto& region = regions.regions[region_index];
+    for (std::int32_t j = region.new_j_begin;
+         j < region.new_j_begin + region.extent_j;
+         ++j) {
+      for (std::int32_t i = region.new_i_begin;
+           i < region.new_i_begin + region.extent_i;
+           ++i) {
+        accumulate_diagnostic_adapter_delta(
+            report,
+            source(source.halo.i_lower + i, source.halo.j_lower + j),
+            child(child.halo.i_lower + i, child.halo.j_lower + j));
+      }
+    }
+  }
+  return report;
+}
+
+[[nodiscard]] DiagnosticAdapterSourceChildFieldDeltaReport
+diagnostic_adapter_source_child_delta_3d(
+    const std::string_view label,
+    const DiagnosticAdapterExposedRegionSet& regions,
+    const tywrf::FieldView3D<const float>& source,
+    const tywrf::FieldView3D<float>& child) {
+  require_same_diagnostic_adapter_active_shape(source, child, label);
+  DiagnosticAdapterSourceChildFieldDeltaReport report{};
+  for (std::uint8_t region_index = 0; region_index < regions.count; ++region_index) {
+    const auto& region = regions.regions[region_index];
+    for (std::int32_t j = region.new_j_begin;
+         j < region.new_j_begin + region.extent_j;
+         ++j) {
+      for (std::int32_t k = 0; k < diagnostic_adapter_active_nz(child); ++k) {
+        for (std::int32_t i = region.new_i_begin;
+             i < region.new_i_begin + region.extent_i;
+             ++i) {
+          accumulate_diagnostic_adapter_delta(
+              report,
+              source(
+                  source.halo.i_lower + i,
+                  source.halo.j_lower + j,
+                  source.halo.k_lower + k),
+              child(
+                  child.halo.i_lower + i,
+                  child.halo.j_lower + j,
+                  child.halo.k_lower + k));
+        }
+      }
+    }
+  }
+  return report;
+}
+
+void merge_diagnostic_adapter_delta_field(
+    DiagnosticAdapterSourceChildDeltaReport& aggregate,
+    const DiagnosticAdapterSourceChildFieldDeltaReport& field) noexcept {
+  aggregate.compared_value_count += field.compared_value_count;
+  aggregate.differing_value_count += field.differing_value_count;
+  aggregate.max_abs_diff = std::max(aggregate.max_abs_diff, field.max_abs_diff);
+}
+
+[[nodiscard]] DiagnosticAdapterSourceChildDeltaReport
+compare_diagnostic_adapter_source_child_delta(
+    const tywrf::nest::RemapPlan& remap_plan,
+    const tywrf::nest::ExposedBaseStateViews<const float>& source,
+    const tywrf::nest::ExposedBaseStateViews<float>& child) {
+  DiagnosticAdapterSourceChildDeltaReport report{};
+  const auto mass_regions = diagnostic_adapter_exposed_regions_from_overlap(
+      remap_plan.mass,
+      diagnostic_adapter_active_nx(child.pb),
+      diagnostic_adapter_active_ny(child.pb));
+  const auto surface_regions = diagnostic_adapter_exposed_regions_from_overlap(
+      remap_plan.surface,
+      diagnostic_adapter_active_nx(child.mub),
+      diagnostic_adapter_active_ny(child.mub));
+  const auto w_full_regions = diagnostic_adapter_exposed_regions_from_overlap(
+      remap_plan.w_full,
+      diagnostic_adapter_active_nx(child.phb),
+      diagnostic_adapter_active_ny(child.phb));
+
+  report.phb = diagnostic_adapter_source_child_delta_3d(
+      "PHB", w_full_regions, source.phb, child.phb);
+  report.mub = diagnostic_adapter_source_child_delta_2d(
+      "MUB", surface_regions, source.mub, child.mub);
+  report.ht = diagnostic_adapter_source_child_delta_2d(
+      "HT", surface_regions, source.ht, child.ht);
+  report.pb = diagnostic_adapter_source_child_delta_3d(
+      "PB", mass_regions, source.pb, child.pb);
+  report.t_init = diagnostic_adapter_source_child_delta_3d(
+      "T_INIT", mass_regions, source.t_init, child.t_init);
+  report.alb = diagnostic_adapter_source_child_delta_3d(
+      "ALB", mass_regions, source.alb, child.alb);
+
+  merge_diagnostic_adapter_delta_field(report, report.phb);
+  merge_diagnostic_adapter_delta_field(report, report.mub);
+  merge_diagnostic_adapter_delta_field(report, report.ht);
+  merge_diagnostic_adapter_delta_field(report, report.pb);
+  merge_diagnostic_adapter_delta_field(report, report.t_init);
+  merge_diagnostic_adapter_delta_field(report, report.alb);
+  report.values_identical =
+      report.compared_value_count > 0 && report.differing_value_count == 0 &&
+      report.max_abs_diff == 0.0;
+  return report;
+}
+
 void run_diagnostic_adapter_report(
     const Options& options,
     const tywrf::State<float>& candidate,
@@ -2131,6 +2399,29 @@ void run_diagnostic_adapter_report(
     throw std::runtime_error(
         "diagnostic_base_state_source_staging unexpectedly aliases child staging");
   }
+
+  const auto source_child_delta =
+      compare_diagnostic_adapter_source_child_delta(
+          report.remap_plan, provider_source_views, child_views);
+  report.diagnostic_adapter_source_child_delta = source_child_delta;
+  append_timeline_event(
+      report,
+      "diagnostic_adapter_source_child_delta",
+      {
+          timeline_field("diagnostic_only", "true"),
+          timeline_field("gate_candidate", "false"),
+          timeline_field("integrator_output", "false"),
+          timeline_field("writes_candidate", "false"),
+          timeline_field("writes_netcdf", "false"),
+          timeline_field(
+              "values_identical",
+              std::string(bool_text(source_child_delta.values_identical))),
+          timeline_field("compared_values", source_child_delta.compared_value_count),
+          timeline_field("differing_values", source_child_delta.differing_value_count),
+          timeline_field(
+              "max_abs_diff",
+              format_probe_double(source_child_delta.max_abs_diff)),
+      });
 
   const auto adapter_report =
       tywrf::nest::apply_exposed_base_state_exchange_adapter(
@@ -2833,6 +3124,91 @@ void write_diagnostic_adapter_source_staging_attrs(
       static_cast<double>(staging.invalid_exposed_alb_point_count));
 }
 
+void write_diagnostic_adapter_source_child_delta_field_attrs(
+    const NetcdfHandle& file,
+    const std::string_view field,
+    const DiagnosticAdapterSourceChildFieldDeltaReport& delta) {
+  const std::string prefix =
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_" + std::string(field);
+  write_double_attr(
+      file,
+      prefix + "_COMPARED_VALUE_COUNT",
+      static_cast<double>(delta.compared_value_count));
+  write_double_attr(
+      file,
+      prefix + "_DIFFERING_VALUE_COUNT",
+      static_cast<double>(delta.differing_value_count));
+  write_double_attr(file, prefix + "_MAX_ABS_DIFF", delta.max_abs_diff);
+}
+
+void write_diagnostic_adapter_source_child_delta_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (!report.diagnostic_adapter_source_child_delta.has_value()) {
+    return;
+  }
+
+  const auto& delta = *report.diagnostic_adapter_source_child_delta;
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_VERSION",
+      "a76_source_child_delta_v0");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_SOURCE",
+      "BaseStateSourceStagingProvider_vs_child_staging_pre_adapter");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_SCOPE",
+      "exposed_base_state_values_only");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_FIELDS",
+      "PHB,MUB,HT,PB,T_INIT,ALB");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_DIAGNOSTIC_ONLY",
+      bool_text(delta.diagnostic_only));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_GATE_CANDIDATE",
+      bool_text(delta.gate_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_INTEGRATOR_OUTPUT",
+      bool_text(delta.integrator_output));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_WRITES_CANDIDATE",
+      bool_text(delta.writes_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_WRITES_NETCDF",
+      bool_text(delta.writes_netcdf));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_VALUES_IDENTICAL",
+      bool_text(delta.values_identical));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_COMPARED_VALUE_COUNT",
+      static_cast<double>(delta.compared_value_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_DIFFERING_VALUE_COUNT",
+      static_cast<double>(delta.differing_value_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_MAX_ABS_DIFF",
+      delta.max_abs_diff);
+  write_diagnostic_adapter_source_child_delta_field_attrs(file, "PHB", delta.phb);
+  write_diagnostic_adapter_source_child_delta_field_attrs(file, "MUB", delta.mub);
+  write_diagnostic_adapter_source_child_delta_field_attrs(file, "HT", delta.ht);
+  write_diagnostic_adapter_source_child_delta_field_attrs(file, "PB", delta.pb);
+  write_diagnostic_adapter_source_child_delta_field_attrs(file, "T_INIT", delta.t_init);
+  write_diagnostic_adapter_source_child_delta_field_attrs(file, "ALB", delta.alb);
+}
+
 void write_diagnostic_adapter_attrs(
     const NetcdfHandle& file,
     const CandidateReport& report) {
@@ -2985,6 +3361,7 @@ void write_diagnostic_adapter_attrs(
       "TYWRF_DIAGNOSTIC_ADAPTER_INVALID_POINT_COUNT",
       static_cast<double>(adapter.invalid_point_count));
   write_diagnostic_adapter_source_staging_attrs(file, report);
+  write_diagnostic_adapter_source_child_delta_attrs(file, report);
   write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_WRITTEN_FIELDS", "PHB,MUB,HGT,PB,T_INIT,ALB");
   write_text_attr(
       file,
@@ -3897,6 +4274,130 @@ void write_diagnostic_adapter_source_staging_json(
       pretty);
 }
 
+void write_diagnostic_adapter_source_child_delta_field_json(
+    std::ostream& stream,
+    const std::string_view field,
+    const DiagnosticAdapterSourceChildFieldDeltaReport& delta,
+    const bool pretty) {
+  const std::string prefix =
+      "diagnostic_adapter_source_child_delta_" + std::string(field);
+  write_json_number(
+      stream,
+      prefix + "_compared_value_count",
+      static_cast<double>(delta.compared_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      prefix + "_differing_value_count",
+      static_cast<double>(delta.differing_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream, prefix + "_max_abs_diff", delta.max_abs_diff, true, pretty);
+}
+
+void write_diagnostic_adapter_source_child_delta_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool pretty) {
+  if (!report.diagnostic_adapter_source_child_delta.has_value()) {
+    return;
+  }
+
+  const auto& delta = *report.diagnostic_adapter_source_child_delta;
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_child_delta_version",
+      "a76_source_child_delta_v0",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_child_delta_source",
+      "BaseStateSourceStagingProvider_vs_child_staging_pre_adapter",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_child_delta_scope",
+      "exposed_base_state_values_only",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_source_child_delta_fields",
+      "PHB,MUB,HT,PB,T_INIT,ALB",
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_child_delta_diagnostic_only",
+      delta.diagnostic_only,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_child_delta_gate_candidate",
+      delta.gate_candidate,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_child_delta_integrator_output",
+      delta.integrator_output,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_child_delta_writes_candidate",
+      delta.writes_candidate,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_child_delta_writes_netcdf",
+      delta.writes_netcdf,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_source_child_delta_values_identical",
+      delta.values_identical,
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_child_delta_compared_value_count",
+      static_cast<double>(delta.compared_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_child_delta_differing_value_count",
+      static_cast<double>(delta.differing_value_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_source_child_delta_max_abs_diff",
+      delta.max_abs_diff,
+      true,
+      pretty);
+  write_diagnostic_adapter_source_child_delta_field_json(
+      stream, "phb", delta.phb, pretty);
+  write_diagnostic_adapter_source_child_delta_field_json(
+      stream, "mub", delta.mub, pretty);
+  write_diagnostic_adapter_source_child_delta_field_json(
+      stream, "ht", delta.ht, pretty);
+  write_diagnostic_adapter_source_child_delta_field_json(
+      stream, "pb", delta.pb, pretty);
+  write_diagnostic_adapter_source_child_delta_field_json(
+      stream, "t_init", delta.t_init, pretty);
+  write_diagnostic_adapter_source_child_delta_field_json(
+      stream, "alb", delta.alb, pretty);
+}
+
 void write_diagnostic_adapter_json(
     std::ostream& stream,
     const CandidateReport& report,
@@ -4079,6 +4580,7 @@ void write_diagnostic_adapter_json(
       true,
       pretty);
   write_diagnostic_adapter_source_staging_json(stream, report, pretty);
+  write_diagnostic_adapter_source_child_delta_json(stream, report, pretty);
   write_json_string(
       stream,
       "diagnostic_adapter_written_fields",
