@@ -1269,22 +1269,30 @@ regenerate `MUB` from `HGT`, rebuild or sync `PHB`, write `T_INIT` into
 `State::t`, or write `ALB` into `State`. The strict d02
 `2025-07-26_00:10:00` gate remains failed.
 
-D70 validation scope is limited to diagnostic adapter/report plumbing. It may
-join the D68 exposed base-state exchange helper with the D69 exposed-`MUB`
-recompute API in a diagnostic adapter report, or emit a dry-run/staging report
-that shows what would be staged. It must not produce a candidate, must not
-connect the normal `selected_field_cycle` pressure-refresh gate path, and must
-not alter production selected-field numerics. Any report from this path must
-remain non-gate with `diagnostic_only = true`, `gate_candidate = false`, and
-`integrator_output = false`.
+D70 is complete, fully validated, pushed, and synchronized at commit
+`5eb6485` (`Add exposed base-state adapter diagnostics`). It added only a
+diagnostic adapter/report for the D68 exposed base-state exchange helper and
+the D69 exposed-`MUB` recompute API. It did not produce a production
+candidate, did not connect the normal `selected_field_cycle`
+pressure-refresh gate path, and did not alter production selected-field
+numerics. Any D70 report remains non-gate with `diagnostic_only = true`,
+`gate_candidate = false`, and `integrator_output = false`. The strict d02
+`2025-07-26_00:10:00` gate remains failed.
 
-D71 or later may consider an opt-in `selected_field_cycle` diagnostic
-connection, but only after adding a metadata guard that prevents diagnostic
-adapter output from being accepted by the default strict gate. Diagnostic,
-oracle, probe, helper, dry-run, and staging outputs remain excluded from
-strict-gate evidence. Validation must not use reference-end truth or oracle
-candidates, must not advance to `00:20`, must not lower d02 below `2 km`, and
-must not introduce best-track nudging.
+D71 validation scope is a metadata guard before any adapter connection. D71
+must not connect the D70 adapter into the production `selected_field_cycle`
+normal path. The guard should make the C++ NetCDF metadata and stdout JSON use
+the same candidate-disposition decision so the file attributes and report
+fields cannot disagree about gate eligibility.
+
+The default Python strict gate must reject pseudo-positive metadata from
+helper, probe, adapter, dry-run, staging, experimental, diagnostic, oracle, and
+reference-copy artifacts. That rejection must win even if a malformed artifact
+claims positive `gate_candidate` or `integrator_output` fields. Diagnostic,
+oracle, probe, helper, adapter, dry-run, staging, and experimental outputs
+remain excluded from strict-gate evidence. Validation must not use
+reference-end truth or oracle candidates, must not advance to `00:20`, must not
+lower d02 below `2 km`, and must not introduce best-track nudging.
 
 Example:
 

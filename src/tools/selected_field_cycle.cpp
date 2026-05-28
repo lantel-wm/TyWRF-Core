@@ -1258,6 +1258,216 @@ struct PressureRefreshReadiness {
   }
 };
 
+enum class CandidateDispositionKind {
+  selected_field,
+  selected_field_pressure_refresh_experimental_apply,
+  diagnostic_adapter,
+  diagnostic_helper,
+  diagnostic_dry_run,
+  diagnostic_staging,
+  diagnostic_probe,
+};
+
+struct CandidateDispositionInput {
+  CandidateDispositionKind kind = CandidateDispositionKind::selected_field;
+  bool pressure_refresh_applied = false;
+  bool pressure_refresh_ready = false;
+};
+
+struct CandidateDisposition {
+  const char* status = "selected_field_candidate_generated";
+  const char* candidate_kind = "selected_field_integrator_v0";
+  bool diagnostic_only = false;
+  bool gate_candidate = true;
+  bool integrator_output = true;
+  bool experimental_pressure_refresh_apply = false;
+};
+
+[[nodiscard]] constexpr bool is_diagnostic_disposition_kind(
+    const CandidateDispositionKind kind) noexcept {
+  switch (kind) {
+    case CandidateDispositionKind::selected_field:
+    case CandidateDispositionKind::selected_field_pressure_refresh_experimental_apply:
+      return false;
+    case CandidateDispositionKind::diagnostic_adapter:
+    case CandidateDispositionKind::diagnostic_helper:
+    case CandidateDispositionKind::diagnostic_dry_run:
+    case CandidateDispositionKind::diagnostic_staging:
+    case CandidateDispositionKind::diagnostic_probe:
+      return true;
+  }
+  return true;
+}
+
+[[nodiscard]] constexpr const char* disposition_status_name(
+    const CandidateDispositionKind kind) noexcept {
+  switch (kind) {
+    case CandidateDispositionKind::selected_field:
+      return "selected_field_candidate_generated";
+    case CandidateDispositionKind::selected_field_pressure_refresh_experimental_apply:
+      return "selected_field_pressure_refresh_experimental_apply_generated";
+    case CandidateDispositionKind::diagnostic_adapter:
+      return "selected_field_diagnostic_adapter_reported";
+    case CandidateDispositionKind::diagnostic_helper:
+      return "selected_field_diagnostic_helper_reported";
+    case CandidateDispositionKind::diagnostic_dry_run:
+      return "selected_field_diagnostic_dry_run_reported";
+    case CandidateDispositionKind::diagnostic_staging:
+      return "selected_field_diagnostic_staging_reported";
+    case CandidateDispositionKind::diagnostic_probe:
+      return "selected_field_diagnostic_probe_reported";
+  }
+  return "selected_field_diagnostic_unknown_reported";
+}
+
+[[nodiscard]] constexpr const char* disposition_candidate_kind_name(
+    const CandidateDispositionKind kind) noexcept {
+  switch (kind) {
+    case CandidateDispositionKind::selected_field:
+      return "selected_field_integrator_v0";
+    case CandidateDispositionKind::selected_field_pressure_refresh_experimental_apply:
+      return "selected_field_pressure_refresh_experimental_apply_v0";
+    case CandidateDispositionKind::diagnostic_adapter:
+      return "selected_field_diagnostic_adapter_v0";
+    case CandidateDispositionKind::diagnostic_helper:
+      return "selected_field_diagnostic_helper_v0";
+    case CandidateDispositionKind::diagnostic_dry_run:
+      return "selected_field_diagnostic_dry_run_v0";
+    case CandidateDispositionKind::diagnostic_staging:
+      return "selected_field_diagnostic_staging_v0";
+    case CandidateDispositionKind::diagnostic_probe:
+      return "selected_field_diagnostic_probe_v0";
+  }
+  return "selected_field_diagnostic_unknown_v0";
+}
+
+[[nodiscard]] constexpr CandidateDisposition candidate_disposition(
+    const CandidateDispositionInput input) noexcept {
+  const auto kind = input.kind;
+  if (is_diagnostic_disposition_kind(kind)) {
+    return {
+        disposition_status_name(kind),
+        disposition_candidate_kind_name(kind),
+        true,
+        false,
+        false,
+        false};
+  }
+  if (kind == CandidateDispositionKind::selected_field_pressure_refresh_experimental_apply) {
+    return {
+        disposition_status_name(kind),
+        disposition_candidate_kind_name(kind),
+        true,
+        false,
+        false,
+        true};
+  }
+
+  const bool gate_candidate =
+      input.pressure_refresh_applied ? input.pressure_refresh_ready : true;
+  return {
+      disposition_status_name(kind),
+      disposition_candidate_kind_name(kind),
+      false,
+      gate_candidate,
+      gate_candidate,
+      false};
+}
+
+[[nodiscard]] CandidateDisposition selected_field_candidate_disposition(
+    const Options& options,
+    const CandidateReport& report,
+    const std::optional<PressureRefreshReadiness>& pressure_refresh_readiness) {
+  const auto kind = options.experimental_pressure_refresh_apply
+                        ? CandidateDispositionKind::
+                              selected_field_pressure_refresh_experimental_apply
+                        : CandidateDispositionKind::selected_field;
+  return candidate_disposition({
+      kind,
+      report.pressure_refresh.has_value(),
+      pressure_refresh_readiness.has_value() && pressure_refresh_readiness->ready()});
+}
+
+void require_candidate_disposition_case(
+    const std::string_view name,
+    const CandidateDispositionInput input,
+    const bool expected_diagnostic_only,
+    const bool expected_gate_candidate,
+    const bool expected_integrator_output,
+    const char* expected_candidate_kind) {
+  const auto disposition = candidate_disposition(input);
+  if (disposition.diagnostic_only != expected_diagnostic_only ||
+      disposition.gate_candidate != expected_gate_candidate ||
+      disposition.integrator_output != expected_integrator_output ||
+      std::string_view(disposition.candidate_kind) != expected_candidate_kind) {
+    std::ostringstream message;
+    message << "candidate disposition self-test failed for " << name;
+    throw std::runtime_error(message.str());
+  }
+  if (is_diagnostic_disposition_kind(input.kind) &&
+      std::string_view(disposition.candidate_kind) == "selected_field_integrator_v0") {
+    std::ostringstream message;
+    message << "diagnostic disposition used integrator candidate kind for " << name;
+    throw std::runtime_error(message.str());
+  }
+}
+
+int run_candidate_disposition_self_test() {
+  require_candidate_disposition_case(
+      "selected_field_no_pressure_refresh",
+      {CandidateDispositionKind::selected_field, false, false},
+      false,
+      true,
+      true,
+      "selected_field_integrator_v0");
+  require_candidate_disposition_case(
+      "selected_field_pressure_refresh_ready",
+      {CandidateDispositionKind::selected_field, true, true},
+      false,
+      true,
+      true,
+      "selected_field_integrator_v0");
+  require_candidate_disposition_case(
+      "selected_field_pressure_refresh_not_ready",
+      {CandidateDispositionKind::selected_field, true, false},
+      false,
+      false,
+      false,
+      "selected_field_integrator_v0");
+  require_candidate_disposition_case(
+      "selected_field_experimental_pressure_refresh_apply",
+      {CandidateDispositionKind::selected_field_pressure_refresh_experimental_apply, true, true},
+      true,
+      false,
+      false,
+      "selected_field_pressure_refresh_experimental_apply_v0");
+  require_candidate_disposition_case(
+      "selected_field_experimental_pressure_refresh_apply_failed",
+      {CandidateDispositionKind::selected_field_pressure_refresh_experimental_apply, false, false},
+      true,
+      false,
+      false,
+      "selected_field_pressure_refresh_experimental_apply_v0");
+
+  const std::array<std::pair<CandidateDispositionKind, const char*>, 5> diagnostic_cases = {{
+      {CandidateDispositionKind::diagnostic_adapter, "selected_field_diagnostic_adapter_v0"},
+      {CandidateDispositionKind::diagnostic_helper, "selected_field_diagnostic_helper_v0"},
+      {CandidateDispositionKind::diagnostic_dry_run, "selected_field_diagnostic_dry_run_v0"},
+      {CandidateDispositionKind::diagnostic_staging, "selected_field_diagnostic_staging_v0"},
+      {CandidateDispositionKind::diagnostic_probe, "selected_field_diagnostic_probe_v0"},
+  }};
+  for (const auto& [kind, expected_candidate_kind] : diagnostic_cases) {
+    require_candidate_disposition_case(
+        expected_candidate_kind,
+        {kind, true, true},
+        true,
+        false,
+        false,
+        expected_candidate_kind);
+  }
+  return 0;
+}
+
 [[nodiscard]] PressureRefreshReadiness evaluate_pressure_refresh_readiness(
     const CandidateReport& report) {
   PressureRefreshReadiness readiness;
@@ -2169,19 +2379,14 @@ void stamp_gate_metadata(
     const Resolution resolution,
     const tywrf::nest::ParentChildDescriptor& descriptor,
     const CandidateReport& report) {
-  const bool experimental_pressure_refresh_apply =
-      options.experimental_pressure_refresh_apply && report.pressure_refresh.has_value();
   std::optional<PressureRefreshReadiness> pressure_refresh_readiness;
   if (report.pressure_refresh.has_value()) {
     pressure_refresh_readiness = evaluate_pressure_refresh_readiness(report);
   }
-  const bool pressure_refresh_applied_to_candidate =
-      report.pressure_refresh.has_value() && !experimental_pressure_refresh_apply;
-  const bool pressure_refresh_gate_candidate =
-      pressure_refresh_applied_to_candidate && pressure_refresh_readiness.has_value() &&
-      pressure_refresh_readiness->ready();
-  const bool gate_candidate =
-      report.pressure_refresh.has_value() ? pressure_refresh_gate_candidate : true;
+  const auto disposition =
+      selected_field_candidate_disposition(options, report, pressure_refresh_readiness);
+  const bool experimental_pressure_refresh_apply =
+      disposition.experimental_pressure_refresh_apply;
   const NetcdfHandle file(options.output_path, NetcdfHandle::Mode::write);
   file.check(nc_redef(file.id()), "enter define mode");
   write_double_attr(file, "DX", resolution.dx);
@@ -2189,16 +2394,14 @@ void stamp_gate_metadata(
   write_text_attr(
       file,
       "TYWRF_DIAGNOSTIC_ONLY",
-      bool_text(experimental_pressure_refresh_apply));
-  write_text_attr(file, "TYWRF_GATE_CANDIDATE", bool_text(gate_candidate));
-  write_text_attr(file, "TYWRF_INTEGRATOR_OUTPUT", bool_text(gate_candidate));
+      bool_text(disposition.diagnostic_only));
+  write_text_attr(file, "TYWRF_GATE_CANDIDATE", bool_text(disposition.gate_candidate));
+  write_text_attr(file, "TYWRF_INTEGRATOR_OUTPUT", bool_text(disposition.integrator_output));
   write_text_attr(file, "TYWRF_VALIDATION_GATE_ONLY", "false");
   write_text_attr(
       file,
       "TYWRF_CANDIDATE_KIND",
-      experimental_pressure_refresh_apply
-          ? "selected_field_pressure_refresh_experimental_apply_v0"
-          : "selected_field_integrator_v0");
+      disposition.candidate_kind);
   if (experimental_pressure_refresh_apply) {
     write_text_attr(file, "TYWRF_EXPERIMENTAL_PRESSURE_REFRESH_APPLY", "true");
   }
@@ -2772,19 +2975,14 @@ void print_report(
     const tywrf::nest::ParentChildDescriptor& descriptor,
     const CandidateReport& report) {
   const bool pretty = options.pretty;
-  const bool experimental_pressure_refresh_apply =
-      options.experimental_pressure_refresh_apply && report.pressure_refresh.has_value();
   std::optional<PressureRefreshReadiness> pressure_refresh_readiness;
   if (report.pressure_refresh.has_value()) {
     pressure_refresh_readiness = evaluate_pressure_refresh_readiness(report);
   }
-  const bool pressure_refresh_applied_to_candidate =
-      report.pressure_refresh.has_value() && !experimental_pressure_refresh_apply;
-  const bool pressure_refresh_gate_candidate =
-      pressure_refresh_applied_to_candidate && pressure_refresh_readiness.has_value() &&
-      pressure_refresh_readiness->ready();
-  const bool gate_candidate =
-      report.pressure_refresh.has_value() ? pressure_refresh_gate_candidate : true;
+  const auto disposition =
+      selected_field_candidate_disposition(options, report, pressure_refresh_readiness);
+  const bool experimental_pressure_refresh_apply =
+      disposition.experimental_pressure_refresh_apply;
   const bool has_pressure_column_probe = !report.pressure_column_observations.empty();
   const bool has_pressure_formula_observation =
       !report.pressure_formula_observations.empty();
@@ -2792,21 +2990,18 @@ void print_report(
   write_json_string(
       std::cout,
       "status",
-      experimental_pressure_refresh_apply
-          ? "selected_field_pressure_refresh_experimental_apply_generated"
-          : "selected_field_candidate_generated",
+      disposition.status,
       true,
       pretty);
   write_json_string(
       std::cout,
       "candidate_kind",
-      experimental_pressure_refresh_apply
-          ? "selected_field_pressure_refresh_experimental_apply_v0"
-          : "selected_field_integrator_v0",
+      disposition.candidate_kind,
       true,
       pretty);
-  write_json_bool(std::cout, "gate_candidate", gate_candidate, true, pretty);
-  write_json_bool(std::cout, "integrator_output", gate_candidate, true, pretty);
+  write_json_bool(std::cout, "diagnostic_only", disposition.diagnostic_only, true, pretty);
+  write_json_bool(std::cout, "gate_candidate", disposition.gate_candidate, true, pretty);
+  write_json_bool(std::cout, "integrator_output", disposition.integrator_output, true, pretty);
   write_json_bool(std::cout, "validation_gate_only", false, true, pretty);
   if (experimental_pressure_refresh_apply) {
     write_json_bool(std::cout, "experimental_pressure_refresh_apply", true, true, pretty);
@@ -3157,6 +3352,9 @@ int run(Options options) {
 
 int main(const int argc, char** argv) {
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--candidate-disposition-self-test") {
+      return run_candidate_disposition_self_test();
+    }
     const auto options = parse_options(argc, argv);
     return run(options);
   } catch (const std::exception& error) {

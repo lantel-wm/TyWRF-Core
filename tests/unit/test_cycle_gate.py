@@ -159,6 +159,12 @@ def test_cycle_gate_selected_field_integrator_kind_requires_positive_metadata(
         f"{SELECTED_FIELD_INTEGRATOR_KIND}_diagnostic",
         f"{SELECTED_FIELD_INTEGRATOR_KIND}_remap",
         f"{SELECTED_FIELD_INTEGRATOR_KIND}_closure",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_helper",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_probe",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_adapter",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_dry_run",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_staging",
+        f"{SELECTED_FIELD_INTEGRATOR_KIND}_experimental",
     ),
 )
 def test_cycle_gate_selected_field_integrator_rejects_artifact_kind_tokens(
@@ -178,6 +184,61 @@ def test_cycle_gate_selected_field_integrator_rejects_artifact_kind_tokens(
     assert report.status == "failed"
     assert metadata.status == "failed"
     assert f"TYWRF_CANDIDATE_KIND={candidate_kind}" in (metadata.message or "")
+
+
+@pytest.mark.parametrize(
+    ("metadata_name", "metadata_value"),
+    (
+        ("TYWRF_PRESSURE_REFRESH_HELPER_NAME", "pressure_refresh_helper_v0"),
+        ("TYWRF_PRESSURE_COLUMN_PROBE_SOURCE", "pressure_column_probe"),
+        ("TYWRF_OUTPUT_ADAPTER", "netcdf_adapter_v0"),
+        ("TYWRF_RUN_MODE", "dry_run"),
+        ("TYWRF_PRESSURE_REFRESH_STAGING_NAME", "pressure_refresh_staging_v0"),
+        (
+            "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS",
+            "experimental_apply_test_only",
+        ),
+    ),
+)
+def test_cycle_gate_rejects_related_artifact_metadata_tokens(
+    tmp_path: Path,
+    metadata_name: str,
+    metadata_value: str,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_CANDIDATE_KIND": SELECTED_FIELD_INTEGRATOR_KIND,
+            metadata_name: metadata_value,
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert f"{metadata_name}={metadata_value}" in (metadata.message or "")
+    assert {field.status for field in report.cycles[0].fields} == {"passed"}
+
+
+def test_cycle_gate_allows_false_related_metadata_flags_for_integrator_candidate(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_CANDIDATE_KIND": SELECTED_FIELD_INTEGRATOR_KIND,
+            "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY": "false",
+            "TYWRF_PRESSURE_COLUMN_PROBE_ENABLED": "false",
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+
+    assert report.status == "passed"
 
 
 def test_cycle_gate_reports_first_failure_for_10_min_progressive_run(tmp_path: Path) -> None:

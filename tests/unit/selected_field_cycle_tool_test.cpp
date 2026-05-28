@@ -1114,6 +1114,53 @@ void assert_pressure_column_probe_output(
   return false;
 }
 
+struct DispositionExpectation {
+  bool diagnostic_only = false;
+  bool gate_candidate = false;
+  bool integrator_output = false;
+  std::string_view candidate_kind;
+};
+
+[[nodiscard]] std::string bool_string(const bool value) {
+  return value ? "true" : "false";
+}
+
+void assert_disposition_report_matches_metadata(
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path,
+    const DispositionExpectation expected) {
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open disposition output");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ONLY") ==
+         bool_string(expected.diagnostic_only));
+  assert(read_text_attr(file_id, "TYWRF_GATE_CANDIDATE") ==
+         bool_string(expected.gate_candidate));
+  assert(read_text_attr(file_id, "TYWRF_INTEGRATOR_OUTPUT") ==
+         bool_string(expected.integrator_output));
+  assert(read_text_attr(file_id, "TYWRF_CANDIDATE_KIND") ==
+         std::string(expected.candidate_kind));
+  check_nc(nc_close(file_id), "close disposition output");
+
+  const auto log = read_file(log_path);
+  assert(json_bool_field(log, "diagnostic_only") == expected.diagnostic_only);
+  assert(json_bool_field(log, "gate_candidate") == expected.gate_candidate);
+  assert(json_bool_field(log, "integrator_output") == expected.integrator_output);
+  assert(
+      log.find("\"candidate_kind\": \"" + std::string(expected.candidate_kind) + "\"") !=
+      std::string::npos);
+}
+
+void assert_candidate_disposition_self_test(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& root) {
+  const auto log_path = root / "candidate_disposition_self_test.log";
+  const auto status = run_command_status(
+      shell_quote(executable) + " --candidate-disposition-self-test >" +
+      shell_quote(log_path) + " 2>&1");
+  assert(status == 0);
+  assert(read_file(log_path).empty());
+}
+
 void assert_pressure_refresh_readiness_json(const std::string& log) {
   assert(json_bool_field(log, "pressure_refresh_readiness_ready"));
   assert(json_bool_field(log, "thermodynamic_base_state_consistency_ready"));
@@ -1204,6 +1251,10 @@ void assert_normal_pressure_refresh_apply(
   assert(json_bool_field(log, "pressure_refresh_invalid_and_skipped_points_zero"));
   assert(json_bool_field(log, "pressure_refresh_overlap_halo_untouched"));
   assert_successful_candidate(output, true, template_path);
+  assert_disposition_report_matches_metadata(
+      output,
+      log_path,
+      {false, true, true, "selected_field_integrator_v0"});
 }
 
 void assert_pressure_column_probe_default_path(
@@ -1335,6 +1386,7 @@ void assert_hidden_apply_flag_absent_from_help(
   assert(help.find("--pressure-column-probe") != std::string::npos);
   assert(help.find("--pressure-column-levels") != std::string::npos);
   assert(help.find("--experimental-pressure-refresh-apply") == std::string::npos);
+  assert(help.find("--candidate-disposition-self-test") == std::string::npos);
 }
 
 void assert_experimental_pressure_refresh_apply(
@@ -1400,6 +1452,10 @@ void assert_experimental_pressure_refresh_apply(
   assert(json_bool_field(log, "pressure_refresh_invalid_and_skipped_points_zero"));
   assert(json_bool_field(log, "pressure_refresh_overlap_halo_untouched"));
   assert_successful_candidate(output, true, template_path, true);
+  assert_disposition_report_matches_metadata(
+      output,
+      log_path,
+      {true, false, false, "selected_field_pressure_refresh_experimental_apply_v0"});
 }
 
 void run_rejection_tests(
@@ -1524,6 +1580,7 @@ int main(const int argc, char** argv) {
         root / "tywrf_selected_field_experimental_pressure_d02_2025-07-26_00:10:00";
     const auto invalid_pressure_output =
         root / "tywrf_selected_field_invalid_pressure_d02_2025-07-26_00:10:00";
+    const auto default_log = root / "selected_field_default.log";
     const auto pressure_log = root / "pressure_refresh_normal_apply.log";
     const auto pressure_column_probe_log = root / "pressure_column_probe.log";
     const auto pressure_column_probe_refresh_log = root / "pressure_column_probe_refresh.log";
@@ -1552,9 +1609,16 @@ int main(const int argc, char** argv) {
         true);
 
     assert_hidden_apply_flag_absent_from_help(executable, root);
+    assert_candidate_disposition_self_test(executable, root);
 
-    run_command(base_command(executable, d01_start, d02_start, template_path, output));
+    run_command(
+        base_command(executable, d01_start, d02_start, template_path, output) + " >" +
+        shell_quote(default_log) + " 2>&1");
     assert_successful_candidate(output);
+    assert_disposition_report_matches_metadata(
+        output,
+        default_log,
+        {false, true, true, "selected_field_integrator_v0"});
 
     assert_normal_pressure_refresh_apply(
         executable,

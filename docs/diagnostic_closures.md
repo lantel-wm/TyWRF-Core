@@ -1042,11 +1042,12 @@ synchronize `PHB`, write `T_INIT` into `State::t`, or write `ALB` into
 `State`; `ALB` remains staging-only, not `State` ownership. The strict d02
 `00:10` gate remains failed.
 
-D70 may only compose the D68 helper and D69 recompute API into a diagnostic
-adapter/report or dry-run/staging report. That adapter is not a closure
-permission, not production selected-field numerics, not the normal
-`selected_field_cycle` pressure-refresh gate path, and not a candidate writer.
-Its report metadata must stay diagnostic-only and non-gate:
+D70 is complete, fully validated, pushed, and synchronized at commit
+`5eb6485` (`Add exposed base-state adapter diagnostics`). It composed the D68
+helper and D69 recompute API only as a diagnostic adapter/report. That adapter
+is not a closure permission, not production selected-field numerics, not the
+normal `selected_field_cycle` pressure-refresh gate path, and not a candidate
+writer. Its report metadata must stay diagnostic-only and non-gate:
 
 ```text
 diagnostic_only = true
@@ -1054,13 +1055,24 @@ gate_candidate = false
 integrator_output = false
 ```
 
-D71 or later may consider an opt-in `selected_field_cycle` diagnostic
-connection only after a metadata guard exists to keep diagnostic adapter output
-out of the default strict gate. Reference-end truth, oracle/reference-copy
-candidates, restart substitutes, and diagnostic/probe/helper/dry-run/staging
-outputs remain forbidden as closure or gate evidence. D70 must not advance
-validation to `00:20`, reduce d02 below `2 km`, or introduce best-track
-nudging.
+D70 did not make the strict d02 `00:10` gate pass. A closure must not reuse its
+adapter report, dry-run/staging evidence, or helper telemetry to patch failed
+candidate fields or borrow selected-field positive metadata.
+
+D71 scope is metadata guard work before any opt-in adapter connection. It must
+not connect the D70 adapter into production `selected_field_cycle` or into a
+normal candidate writer. C++ NetCDF metadata and stdout JSON should come from a
+single candidate-disposition decision so diagnostic files and reports cannot
+diverge into contradictory closure/gate claims.
+
+The guard must classify `helper`, `probe`, `adapter`, `dry_run`, `staging`,
+`experimental`, diagnostic, oracle, and reference-copy artifacts as non-gate
+even when their metadata is pseudo-positive. The Python strict gate should
+reject those roles/kinds before interpreting RMSE or TC diagnostics.
+Reference-end truth, oracle/reference-copy candidates, restart substitutes,
+and diagnostic/probe/helper/adapter/dry-run/staging/experimental outputs remain
+forbidden as closure or gate evidence. Validation must not advance to `00:20`,
+reduce d02 below `2 km`, or introduce best-track nudging.
 
 ## Hard Prohibitions
 

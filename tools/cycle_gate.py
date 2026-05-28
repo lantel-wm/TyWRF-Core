@@ -34,6 +34,26 @@ GATE_FIELD_THRESHOLDS = {name: GATE_FIELD_THRESHOLD for name in STRICT_CORE_VARI
 METADATA_GATE_THRESHOLD = 0.0
 BOOL_TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
 BOOL_FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
+BLOCKING_CANDIDATE_KIND_TOKENS = (
+    "diagnostic",
+    "closure",
+    "remap",
+    "oracle",
+    "helper",
+    "probe",
+    "adapter",
+    "dry_run",
+    "staging",
+    "experimental",
+)
+BLOCKING_RELATED_METADATA_TOKENS = (
+    "helper",
+    "probe",
+    "adapter",
+    "dry_run",
+    "staging",
+    "experimental",
+)
 
 
 @dataclass(frozen=True)
@@ -253,6 +273,42 @@ def _read_text_attr(dataset: netCDF4.Dataset, name: str) -> str | None:
     return str(dataset.getncattr(name)).strip()
 
 
+def _metadata_text(value: object) -> str:
+    return str(value).strip()
+
+
+def _metadata_token_text(value: object) -> str:
+    return _metadata_text(value).lower().replace("-", "_").replace(" ", "_")
+
+
+def _is_false_metadata_value(value: object) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return not bool(value)
+    return _metadata_token_text(value) in BOOL_FALSE_VALUES
+
+
+def _related_metadata_disqualifiers(
+    attrs: dict[str, object],
+    *,
+    excluded_names: set[str] | None = None,
+) -> list[str]:
+    excluded_names = excluded_names or set()
+    disqualifiers: list[str] = []
+    for name, value in sorted(attrs.items()):
+        if name in excluded_names or not name.startswith("TYWRF_"):
+            continue
+        if _is_false_metadata_value(value):
+            continue
+        name_text = _metadata_token_text(name)
+        value_text = _metadata_token_text(value)
+        if any(
+            token in name_text or token in value_text
+            for token in BLOCKING_RELATED_METADATA_TOKENS
+        ):
+            disqualifiers.append(f"{name}={_metadata_text(value)}")
+    return disqualifiers
+
+
 def _candidate_metadata_gate(
     candidate_path: Path,
     *,
@@ -260,6 +316,7 @@ def _candidate_metadata_gate(
 ) -> GateMetric:
     try:
         with netCDF4.Dataset(candidate_path) as dataset:
+            attrs = {name: dataset.getncattr(name) for name in dataset.ncattrs()}
             diagnostic_only = _read_bool_attr(dataset, "TYWRF_DIAGNOSTIC_ONLY")
             gate_candidate = _read_bool_attr(dataset, "TYWRF_GATE_CANDIDATE")
             integrator_output = _read_bool_attr(dataset, "TYWRF_INTEGRATOR_OUTPUT")
@@ -290,9 +347,15 @@ def _candidate_metadata_gate(
     elif integrator_output is not True and not validation_gate_only_allowed:
         disqualifiers.append("TYWRF_INTEGRATOR_OUTPUT is not true")
 
-    kind = candidate_kind.lower() if candidate_kind else ""
-    if kind and any(token in kind for token in ("diagnostic", "closure", "remap", "oracle")):
+    kind = _metadata_token_text(candidate_kind) if candidate_kind else ""
+    if kind and any(token in kind for token in BLOCKING_CANDIDATE_KIND_TOKENS):
         disqualifiers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
+    disqualifiers.extend(
+        _related_metadata_disqualifiers(
+            attrs,
+            excluded_names={"TYWRF_CANDIDATE_KIND"},
+        )
+    )
 
     if disqualifiers:
         return GateMetric(

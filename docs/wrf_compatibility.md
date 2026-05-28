@@ -1506,22 +1506,34 @@ or write `ALB` into `State`. `ALB` remains an external staging value for
 downstream pressure-refresh consumers only. The strict d02
 `2025-07-26_00:10:00` gate still fails.
 
-D70 compatibility scope is diagnostic adapter/reporting only. It may connect
-the D68 exposed base-state exchange helper and the D69 exposed-`MUB`
-recompute API into a diagnostic adapter report or a dry-run/staging report. It
-must not write a candidate file, must not connect the normal
-`selected_field_cycle` pressure-refresh gate path, and must not change
-production selected-field numerics. Any D70 report must remain explicitly
-diagnostic-only with `diagnostic_only = true`, `gate_candidate = false`, and
-`integrator_output = false`.
+D70 is now complete, fully validated, pushed, and synchronized. Commit
+`5eb6485` (`Add exposed base-state adapter diagnostics`) records the
+diagnostic-only adapter/report that composes the D68 exposed base-state
+exchange helper with the D69 exposed-`MUB` recompute API. It remains outside
+the normal `selected_field_cycle` path: it does not write a production
+candidate, does not connect the pressure-refresh gate path, and does not change
+production selected-field numerics. Its outputs remain report/dry-run/staging
+artifacts with `diagnostic_only = true`, `gate_candidate = false`, and
+`integrator_output = false`. The strict d02 `2025-07-26_00:10:00` gate still
+fails.
 
-D71 or later may consider an opt-in `selected_field_cycle` diagnostic
-connection for this exposed-base-state policy, but only after a metadata guard
-is added that prevents diagnostic artifacts from being accepted as normal gate
-candidates. D70 and later compatibility work must not use reference-end truth,
-oracle/reference-copy candidates, diagnostic/probe/helper outputs, or restart
-substitutes as compatibility evidence. It must not advance validation to
-`00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
+D71 compatibility scope is metadata guard work first. It must not connect the
+D70 adapter into production `selected_field_cycle`, even as an opt-in
+candidate path, until the guard prevents diagnostic artifacts from masquerading
+as normal gate candidates. C++ NetCDF attributes and stdout JSON should be
+derived from one unified candidate-disposition decision, rather than separate
+boolean logic that can drift between file metadata and reports.
+
+The disposition guard must reject pseudo-positive artifacts by role and kind,
+not only by the presence of positive-looking booleans. `helper`, `probe`,
+`adapter`, `dry_run`, `staging`, `experimental`, diagnostic, oracle, and
+reference-copy outputs remain non-gate even if a report or NetCDF file carries
+`gate_candidate = true` or `integrator_output = true` by mistake. D71 and later
+compatibility work must not use reference-end truth, oracle/reference-copy
+candidates, diagnostic/probe/helper outputs, adapter/dry-run/staging reports,
+or restart substitutes as compatibility evidence. It must not advance
+validation to `00:20`, reduce d02 below `2 km`, or introduce best-track
+nudging.
 
 ## Physics Bridge Compatibility Notes
 
