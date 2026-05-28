@@ -29,6 +29,9 @@ WIND_TENDENCY_SUBCYCLING_ATTRS = {
     "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS": 8,
     "TYWRF_WIND_TENDENCY_TOTAL_SECONDS": 600,
 }
+WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR = (
+    "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE"
+)
 
 
 def _production_attrs(overrides: dict[str, object] | None = None) -> dict[str, object]:
@@ -48,6 +51,7 @@ def _wind_tendency_evidence_attrs(
         "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": "true",
         "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "false",
         "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY": "false",
+        WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR: "refreshed",
         **WIND_TENDENCY_SUBCYCLING_ATTRS,
     }
     attrs.update(overrides or {})
@@ -485,12 +489,18 @@ def test_cycle_gate_rejects_wind_tendency_non_evidence_even_when_validation_gate
     assert "TYWRF_VALIDATION_GATE_ONLY=true" not in (metadata.message or "")
 
 
+@pytest.mark.parametrize("advecting_velocity_mode", ("refreshed", "frozen"))
 def test_cycle_gate_allows_wind_tendency_evidence_metadata(
     tmp_path: Path,
+    advecting_velocity_mode: str,
 ) -> None:
     reference_dir, candidate_dir = _write_pair(
         tmp_path,
-        attrs=_wind_tendency_evidence_attrs(),
+        attrs=_wind_tendency_evidence_attrs(
+            {
+                WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR: advecting_velocity_mode,
+            }
+        ),
     )
 
     report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
@@ -502,13 +512,19 @@ def test_cycle_gate_allows_wind_tendency_evidence_metadata(
     assert metadata.status == "passed"
 
 
+@pytest.mark.parametrize("advecting_velocity_mode", ("refreshed", "frozen"))
 def test_cycle_gate_self_advection_subcycling_metadata_enters_normal_field_gate(
     tmp_path: Path,
+    advecting_velocity_mode: str,
 ) -> None:
     reference_dir, candidate_dir = _write_pair(
         tmp_path,
         field_offset=1.0,
-        attrs=_wind_tendency_evidence_attrs(),
+        attrs=_wind_tendency_evidence_attrs(
+            {
+                WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR: advecting_velocity_mode,
+            }
+        ),
     )
 
     report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
@@ -519,6 +535,10 @@ def test_cycle_gate_self_advection_subcycling_metadata_enters_normal_field_gate(
     with netCDF4.Dataset(candidate_dir / END_FILE) as dataset:
         for name, expected_value in WIND_TENDENCY_SUBCYCLING_ATTRS.items():
             assert dataset.getncattr(name) == expected_value
+        assert (
+            dataset.getncattr(WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR)
+            == advecting_velocity_mode
+        )
 
     assert report.status == "failed"
     assert cycle.status == "failed"

@@ -1611,6 +1611,33 @@ must not advance or report `00:20`, and must not broaden into `P`, `MU`, `PB`,
 `PHB`, pressure refresh, physics, best-track nudging, reference-end/oracle
 sources, or any d02 resolution change below `2 km`.
 
+D88 is complete, verified, and pushed at commit `a785388`
+(`Add wind subcycling audit tool`). It added
+`tools/audit_wind_subcycling.py` and
+`tests/unit/test_audit_wind_subcycling.py`. The audit reports selected-field
+wind subcycling evidence for `U`/`V` global errors, boundary bands, vertical
+levels, baseline delta, and subcycling metadata. These reports are
+diagnostic-only and cannot substitute for the strict field and TC diagnostic
+gates.
+
+The D88 audit of the real D87 wrfout reproduced `N=75` as
+`SUBSTEP_COUNT=75`, `SUBSTEP_DT_SECONDS=8`, and `TOTAL_SECONDS=600`. It
+reported global normalized RMSE `U=0.135787` and `V=0.155178`, deep-interior
+`band=40` RMSE `U=2.097462` and `V=2.463738`, and vertical-peak RMSE at
+zero-based `U k=44` of `2.292039` and zero-based `V k=7` of `2.760373`.
+This is error localization for the failed `00:10` endpoint, not a validation
+pass.
+
+D89 validation scope is restricted to selected-field `U`/`V`
+`self_advection` A/B only: frozen versus refreshed advecting velocity, and
+read-only cross-component feasibility. Default validation behavior must remain
+the D87/D88 refreshed advecting-velocity path. A metadata pass is not a
+validation pass; the strict d02 `2025-07-26_00:10:00` gate still fails and the
+progressive sequence must not advance to `00:20`. D89 must not use
+reference-end/oracle sources, must not handle `P`, `MU`, `PB`, or `PHB`, must
+not invoke pressure refresh, physics, or best-track nudging, and must not lower
+d02 below `2 km`.
+
 Example:
 
 ```bash

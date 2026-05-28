@@ -1845,6 +1845,32 @@ reference-end/oracle sources. It must not handle `P`, `MU`, `PB`, or `PHB`,
 must not invoke pressure refresh, physics, or best-track nudging, and must not
 change d02 resolution below `2 km`.
 
+D88 is complete, verified, and pushed at commit `a785388`
+(`Add wind subcycling audit tool`). It added
+`tools/audit_wind_subcycling.py` and
+`tests/unit/test_audit_wind_subcycling.py` for selected-field wind subcycling
+audit coverage: `U`/`V` global metrics, boundary-band splits, vertical-level
+peaks, baseline delta against the default wind-tendency path, and subcycling
+metadata checks.
+
+The D88 real audit reproduced the D87 KROSA d02 `N=75` wrfout result. The
+subcycling metadata is `SUBSTEP_COUNT=75`, `SUBSTEP_DT_SECONDS=8`, and
+`TOTAL_SECONDS=600`. The reproduced global normalized RMSE is `U=0.135787`
+and `V=0.155178`; deep-interior `band=40` RMSE is `U=2.097462` and
+`V=2.463738`; the vertical peak is zero-based `U k=44` with RMSE `2.292039`
+and zero-based `V k=7` with RMSE `2.760373`. These are localization/audit
+facts, not compatibility-pass evidence.
+
+D89 may only document or run selected-field `U`/`V` `self_advection` A/B work:
+frozen versus refreshed advecting velocity, plus read-only cross-component
+feasibility checks. The default selected-field behavior must remain the D87/D88
+refreshed advecting-velocity path. D89 must not treat `candidate_metadata` or
+subcycling metadata as a validation pass; the strict
+`2025-07-26_00:10:00` d02 gate still fails and validation must not advance to
+`00:20`. D89 must not use reference-end/oracle sources, must not handle `P`,
+`MU`, `PB`, or `PHB`, must not invoke pressure refresh, physics, or best-track
+nudging, and must not change d02 resolution below `2 km`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

@@ -111,6 +111,11 @@ enum class WindTendencySourceKind {
   self_advection,
 };
 
+enum class WindTendencyAdvectingVelocityMode {
+  refreshed,
+  frozen,
+};
+
 struct Options {
   std::filesystem::path d01_start_state_path;
   std::filesystem::path d02_start_state_path;
@@ -131,7 +136,10 @@ struct Options {
   bool experimental_pressure_refresh_apply = false;
   bool diagnostic_adapter_report = false;
   WindTendencySourceKind wind_tendency_source = WindTendencySourceKind::none;
+  WindTendencyAdvectingVelocityMode wind_tendency_advecting_velocity_mode =
+      WindTendencyAdvectingVelocityMode::refreshed;
   std::size_t wind_tendency_substeps = kDefaultWindTendencySubsteps;
+  bool has_wind_tendency_advecting_velocity_mode = false;
   bool has_wind_tendency_substeps = false;
   bool pretty = false;
   std::vector<std::string> variables;
@@ -195,6 +203,8 @@ struct DiagnosticAdapterSourceChildDeltaReport {
 
 struct WindTendencyOptInReport {
   WindTendencySourceKind source_kind = WindTendencySourceKind::none;
+  WindTendencyAdvectingVelocityMode advecting_velocity_mode =
+      WindTendencyAdvectingVelocityMode::refreshed;
   tywrf::dynamics::WindTendencyReport kernel;
   std::size_t substep_count = kDefaultWindTendencySubsteps;
   double dt_seconds = kWindTendencySubstepSeconds;
@@ -319,6 +329,17 @@ struct DiagnosticAdapterProviderSource {
   return kind == WindTendencySourceKind::self_advection;
 }
 
+[[nodiscard]] std::string_view wind_tendency_advecting_velocity_mode_name(
+    const WindTendencyAdvectingVelocityMode mode) noexcept {
+  switch (mode) {
+    case WindTendencyAdvectingVelocityMode::refreshed:
+      return "refreshed";
+    case WindTendencyAdvectingVelocityMode::frozen:
+      return "frozen";
+  }
+  return "refreshed";
+}
+
 [[nodiscard]] constexpr bool wind_tendency_zero_or_identity_only(
     const WindTendencySourceKind kind) noexcept {
   return kind == WindTendencySourceKind::zero || kind == WindTendencySourceKind::identity;
@@ -352,6 +373,29 @@ struct DiagnosticAdapterProviderSource {
   }
   throw std::invalid_argument(
       std::string(option) + " expects one of: none, zero, identity, self-advection");
+}
+
+[[nodiscard]] WindTendencyAdvectingVelocityMode parse_wind_tendency_advecting_velocity_mode(
+    const std::string& value,
+    const std::string_view option) {
+  auto trimmed = value;
+  trimmed.erase(
+      trimmed.begin(),
+      std::find_if(trimmed.begin(), trimmed.end(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }));
+  trimmed.erase(
+      std::find_if(trimmed.rbegin(), trimmed.rend(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }).base(),
+      trimmed.end());
+  if (trimmed == "refreshed") {
+    return WindTendencyAdvectingVelocityMode::refreshed;
+  }
+  if (trimmed == "frozen") {
+    return WindTendencyAdvectingVelocityMode::frozen;
+  }
+  throw std::invalid_argument(std::string(option) + " expects one of: refreshed, frozen");
 }
 
 [[nodiscard]] std::string_view wind_tendency_status_name(
@@ -587,6 +631,9 @@ Options:
                                   are not validation-gate evidence.
   --wind-tendency-substeps N     Positive self_advection-only substep count; default 1.
                                   Each substep integrates 8 s. Maximum 600.
+  --wind-tendency-advecting-velocity MODE
+                                  self_advection-only advecting velocity update policy.
+                                  MODE is refreshed or frozen; default refreshed.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
@@ -840,6 +887,16 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
           "--wind-tendency-substeps",
           kMaxWindTendencySubsteps);
       options.has_wind_tendency_substeps = true;
+    } else if (arg == "--wind-tendency-advecting-velocity") {
+      options.wind_tendency_advecting_velocity_mode =
+          parse_wind_tendency_advecting_velocity_mode(require_value(arg), arg);
+      options.has_wind_tendency_advecting_velocity_mode = true;
+    } else if (arg.rfind("--wind-tendency-advecting-velocity=", 0) == 0) {
+      options.wind_tendency_advecting_velocity_mode =
+          parse_wind_tendency_advecting_velocity_mode(
+              arg.substr(std::string("--wind-tendency-advecting-velocity=").size()),
+              "--wind-tendency-advecting-velocity");
+      options.has_wind_tendency_advecting_velocity_mode = true;
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
     } else if (arg == "--diagnostic-base-state-adapter-report") {
@@ -891,6 +948,12 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       options.wind_tendency_source != WindTendencySourceKind::self_advection) {
     throw std::invalid_argument(
         "--wind-tendency-substeps is only valid with --wind-tendency-source self_advection");
+  }
+  if (options.has_wind_tendency_advecting_velocity_mode &&
+      options.wind_tendency_source != WindTendencySourceKind::self_advection) {
+    throw std::invalid_argument(
+        "--wind-tendency-advecting-velocity is only valid with "
+        "--wind-tendency-source self_advection");
   }
   if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
     throw std::invalid_argument(
@@ -1310,6 +1373,10 @@ void apply_selected_field_wind_tendency(
       static_cast<double>(wind_report.substep_count) * wind_report.dt_seconds;
   const bool gate_evidence = wind_tendency_gate_evidence(options.wind_tendency_source);
   tywrf::dynamics::WindTendencyReport aggregate_kernel;
+  const bool refresh_advecting_velocity =
+      options.wind_tendency_advecting_velocity_mode ==
+      WindTendencyAdvectingVelocityMode::refreshed;
+  wind_report.advecting_velocity_mode = options.wind_tendency_advecting_velocity_mode;
   for (std::size_t substep = 0; substep < wind_report.substep_count; ++substep) {
     const auto kernel_report = tywrf::dynamics::apply_horizontal_wind_tendency(
         tywrf::dynamics::WindTendencyViews<float>{
@@ -1344,10 +1411,12 @@ void apply_selected_field_wind_tendency(
         substep + 1 < wind_report.substep_count) {
       fill_halo_staging_from_active_clamped(u_target_const.view(), u_source);
       fill_halo_staging_from_active_clamped(v_target_const.view(), v_source);
-      fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_x);
-      fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_y);
-      fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_x);
-      fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_y);
+      if (refresh_advecting_velocity) {
+        fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_x);
+        fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_y);
+        fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_x);
+        fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_y);
+      }
     }
   }
   wind_report.kernel = aggregate_kernel;
@@ -1373,6 +1442,10 @@ void apply_selected_field_wind_tendency(
       timeline_field("uses_reference_end_truth", "false"),
   };
   if (options.wind_tendency_source == WindTendencySourceKind::self_advection) {
+    timeline_fields.push_back(timeline_field(
+        "advecting_velocity_mode",
+        std::string(wind_tendency_advecting_velocity_mode_name(
+            wind_report.advecting_velocity_mode))));
     timeline_fields.push_back(
         timeline_field("substep_count", static_cast<std::uint64_t>(wind_report.substep_count)));
     timeline_fields.push_back(timeline_field(
@@ -4380,6 +4453,10 @@ void write_wind_tendency_attrs(
       "TYWRF_WIND_TENDENCY_STATUS",
       wind_tendency_status_name(wind.kernel.status));
   if (wind.source_kind == WindTendencySourceKind::self_advection) {
+    write_text_attr(
+        file,
+        "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE",
+        wind_tendency_advecting_velocity_mode_name(wind.advecting_velocity_mode));
     write_int_attr(
         file,
         "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT",
@@ -5237,6 +5314,12 @@ void write_wind_tendency_json(
       true,
       pretty);
   if (wind.source_kind == WindTendencySourceKind::self_advection) {
+    write_json_string(
+        stream,
+        "wind_tendency_advecting_velocity_mode",
+        wind_tendency_advecting_velocity_mode_name(wind.advecting_velocity_mode),
+        true,
+        pretty);
     write_json_number(
         stream,
         "wind_tendency_substep_count",

@@ -1385,6 +1385,31 @@ must not handle `P`, `MU`, `PB`, or `PHB`, must not invoke pressure refresh,
 physics, or best-track nudging, must not lower d02 below `2 km`, and must not
 advance or report `00:20`.
 
+D88 is complete, verified, and pushed at commit `a785388`
+(`Add wind subcycling audit tool`). It added
+`tools/audit_wind_subcycling.py` and
+`tests/unit/test_audit_wind_subcycling.py` for `U`/`V` global, boundary-band,
+vertical-level, baseline-delta, and subcycling-metadata audits. The tool is an
+audit tool, not a diagnostic closure, and must not write closure-modified
+wrfout files or borrow closure metadata.
+
+The D88 audit reproduced the D87 real `N=75` wrfout metadata as
+`SUBSTEP_COUNT=75`, `SUBSTEP_DT_SECONDS=8`, and `TOTAL_SECONDS=600`. It
+reported `U` normalized RMSE `0.135787`, `V` normalized RMSE `0.155178`,
+deep-interior `band=40` RMSE `U=2.097462` and `V=2.463738`, vertical peak
+`U` at zero-based `k=44` with RMSE `2.292039`, and vertical peak `V` at
+zero-based `k=7` with RMSE `2.760373`. These metrics localize the failed wind
+gate and cannot be converted into closure evidence or validation success.
+
+D89 remains outside diagnostic closures. Its only allowed selected-field wind
+work is `U`/`V` `self_advection` A/B for frozen versus refreshed advecting
+velocity, plus read-only cross-component feasibility. The normal default must
+stay the D87/D88 refreshed mode. A metadata pass cannot become validation
+success; the strict `00:10` gate still fails and no `00:20` progress is
+allowed. D89 must not use reference-end/oracle sources, must not handle `P`,
+`MU`, `PB`, or `PHB`, must not invoke pressure refresh, physics, or best-track
+nudging, and must not lower d02 below `2 km`.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
