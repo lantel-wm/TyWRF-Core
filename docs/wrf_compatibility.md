@@ -1383,12 +1383,33 @@ failing field is `U` normalized RMSE `0.117875`; additional failures are `V`
 `QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT` are numerically identical to D61, with
 maximum absolute difference `0.0`.
 
-Round D64 compatibility work must stay on the diagnostic boundary: pressure
-budget audit and pressure source/formula audit come before any formula
-correction. D64 may attribute which terms drive the negative `P`, but it must
-not patch formulas, generate reference-end or oracle candidates, use audit/
-probe/hidden-seam output as gate evidence, advance to `00:20`, reduce d02
-below `2 km`, or introduce best-track nudging.
+D64 is complete and synchronized. Commit `2db9279`
+(`Add pressure budget runtime audit`) has been pushed to `origin/main`, and
+full validation passed CTest `29/29`, pytest `196/196`, and
+`git diff --check`. This is diagnostic-only completion; it is not a strict d02
+gate pass.
+
+The real audit
+`build/validation/r64_pressure_budget_runtime_probe_audit.json` on the D63
+candidate has `status = computed_with_flags`. It records `25` pressure budget
+records, `25` `total_pressure < PB` records, `25` records where the large drop
+is explained by formula/base-pressure subtraction, and pressure mismatch count
+`0`. The first tracked point `(i=160,j=49,k=0)` reports
+`total_pressure = 95539.724 Pa`, `PB = 99711.8828 Pa`,
+`total_pressure_minus_pb = -4172.1588 Pa`, and
+`probe_delta_p = -4252.3540025 Pa`.
+
+The source audit confirms that both TyWRF and WRF runtime use
+`P = total_pressure - PB`. Compatibility work must not remove the `PB`
+subtraction to hide negative perturbation pressure. The next pressure
+diagnostics should instead focus on `PH + PHB`, `theta`, `MU + MUB`, and
+base-state staging consistency.
+
+D65 compatibility direction is diagnostic-only: add a formula sensitivity
+diagnostic and audit WRF moving-nest/base-state call order before any formula
+correction. D65 must not patch formulas, generate reference-end or oracle
+candidates, use audit/probe/hidden-seam output as gate evidence, advance to
+`00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
 
 ## Physics Bridge Compatibility Notes
 

@@ -1151,11 +1151,29 @@ controlling validation status. The first failing field is `U` normalized RMSE
 `T`, `PH`, `MU`, `P`, `QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT` are numerically
 identical to D61, with max absolute difference `0.0`.
 
-D64 validation direction is pressure-budget audit and source/formula audit
-before any pressure formula correction. D64 reports may explain how
-base-pressure, perturbation-pressure, vertical coefficients, `ALB`, `theta`,
-and related formula terms contribute to the negative post-refresh `P`, but
-they are diagnostic-only. They cannot generate candidates, patch formulas or
+D64 is complete and synchronized. Commit `2db9279`
+(`Add pressure budget runtime audit`) is pushed to `origin/main`, and full
+validation passed CTest `29/29`, pytest `196/196`, and `git diff --check`.
+This is code/audit validation only, not a strict d02 gate pass.
+
+The D64 real audit
+`build/validation/r64_pressure_budget_runtime_probe_audit.json` on the D63
+candidate has `status = computed_with_flags`. It reports `25` pressure budget
+records, `25` `total_pressure < PB` records, `25` records where the large
+pressure drop is explained by formula/base-pressure subtraction, and pressure
+mismatch count `0`. The first tracked point `(i=160,j=49,k=0)` has
+`total_pressure = 95539.724 Pa`, `PB = 99711.8828 Pa`,
+`total_pressure_minus_pb = -4172.1588 Pa`, and
+`probe_delta_p = -4252.3540025 Pa`.
+
+The audit conclusion is that TyWRF and WRF runtime both use
+`P = total_pressure - PB`, so validation work must not remove `PB` subtraction
+as a shortcut. The strict d02 `2025-07-26_00:10:00` gate still fails. D65
+validation diagnostics should examine formula sensitivity and WRF
+moving-nest/base-state call order, with emphasis on `PH + PHB`, `theta`,
+`MU + MUB`, and base-state staging.
+
+D65 remains diagnostic-only. It cannot generate candidates, patch formulas or
 fields, tune formulas from reference-end truth, promote audit/probe/
 hidden-seam output to gate evidence, advance validation to `00:20`, reduce d02
 below `2 km`, or add best-track nudging.

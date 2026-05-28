@@ -101,6 +101,7 @@ def _formula_attrs(
     *,
     values: str,
     record_count: int,
+    fields: str = FORMULA_FIELDS,
     valid_count: int = 1,
     invalid_count: int = 0,
     out_of_bounds_count: int = 0,
@@ -121,7 +122,7 @@ def _formula_attrs(
         "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUTSIDE_TARGET_REGION_COUNT": (
             outside_target_region_count
         ),
-        "TYWRF_PRESSURE_FORMULA_OBSERVATION_FIELDS": FORMULA_FIELDS,
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_FIELDS": fields,
         "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES": values,
     }
 
@@ -166,6 +167,10 @@ def test_runtime_probe_parses_two_phases_and_deltas(tmp_path: Path) -> None:
     assert math.isclose(delta["P+PB"], -5.0)
     assert payload["formula_observation"]["present"] is False
     assert "pressure_budget" not in payload["formula_observation"]["correlation"]
+    assert (
+        "formula_sensitivity"
+        not in payload["formula_observation"]["correlation"]
+    )
     assert _flag_codes(payload) == {"formula_terms_unavailable"}
 
 
@@ -218,6 +223,25 @@ def test_formula_observation_correlates_with_probe_pressure(
     assert budget["post_refresh_p_matches_total_minus_pb"] is True
     assert math.isclose(budget["probe_delta_p"], -5.0)
     assert budget["large_drop_explained_by_formula_base_subtraction"] is False
+    sensitivity = formula["correlation"]["pressure_budget"]["formula_sensitivity"]
+    sensitivity_record = sensitivity["records"][0]
+    assert math.isclose(sensitivity_record["total_pressure_gap_to_pb_pa"], -75.0)
+    assert math.isclose(
+        sensitivity_record[
+            "pressure_change_needed_to_make_perturbation_nonnegative_pa"
+        ],
+        0.0,
+    )
+    assert math.isclose(
+        sensitivity_record[
+            "approximate_fractional_total_pressure_increase_needed"
+        ],
+        0.0,
+    )
+    assert sensitivity_record["available_drivers"]["theta"] == 301.5
+    assert sensitivity["summary"][
+        "records_requiring_total_pressure_increase_count"
+    ] == 0
 
 
 def test_formula_observation_flags_count_mismatch_and_malformed_values(
@@ -320,6 +344,7 @@ def test_formula_observation_pressure_budget_flags_below_base_pressure(
 
     assert "formula_total_pressure_below_base_pressure" in codes
     assert "formula_pressure_drop_explained_by_base_subtraction" in codes
+    assert "formula_total_pressure_gap_requires_staging_diagnosis" in codes
     budget = payload["formula_observation"]["correlation"]["pressure_budget"][
         "records"
     ][0]
@@ -329,6 +354,73 @@ def test_formula_observation_pressure_budget_flags_below_base_pressure(
     assert budget["post_refresh_p_matches_total_minus_pb"] is True
     assert math.isclose(budget["probe_delta_p"], -4252.3541125)
     assert budget["large_drop_explained_by_formula_base_subtraction"] is True
+    sensitivity = payload["formula_observation"]["correlation"]["pressure_budget"][
+        "formula_sensitivity"
+    ]
+    sensitivity_record = sensitivity["records"][0]
+    assert math.isclose(
+        sensitivity_record["total_pressure_gap_to_pb_pa"],
+        pb - total_pressure,
+    )
+    assert math.isclose(
+        sensitivity_record[
+            "pressure_change_needed_to_make_perturbation_nonnegative_pa"
+        ],
+        pb - total_pressure,
+    )
+    assert math.isclose(
+        sensitivity_record[
+            "approximate_fractional_total_pressure_increase_needed"
+        ],
+        (pb - total_pressure) / total_pressure,
+    )
+    assert sensitivity_record["exact_budget_directional_sensitivities"][
+        "perturbation_pressure_pa"
+    ]["with_respect_to_PB"] == -1.0
+    assert sensitivity["summary"][
+        "most_records_require_large_total_pressure_increase"
+    ] is True
+    assert sensitivity["summary"][
+        "records_requiring_large_total_pressure_increase_count"
+    ] == 1
+
+
+def test_formula_sensitivity_preserves_records_missing_budget_terms(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+        ]
+    )
+    formula_values = (
+        "status=recorded;valid=true;i=160;j=49;k=0;"
+        "perturbation_pressure_pa=75"
+    )
+    formula_fields = "status,valid,i,j,k,perturbation_pressure_pa"
+    attrs = _probe_attrs(values=values, record_count=2)
+    attrs["TYWRF_PRESSURE_COLUMN_PROBE_LEVEL_COUNT"] = 1
+    attrs["TYWRF_PRESSURE_COLUMN_PROBE_LEVELS"] = "0"
+    attrs.update(
+        _formula_attrs(
+            values=formula_values,
+            record_count=1,
+            fields=formula_fields,
+        )
+    )
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "formula_observation_nonfinite_or_invalid_terms" not in codes
+    assert "formula_total_pressure_gap_requires_staging_diagnosis" not in codes
+    assert "formula_pressure_probe_mismatch" not in codes
+    correlation = payload["formula_observation"]["correlation"]
+    assert "pressure_budget" not in correlation
+    assert correlation["matched_records"][0]["matches_within_tolerance"] is True
 
 
 def test_formula_observation_flags_nonfinite_terms(tmp_path: Path) -> None:

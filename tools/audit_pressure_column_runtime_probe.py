@@ -92,6 +92,19 @@ VALUE_KEY_TO_FIELD = {
 }
 LARGE_P_DROP_PA = 500.0
 PRESSURE_MATCH_TOLERANCE_PA = 1.0e-3
+LARGE_FRACTIONAL_TOTAL_PRESSURE_INCREASE = 0.01
+MOST_RECORDS_FRACTION = 0.8
+SENSITIVITY_DRIVER_FIELDS = (
+    "theta",
+    "delta_phi",
+    "mu_total",
+    "phm",
+    "pfu",
+    "pfd",
+    "alpha_total",
+    "pressure_base",
+    "PB",
+)
 
 
 def _diag(**values: Any) -> dict[str, Any]:
@@ -187,6 +200,13 @@ def _coerce_bool(value: Any) -> bool | None:
         if normalized in {"false", "0", "no", "n"}:
             return False
     return None
+
+
+def _safe_divide(numerator: float, denominator: float) -> float | None:
+    if denominator == 0.0:
+        return None
+    result = numerator / denominator
+    return result if math.isfinite(result) else None
 
 
 def _csv_items(value: Any) -> list[str]:
@@ -771,6 +791,193 @@ def _probe_pressure_maps(
     return static, post
 
 
+def _range_summary(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return _diag(count=0, min=None, max=None, mean=None)
+    return _diag(
+        count=len(values),
+        min=min(values),
+        max=max(values),
+        mean=sum(values) / len(values),
+    )
+
+
+def _build_formula_sensitivity_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    values = record["values"]
+    total_pressure = values.get("total_pressure")
+    pb_value = values.get("PB")
+    if total_pressure is None or pb_value is None:
+        return None
+
+    gap_to_pb = pb_value - total_pressure
+    pressure_change_needed = max(gap_to_pb, 0.0)
+    fractional_increase_needed = (
+        _safe_divide(pressure_change_needed, total_pressure)
+        if total_pressure > 0.0
+        else None
+    )
+    pressure_base = values.get("pressure_base")
+    pressure_base_fractional_proxy = None
+    pressure_base_delta_proxy = None
+    if (
+        pressure_base is not None
+        and total_pressure > 0.0
+        and pressure_base != 0.0
+    ):
+        pressure_base_fractional_proxy = fractional_increase_needed
+        if fractional_increase_needed is not None:
+            pressure_base_delta_proxy = pressure_base * fractional_increase_needed
+
+    drivers = {
+        field: values[field]
+        for field in SENSITIVITY_DRIVER_FIELDS
+        if field in values
+    }
+    pfu = values.get("pfu")
+    pfd = values.get("pfd")
+    phm = values.get("phm")
+
+    return _diag(
+        i=record["i"],
+        j=record["j"],
+        k=record["k"],
+        total_pressure_pa=total_pressure,
+        PB=pb_value,
+        total_pressure_gap_to_pb_pa=gap_to_pb,
+        relative_total_pressure_gap_to_pb=_safe_divide(gap_to_pb, abs(pb_value)),
+        pressure_change_needed_to_make_perturbation_nonnegative_pa=(
+            pressure_change_needed
+        ),
+        approximate_fractional_total_pressure_increase_needed=(
+            fractional_increase_needed
+        ),
+        available_drivers=drivers,
+        exact_budget_directional_sensitivities=_diag(
+            perturbation_pressure_pa={
+                "with_respect_to_total_pressure": 1.0,
+                "with_respect_to_PB": -1.0,
+            },
+            total_pressure_gap_to_pb_pa={
+                "with_respect_to_total_pressure": -1.0,
+                "with_respect_to_PB": 1.0,
+            },
+        ),
+        diagnostic_driver_hints=_diag(
+            total_pressure_direct=_diag(
+                required_delta_pa=pressure_change_needed,
+                fractional_change_needed=fractional_increase_needed,
+            ),
+            PB_threshold_direct=_diag(
+                required_delta_pa=-pressure_change_needed,
+                fractional_change_needed=(
+                    _safe_divide(-pressure_change_needed, pb_value)
+                    if pb_value != 0.0
+                    else None
+                ),
+            ),
+            pressure_base_multiplicative_proxy=_diag(
+                available=pressure_base is not None,
+                assumption=(
+                    "Proxy only: if recorded pressure_base scales total_pressure "
+                    "linearly while other formula terms stay fixed."
+                ),
+                required_delta_pa=pressure_base_delta_proxy,
+                fractional_change_needed=pressure_base_fractional_proxy,
+            ),
+            sign_only_hints=_diag(
+                theta=(
+                    "larger theta can raise total pressure only if this record's "
+                    "formula branch uses theta as a positive thermodynamic factor"
+                ),
+                alpha_total=(
+                    "smaller alpha_total can raise total pressure only if this "
+                    "record's formula branch uses alpha_total as a denominator"
+                ),
+                delta_phi=(
+                    "delta_phi is formula-coupled; this report does not infer a "
+                    "standalone pressure direction from the recorded terms"
+                ),
+                mu_total=(
+                    "mu_total is formula-coupled; this report does not infer a "
+                    "standalone pressure direction from the recorded terms"
+                ),
+                phm_pfu_pfd=(
+                    "phm, pfu, and pfd are interpolation drivers; inspect staging "
+                    "if the pressure gap is large"
+                ),
+            ),
+            bounded_recorded_ratios=_diag(
+                pfu_plus_pfd=None if pfu is None or pfd is None else pfu + pfd,
+                delta_phi_over_abs_phm=(
+                    None
+                    if values.get("delta_phi") is None or phm in {None, 0.0}
+                    else _safe_divide(values["delta_phi"], abs(phm))
+                ),
+            ),
+        ),
+    )
+
+
+def _build_formula_sensitivity_summary(
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    gaps = [record["total_pressure_gap_to_pb_pa"] for record in records]
+    needed = [
+        record["pressure_change_needed_to_make_perturbation_nonnegative_pa"]
+        for record in records
+    ]
+    fractional_needed = [
+        record["approximate_fractional_total_pressure_increase_needed"]
+        for record in records
+        if record["approximate_fractional_total_pressure_increase_needed"] is not None
+    ]
+    records_requiring_increase = [
+        record
+        for record in records
+        if record["pressure_change_needed_to_make_perturbation_nonnegative_pa"] > 0.0
+    ]
+    records_requiring_large_increase = [
+        record
+        for record in records
+        if (
+            record["approximate_fractional_total_pressure_increase_needed"]
+            is not None
+            and record["approximate_fractional_total_pressure_increase_needed"]
+            >= LARGE_FRACTIONAL_TOTAL_PRESSURE_INCREASE
+        )
+    ]
+    large_fraction = (
+        len(records_requiring_large_increase) / len(records) if records else 0.0
+    )
+    return _diag(
+        record_count=len(records),
+        total_pressure_gap_to_pb_pa=_range_summary(gaps),
+        pressure_change_needed_to_make_perturbation_nonnegative_pa=(
+            _range_summary(needed)
+        ),
+        approximate_fractional_total_pressure_increase_needed=(
+            _range_summary(fractional_needed)
+        ),
+        records_requiring_total_pressure_increase_count=len(
+            records_requiring_increase
+        ),
+        records_requiring_large_total_pressure_increase_count=len(
+            records_requiring_large_increase
+        ),
+        large_fractional_total_pressure_increase_threshold=(
+            LARGE_FRACTIONAL_TOTAL_PRESSURE_INCREASE
+        ),
+        records_requiring_large_total_pressure_increase_fraction=large_fraction,
+        most_records_require_large_total_pressure_increase=(
+            bool(records)
+            and large_fraction >= MOST_RECORDS_FRACTION
+        ),
+        all_records_require_total_pressure_increase=(
+            bool(records) and len(records_requiring_increase) == len(records)
+        ),
+    )
+
+
 def _correlate_formula_observation(
     formula_records: list[dict[str, Any]],
     probe_records: list[dict[str, Any]],
@@ -780,6 +987,7 @@ def _correlate_formula_observation(
     mismatches: list[dict[str, Any]] = []
     missing_probe_post: list[dict[str, Any]] = []
     pressure_budget_records: list[dict[str, Any]] = []
+    formula_sensitivity_records: list[dict[str, Any]] = []
     total_pressure_below_pb_records: list[dict[str, Any]] = []
     pressure_drop_explained_records: list[dict[str, Any]] = []
     for record in formula_records:
@@ -863,6 +1071,9 @@ def _correlate_formula_observation(
             "large_drop_explained_by_formula_base_subtraction": drop_explained,
         }
         pressure_budget_records.append(budget)
+        sensitivity_record = _build_formula_sensitivity_record(record)
+        if sensitivity_record is not None:
+            formula_sensitivity_records.append(sensitivity_record)
         if budget["formula_total_pressure_below_pb"]:
             total_pressure_below_pb_records.append(budget)
         if drop_explained:
@@ -881,6 +1092,13 @@ def _correlate_formula_observation(
                 pressure_drop_explained_records
             ),
         )
+        if formula_sensitivity_records:
+            correlation["pressure_budget"]["formula_sensitivity"] = _diag(
+                records=formula_sensitivity_records,
+                summary=_build_formula_sensitivity_summary(
+                    formula_sensitivity_records
+                ),
+            )
     return correlation
 
 
@@ -1160,6 +1378,43 @@ def _build_formula_risk_flags(
                     "large_drop_threshold_pa": LARGE_P_DROP_PA,
                     "count": len(explained_records),
                     "examples": explained_records[:20],
+                },
+            )
+        )
+
+    sensitivity_summary = (
+        pressure_budget.get("formula_sensitivity", {})
+        .get("summary", {})
+    )
+    if sensitivity_summary.get("most_records_require_large_total_pressure_increase"):
+        flags.append(
+            _risk(
+                "formula_total_pressure_gap_requires_staging_diagnosis",
+                "warning",
+                "Most formula observations require a large total-pressure increase to make perturbation pressure nonnegative; inspect pressure-formula staging before changing the PB subtraction.",
+                {
+                    "record_count": sensitivity_summary.get("record_count"),
+                    "large_fractional_total_pressure_increase_threshold": (
+                        sensitivity_summary.get(
+                            "large_fractional_total_pressure_increase_threshold"
+                        )
+                    ),
+                    "records_requiring_large_total_pressure_increase_count": (
+                        sensitivity_summary.get(
+                            "records_requiring_large_total_pressure_increase_count"
+                        )
+                    ),
+                    "records_requiring_large_total_pressure_increase_fraction": (
+                        sensitivity_summary.get(
+                            "records_requiring_large_total_pressure_increase_fraction"
+                        )
+                    ),
+                    "fractional_increase_range": sensitivity_summary.get(
+                        "approximate_fractional_total_pressure_increase_needed"
+                    ),
+                    "gap_to_pb_range_pa": sensitivity_summary.get(
+                        "total_pressure_gap_to_pb_pa"
+                    ),
                 },
             )
         )

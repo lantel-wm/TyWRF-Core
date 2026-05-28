@@ -918,12 +918,36 @@ Round D63 is complete but remains outside closure scope:
   `MUB`, and `HGT` are numerically identical to D61, with max absolute
   difference `0.0`.
 
-Round D64 must audit pressure budget and source/formula ownership before any
-formula correction. A closure must not use D64 observations to patch pressure,
-rewrite formula terms, tune from reference-end truth, generate reference-end or
-oracle candidates, convert audit/probe/hidden-seam output into gate evidence,
-advance validation to `00:20`, reduce d02 below `2 km`, or introduce
-best-track nudging.
+Round D64 is complete but remains outside closure scope:
+
+- Commit `2db9279` (`Add pressure budget runtime audit`) is pushed to
+  `origin/main`.
+- Full validation passed CTest `29/29`, pytest `196/196`, and
+  `git diff --check`.
+- This is diagnostic-only completion, not a strict d02 gate pass.
+- The real audit
+  `build/validation/r64_pressure_budget_runtime_probe_audit.json` on the D63
+  candidate has `status = computed_with_flags`.
+- The audit reports `25` pressure budget records, `25`
+  `total_pressure < PB` records, `25` records where the large drop is
+  explained by formula/base-pressure subtraction, and pressure mismatch count
+  `0`.
+- The first tracked point `(i=160,j=49,k=0)` reports
+  `total_pressure = 95539.724 Pa`, `PB = 99711.8828 Pa`,
+  `total_pressure_minus_pb = -4172.1588 Pa`, and
+  `probe_delta_p = -4252.3540025 Pa`.
+- The source audit says TyWRF and WRF runtime both use
+  `P = total_pressure - PB`, so a closure must not remove `PB` subtraction or
+  rewrite pressure to hide this diagnostic result.
+
+Round D65 may add a formula sensitivity diagnostic and a WRF
+moving-nest/base-state call-order audit. These diagnostics should focus on
+`PH + PHB`, `theta`, `MU + MUB`, and base-state staging consistency before any
+formula correction. They remain outside closure acceptance: they cannot patch
+pressure, rewrite formula terms, tune from reference-end truth, generate
+reference-end or oracle candidates, convert audit/probe/hidden-seam output into
+gate evidence, advance validation to `00:20`, reduce d02 below `2 km`, or
+introduce best-track nudging.
 
 ## Hard Prohibitions
 
