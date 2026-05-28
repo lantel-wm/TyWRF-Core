@@ -105,6 +105,7 @@ enum class WindTendencySourceKind {
   none,
   zero,
   identity,
+  self_advection,
 };
 
 struct Options {
@@ -299,8 +300,20 @@ struct DiagnosticAdapterProviderSource {
       return "zero";
     case WindTendencySourceKind::identity:
       return "identity";
+    case WindTendencySourceKind::self_advection:
+      return "self_advection";
   }
   return "none";
+}
+
+[[nodiscard]] constexpr bool wind_tendency_gate_evidence(
+    const WindTendencySourceKind kind) noexcept {
+  return kind == WindTendencySourceKind::self_advection;
+}
+
+[[nodiscard]] constexpr bool wind_tendency_zero_or_identity_only(
+    const WindTendencySourceKind kind) noexcept {
+  return kind == WindTendencySourceKind::zero || kind == WindTendencySourceKind::identity;
 }
 
 [[nodiscard]] WindTendencySourceKind parse_wind_tendency_source(
@@ -326,8 +339,11 @@ struct DiagnosticAdapterProviderSource {
   if (trimmed == "identity") {
     return WindTendencySourceKind::identity;
   }
+  if (trimmed == "self-advection" || trimmed == "self_advection") {
+    return WindTendencySourceKind::self_advection;
+  }
   throw std::invalid_argument(
-      std::string(option) + " expects one of: none, zero, identity");
+      std::string(option) + " expects one of: none, zero, identity, self-advection");
 }
 
 [[nodiscard]] std::string_view wind_tendency_status_name(
@@ -558,8 +574,9 @@ Options:
   --variables A,B,C              Output variables; default strict fields, Times/XLAT/XLONG/HGT,
                                   plus available d02 PB/PHB/MUB/PSFC/U10/V10/T2/Q2/RAINC/RAINNC.
   --wind-tendency-source KIND    Opt in to selected-field U/V horizontal wind tendency plumbing.
-                                  KIND is none, zero, or identity; default none. zero and identity
-                                  are placeholder sources only and are not validation-gate evidence.
+                                  KIND is none, zero, identity, self-advection, or self_advection;
+                                  default none. zero and identity are placeholder sources only and
+                                  are not validation-gate evidence.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
@@ -1241,6 +1258,7 @@ void apply_selected_field_wind_tendency(
       static_cast<const tywrf::FieldStorage3D<float>&>(v_advect_y);
   WindTendencyOptInReport wind_report;
   wind_report.source_kind = options.wind_tendency_source;
+  const bool gate_evidence = wind_tendency_gate_evidence(options.wind_tendency_source);
   wind_report.kernel = tywrf::dynamics::apply_horizontal_wind_tendency(
       tywrf::dynamics::WindTendencyViews<float>{
           {u_target.view(),
@@ -1257,8 +1275,8 @@ void apply_selected_field_wind_tendency(
           .dy_m = static_cast<float>(kD02TargetDxMeters),
           .enable_horizontal_advection = true,
           .diagnostic_only = false,
-          .gate_candidate = false,
-          .validation_gate_evidence = false});
+          .gate_candidate = gate_evidence,
+          .validation_gate_evidence = gate_evidence});
   if (wind_report.kernel.status != tywrf::dynamics::WindTendencyStatus::ok) {
     throw std::runtime_error(
         "selected-field wind tendency failed: " +
@@ -1280,9 +1298,12 @@ void apply_selected_field_wind_tendency(
               "source_kind",
               std::string(wind_tendency_source_name(options.wind_tendency_source))),
           timeline_field("fields", "U_V"),
-          timeline_field("zero_or_identity_only", "true"),
-          timeline_field("gate_evidence", "false"),
-          timeline_field("validation_gate_evidence", "false"),
+          timeline_field(
+              "zero_or_identity_only",
+              wind_tendency_zero_or_identity_only(options.wind_tendency_source) ? "true"
+                                                                                : "false"),
+          timeline_field("gate_evidence", gate_evidence ? "true" : "false"),
+          timeline_field("validation_gate_evidence", gate_evidence ? "true" : "false"),
           timeline_field("uses_reference_end_truth", "false"),
           timeline_field("changed_u_points", wind_report.changed_u_points),
           timeline_field("changed_v_points", wind_report.changed_v_points),
@@ -4257,16 +4278,25 @@ void write_wind_tendency_attrs(
   }
 
   const auto& wind = *report.wind_tendency;
+  const bool gate_evidence = wind_tendency_gate_evidence(wind.source_kind);
+  const bool zero_or_identity_only = wind_tendency_zero_or_identity_only(wind.source_kind);
   write_text_attr(file, "TYWRF_WIND_TENDENCY_OPT_IN", "true");
   write_text_attr(file, "TYWRF_WIND_TENDENCY_APPLIED", "true");
   write_text_attr(
       file,
       "TYWRF_WIND_TENDENCY_SOURCE_KIND",
       wind_tendency_source_name(wind.source_kind));
-  write_text_attr(file, "TYWRF_WIND_TENDENCY_GATE_EVIDENCE", "false");
-  write_text_attr(file, "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE", "false");
+  write_text_attr(
+      file, "TYWRF_WIND_TENDENCY_GATE_EVIDENCE", gate_evidence ? "true" : "false");
+  write_text_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE",
+      gate_evidence ? "true" : "false");
   write_text_attr(file, "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH", "false");
-  write_text_attr(file, "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY", "true");
+  write_text_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY",
+      zero_or_identity_only ? "true" : "false");
   write_text_attr(file, "TYWRF_WIND_TENDENCY_WRITTEN_FIELDS", "U,V");
   write_text_attr(
       file,
@@ -5095,6 +5125,8 @@ void write_wind_tendency_json(
   }
 
   const auto& wind = *report.wind_tendency;
+  const bool gate_evidence = wind_tendency_gate_evidence(wind.source_kind);
+  const bool zero_or_identity_only = wind_tendency_zero_or_identity_only(wind.source_kind);
   write_json_bool(stream, "wind_tendency_opt_in", true, true, pretty);
   write_json_bool(stream, "wind_tendency_applied", true, true, pretty);
   write_json_string(
@@ -5103,11 +5135,12 @@ void write_wind_tendency_json(
       wind_tendency_source_name(wind.source_kind),
       true,
       pretty);
-  write_json_bool(stream, "wind_tendency_gate_evidence", false, true, pretty);
+  write_json_bool(stream, "wind_tendency_gate_evidence", gate_evidence, true, pretty);
   write_json_bool(
-      stream, "wind_tendency_validation_gate_evidence", false, true, pretty);
+      stream, "wind_tendency_validation_gate_evidence", gate_evidence, true, pretty);
   write_json_bool(stream, "wind_tendency_uses_reference_end_truth", false, true, pretty);
-  write_json_bool(stream, "wind_tendency_zero_or_identity_only", true, true, pretty);
+  write_json_bool(
+      stream, "wind_tendency_zero_or_identity_only", zero_or_identity_only, true, pretty);
   write_json_string(stream, "wind_tendency_written_fields", "U,V", true, pretty);
   write_json_string(
       stream,

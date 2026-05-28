@@ -1322,6 +1322,24 @@ deltas; must not handle `P`, `MU`, `PB`, or `PHB`; must not invoke pressure
 refresh, physics, or best-track nudging; must not lower d02 below `2 km`; and
 must not run or report `00:20` as validation progress.
 
+D85 is complete, validated, and pushed at commit `18bf109`
+(`Add selected-field wind tendency opt-in plumbing`). Its default `none` source
+emits no wind tendency metadata and does not alter winds. The `zero` and
+`identity` sources are placeholder plumbing modes only; they are strict-gate
+negative non-evidence and cannot be converted into closure evidence or
+selected-field pass proof.
+
+D86 selected-field wind tendency work remains outside diagnostic closures. It
+may add only a non-oracle `U`/`V` self-advection/prognostic source for the
+selected-field candidate path. Candidate metadata from that path may be
+gate-eligible, but a closure, report, or metadata-only result cannot prove a
+pass. The only valid proof is real strict `2025-07-26_00:10:00` d02 field and
+diagnostic success. D86 must not use reference-end truth, oracle/reference-copy
+data, WRF end-state deltas, or reference-end-derived tendencies; must not
+handle `P`, `MU`, `PB`, or `PHB`; must not invoke pressure refresh, physics,
+or best-track nudging; must not lower d02 below `2 km`; and must not run or
+report `00:20` as validation progress.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

@@ -448,10 +448,48 @@ void run_command(const std::string& command) {
   return value;
 }
 
+[[nodiscard]] std::vector<float> read_float_variable(
+    const int file_id,
+    const std::string_view name) {
+  int variable_id = -1;
+  check_nc(nc_inq_varid(file_id, std::string(name).c_str(), &variable_id), "inquire float var");
+  int ndim = 0;
+  check_nc(nc_inq_varndims(file_id, variable_id, &ndim), "inquire float var ndims");
+  std::vector<int> dim_ids(static_cast<std::size_t>(ndim));
+  check_nc(nc_inq_vardimid(file_id, variable_id, dim_ids.data()), "inquire float var dims");
+
+  std::size_t value_count = 1;
+  for (const int dim_id : dim_ids) {
+    std::size_t dim_len = 0;
+    check_nc(nc_inq_dimlen(file_id, dim_id, &dim_len), "inquire float var dim len");
+    value_count *= dim_len;
+  }
+  std::vector<float> values(value_count);
+  check_nc(nc_get_var_float(file_id, variable_id, values.data()), "read float var");
+  return values;
+}
+
 void expect_close(const float actual, const float expected, const std::string_view label) {
   if (std::fabs(actual - expected) > kTolerance) {
     std::cerr << label << " mismatch: got " << actual << ", expected " << expected << '\n';
     assert(false);
+  }
+}
+
+void expect_float_variable_match(
+    const int actual_file_id,
+    const int expected_file_id,
+    const std::string_view name,
+    const std::string_view label) {
+  const auto actual = read_float_variable(actual_file_id, name);
+  const auto expected = read_float_variable(expected_file_id, name);
+  assert(actual.size() == expected.size());
+  for (std::size_t index = 0; index < actual.size(); ++index) {
+    if (std::fabs(actual[index] - expected[index]) > kTolerance) {
+      std::cerr << label << " " << name << " mismatch at flat index " << index << ": got "
+                << actual[index] << ", expected " << expected[index] << '\n';
+      assert(false);
+    }
   }
 }
 
@@ -858,6 +896,18 @@ void assert_no_wind_tendency_attrs(const int file_id) {
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_OPT_IN"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_APPLIED"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SOURCE_KIND"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_GATE_EVIDENCE"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_WRITTEN_FIELDS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_STATUS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_V_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_UPDATED_U_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_UPDATED_V_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_CHANGED_U_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_CHANGED_V_POINTS"));
 }
 
 void assert_successful_candidate(
@@ -2198,30 +2248,14 @@ void assert_nonwind_fields_match(
     const int expected_file_id,
     const int actual_file_id,
     const std::string_view label) {
-  expect_close(
-      read_3d_value(actual_file_id, "P", 1, 9, 9),
-      read_3d_value(expected_file_id, "P", 1, 9, 9),
-      std::string(label) + " P");
-  expect_close(
-      read_2d_value(actual_file_id, "MU", 0, 9),
-      read_2d_value(expected_file_id, "MU", 0, 9),
-      std::string(label) + " MU");
-  expect_close(
-      read_3d_value(actual_file_id, "PB", 1, 9, 9),
-      read_3d_value(expected_file_id, "PB", 1, 9, 9),
-      std::string(label) + " PB");
-  expect_close(
-      read_3d_value(actual_file_id, "PHB", 2, 9, 9),
-      read_3d_value(expected_file_id, "PHB", 2, 9, 9),
-      std::string(label) + " PHB");
-  expect_close(
-      read_2d_value(actual_file_id, "MUB", 9, 9),
-      read_2d_value(expected_file_id, "MUB", 9, 9),
-      std::string(label) + " MUB");
-  expect_close(
-      read_2d_value(actual_file_id, "HGT", 9, 9),
-      read_2d_value(expected_file_id, "HGT", 9, 9),
-      std::string(label) + " HGT");
+  assert(read_times(actual_file_id) == read_times(expected_file_id));
+  const std::vector<std::string_view> nonwind_variables = {
+      "XLAT", "XLONG", "HGT",   "T",    "PH",   "MU", "P",
+      "QVAPOR", "PB",   "PHB",  "MUB",  "PSFC", "U10", "V10",
+      "T2",   "Q2",    "RAINC", "RAINNC"};
+  for (const auto variable : nonwind_variables) {
+    expect_float_variable_match(actual_file_id, expected_file_id, variable, label);
+  }
 }
 
 void assert_wind_tendency_opt_in_output(
@@ -2229,7 +2263,9 @@ void assert_wind_tendency_opt_in_output(
     const std::filesystem::path& output,
     const std::filesystem::path& log_path,
     const std::string_view source_kind,
-    const bool expect_uv_changes) {
+    const bool expect_uv_changes,
+    const bool expect_gate_evidence,
+    const bool expect_zero_or_identity_only) {
   int baseline_file_id = -1;
   int file_id = -1;
   check_nc(nc_open(baseline_output.string().c_str(), NC_NOWRITE, &baseline_file_id), "open wind baseline");
@@ -2239,10 +2275,16 @@ void assert_wind_tendency_opt_in_output(
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_APPLIED") == "true");
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_SOURCE_KIND") ==
          std::string(source_kind));
-  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_GATE_EVIDENCE") == "false");
-  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE") == "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_WIND_TENDENCY_GATE_EVIDENCE") ==
+      (expect_gate_evidence ? "true" : "false"));
+  assert(
+      read_text_attr(file_id, "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE") ==
+      (expect_gate_evidence ? "true" : "false"));
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH") == "false");
-  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY") ==
+      (expect_zero_or_identity_only ? "true" : "false"));
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_WRITTEN_FIELDS") == "U,V");
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_STATUS") == "ok");
   assert(read_double_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS") > 0.0);
@@ -2288,13 +2330,24 @@ void assert_wind_tendency_opt_in_output(
   assert(timeline_field_value(events, "wind_tendency_apply", "source_kind") ==
          std::string(source_kind));
   assert(timeline_field_value(events, "wind_tendency_apply", "fields") == "U_V");
-  assert(timeline_field_value(events, "wind_tendency_apply", "gate_evidence") == "false");
+  assert(
+      timeline_field_value(events, "wind_tendency_apply", "zero_or_identity_only") ==
+      (expect_zero_or_identity_only ? "true" : "false"));
+  assert(
+      timeline_field_value(events, "wind_tendency_apply", "gate_evidence") ==
+      (expect_gate_evidence ? "true" : "false"));
   assert(
       timeline_field_value(events, "wind_tendency_apply", "validation_gate_evidence") ==
-      "false");
+      (expect_gate_evidence ? "true" : "false"));
   assert(
       timeline_field_value(events, "wind_tendency_apply", "uses_reference_end_truth") ==
       "false");
+  assert(
+      timeline_u64_field(events, "wind_tendency_apply", "changed_u_points") ==
+      static_cast<std::uint64_t>(changed_u));
+  assert(
+      timeline_u64_field(events, "wind_tendency_apply", "changed_v_points") ==
+      static_cast<std::uint64_t>(changed_v));
 
   check_nc(nc_close(file_id), "close wind output");
   check_nc(nc_close(baseline_file_id), "close wind baseline");
@@ -2305,14 +2358,22 @@ void assert_wind_tendency_opt_in_output(
   assert(
       log.find("\"wind_tendency_source_kind\": \"" + std::string(source_kind) + "\"") !=
       std::string::npos);
-  assert(log.find("\"wind_tendency_gate_evidence\": false") != std::string::npos);
   assert(
-      log.find("\"wind_tendency_validation_gate_evidence\": false") !=
-      std::string::npos);
+      log.find(
+          "\"wind_tendency_gate_evidence\": " +
+          std::string(expect_gate_evidence ? "true" : "false")) != std::string::npos);
+  assert(
+      log.find(
+          "\"wind_tendency_validation_gate_evidence\": " +
+          std::string(expect_gate_evidence ? "true" : "false")) != std::string::npos);
   assert(
       log.find("\"wind_tendency_uses_reference_end_truth\": false") !=
       std::string::npos);
-  assert(log.find("\"wind_tendency_zero_or_identity_only\": true") != std::string::npos);
+  assert(
+      log.find(
+          "\"wind_tendency_zero_or_identity_only\": " +
+          std::string(expect_zero_or_identity_only ? "true" : "false")) !=
+      std::string::npos);
 }
 
 void assert_wind_tendency_paths(
@@ -2325,9 +2386,14 @@ void assert_wind_tendency_paths(
   const auto explicit_none_output = root / "tywrf_selected_field_wind_none";
   const auto zero_output = root / "tywrf_selected_field_wind_zero";
   const auto identity_output = root / "tywrf_selected_field_wind_identity";
+  const auto self_advection_output = root / "tywrf_selected_field_wind_self_advection";
+  const auto self_advection_alias_output =
+      root / "tywrf_selected_field_wind_self_advection_alias";
   const auto explicit_none_log = root / "wind_none.log";
   const auto zero_log = root / "wind_zero.log";
   const auto identity_log = root / "wind_identity.log";
+  const auto self_advection_log = root / "wind_self_advection.log";
+  const auto self_advection_alias_log = root / "wind_self_advection_alias.log";
 
   run_command(
       base_command(executable, d01_start, d02_start, template_path, explicit_none_output) +
@@ -2354,13 +2420,38 @@ void assert_wind_tendency_paths(
       base_command(executable, d01_start, d02_start, template_path, zero_output) +
       " --wind-tendency-source zero >" + shell_quote(zero_log) + " 2>&1");
   assert_wind_tendency_opt_in_output(
-      baseline_output, zero_output, zero_log, "zero", false);
+      baseline_output, zero_output, zero_log, "zero", false, false, true);
 
   run_command(
       base_command(executable, d01_start, d02_start, template_path, identity_output) +
       " --wind-tendency-source identity >" + shell_quote(identity_log) + " 2>&1");
   assert_wind_tendency_opt_in_output(
-      baseline_output, identity_output, identity_log, "identity", true);
+      baseline_output, identity_output, identity_log, "identity", true, false, true);
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, self_advection_output) +
+      " --wind-tendency-source self-advection >" + shell_quote(self_advection_log) + " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output,
+      self_advection_output,
+      self_advection_log,
+      "self_advection",
+      true,
+      true,
+      false);
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, self_advection_alias_output) +
+      " --wind-tendency-source self_advection >" + shell_quote(self_advection_alias_log) +
+      " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output,
+      self_advection_alias_output,
+      self_advection_alias_log,
+      "self_advection",
+      true,
+      true,
+      false);
 }
 
 void run_rejection_tests(

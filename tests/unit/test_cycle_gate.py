@@ -32,6 +32,22 @@ def _production_attrs(overrides: dict[str, object] | None = None) -> dict[str, o
     return attrs
 
 
+def _wind_tendency_evidence_attrs(
+    overrides: dict[str, object] | None = None,
+) -> dict[str, object]:
+    attrs = {
+        "TYWRF_WIND_TENDENCY_OPT_IN": "true",
+        "TYWRF_WIND_TENDENCY_APPLIED": "true",
+        "TYWRF_WIND_TENDENCY_SOURCE_KIND": "self_advection",
+        "TYWRF_WIND_TENDENCY_GATE_EVIDENCE": "true",
+        "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": "true",
+        "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "false",
+        "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY": "false",
+    }
+    attrs.update(overrides or {})
+    return attrs
+
+
 def _tc_fields(*, center_shift: bool = False, slp_offset_hpa: float = 0.0, vmax_offset: float = 0.0):
     shape = (5, 5)
     latitude = np.repeat(np.arange(10.0, 15.0)[:, None], shape[1], axis=1)
@@ -470,15 +486,7 @@ def test_cycle_gate_allows_wind_tendency_evidence_metadata(
 ) -> None:
     reference_dir, candidate_dir = _write_pair(
         tmp_path,
-        attrs={
-            "TYWRF_WIND_TENDENCY_OPT_IN": "true",
-            "TYWRF_WIND_TENDENCY_APPLIED": "true",
-            "TYWRF_WIND_TENDENCY_SOURCE_KIND": "prognostic_dynamics_tendency",
-            "TYWRF_WIND_TENDENCY_GATE_EVIDENCE": "true",
-            "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": "true",
-            "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "false",
-            "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY": "false",
-        },
+        attrs=_wind_tendency_evidence_attrs(),
     )
 
     report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
@@ -488,6 +496,35 @@ def test_cycle_gate_allows_wind_tendency_evidence_metadata(
 
     assert report.status == "passed"
     assert metadata.status == "passed"
+
+
+def test_cycle_gate_self_advection_wind_tendency_enters_normal_field_gate(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        field_offset=1.0,
+        attrs=_wind_tendency_evidence_attrs(),
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    payload = json.loads(report_to_json(report))
+    cycle = report.cycles[0]
+    diagnostics = {metric.name: metric for metric in cycle.diagnostics}
+    fields = {field.variable: field for field in cycle.fields}
+
+    assert report.status == "failed"
+    assert cycle.status == "failed"
+    assert diagnostics["candidate_metadata"].status == "passed"
+    assert fields["U"].status == "failed"
+    assert fields["U"].source_status == "threshold_exceeded"
+    assert {
+        metric.status
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
+    assert payload["first_failure"]["field"] == "U"
+    assert payload["first_failure"]["diagnostic"] is None
 
 
 def test_cycle_gate_reports_first_failure_for_10_min_progressive_run(tmp_path: Path) -> None:

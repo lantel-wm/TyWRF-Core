@@ -1547,6 +1547,26 @@ oracle/reference-copy sources, or WRF end-state deltas; must not handle `P`,
 nudging; must not lower d02 below `2 km`; and must not run or report `00:20`
 as an advanced validation gate.
 
+D85 is complete at commit `18bf109`
+(`Add selected-field wind tendency opt-in plumbing`). It was validated and
+pushed. The selected-field wind tendency default remains `none`; default
+execution emits no wind tendency metadata and provides no wind update. The
+`zero` and `identity` source modes are placeholder plumbing checks only. They
+are non-evidence and must be rejected by the strict gate rather than counted as
+candidate improvement.
+
+D86 validation scope may include only a selected-field `U`/`V` non-oracle wind
+tendency source from self-advection/prognostic candidate state. Candidate
+metadata from this source may be gate-eligible if all normal positive metadata
+requirements are met, but metadata eligibility is not a pass. The only pass
+proof is a real strict `2025-07-26_00:10:00` d02 run that passes both the
+strict field thresholds and TC diagnostic gates. D86 must not use
+reference-end truth, oracle/reference-copy sources, WRF end-state deltas, or
+reference-end-derived tendencies; must not handle `P`, `MU`, `PB`, or `PHB`;
+must not invoke pressure refresh, physics, or best-track nudging; must not
+lower d02 below `2 km`; and must not run or report `00:20` as validation
+progress.
+
 Example:
 
 ```bash

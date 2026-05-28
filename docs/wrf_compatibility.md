@@ -1782,6 +1782,23 @@ touch `P`, `MU`, `PB`, or `PHB`, must not invoke pressure refresh, physics, or
 best-track nudging, must not change d02 below `2 km`, and must not advance or
 report validation at `00:20`.
 
+D85 is complete, validated, and pushed at commit `18bf109`
+(`Add selected-field wind tendency opt-in plumbing`). The default selected-field
+wind tendency source remains `none`; that default emits no wind tendency
+metadata and makes no `U`/`V` tendency update. The `zero` and `identity`
+sources are placeholder wiring modes only. They are non-evidence, must be
+strict-gate rejected, and must not be described as wind compatibility progress.
+
+D86 may add only a selected-field `U`/`V` non-oracle wind tendency source based
+on self-advection/prognostic candidate state. If that source writes positive
+candidate metadata, the metadata may make the artifact gate-eligible, but it is
+not pass proof by itself. The only acceptable proof is a real strict
+`2025-07-26_00:10:00` d02 field and diagnostic gate success from that
+non-oracle candidate. D86 must not use reference-end or oracle sources, must
+not touch `P`, `MU`, `PB`, or `PHB`, must not invoke pressure refresh,
+physics, or best-track nudging, must not change d02 below `2 km`, and must not
+advance or report validation at `00:20`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
