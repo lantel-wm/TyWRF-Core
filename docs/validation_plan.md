@@ -1127,6 +1127,39 @@ formulas from reference-end truth, promote audit/probe/hidden-seam output to
 gate evidence, advance validation to `00:20`, reduce d02 below `2 km`, or add
 best-track nudging.
 
+D63 is now complete. Commit `3e1f6a7`
+(`Add selected-field formula observation telemetry`) is pushed to
+`origin/main`, and full validation passed CTest `29/29`, pytest `195/195`, and
+`git diff --check`. This is code and telemetry validation only, not a strict
+d02 gate pass.
+
+The D63 real candidate
+`build/validation/r63_pressure_formula_observation/wrfout_d02_2025-07-26_00:10:00`
+and audit
+`build/validation/r63_pressure_formula_observation/runtime_probe_audit.json`
+confirm that formula observation is present in the selected-field pressure
+probe path. The audit reports `25` formula records, all recorded and valid,
+and `0` pressure mismatches against the post-refresh probe `P`. This closes the
+NetCDF/audit-mismatch suspicion for negative `P`: the negative values are now
+evidence of formula/base-pressure term behavior, not serialization or parser
+disagreement.
+
+The D63 strict d02 `2025-07-26_00:10:00` gate still fails and remains the
+controlling validation status. The first failing field is `U` normalized RMSE
+`0.117875`; related failures are `V = 0.134244`, `MU = 0.133382`, `P =
+6.334952`, and storm-center error `43.482716 km`. Candidate fields `U`, `V`,
+`T`, `PH`, `MU`, `P`, `QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT` are numerically
+identical to D61, with max absolute difference `0.0`.
+
+D64 validation direction is pressure-budget audit and source/formula audit
+before any pressure formula correction. D64 reports may explain how
+base-pressure, perturbation-pressure, vertical coefficients, `ALB`, `theta`,
+and related formula terms contribute to the negative post-refresh `P`, but
+they are diagnostic-only. They cannot generate candidates, patch formulas or
+fields, tune formulas from reference-end truth, promote audit/probe/
+hidden-seam output to gate evidence, advance validation to `00:20`, reduce d02
+below `2 km`, or add best-track nudging.
+
 Example:
 
 ```bash

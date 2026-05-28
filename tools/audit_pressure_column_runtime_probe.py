@@ -779,6 +779,9 @@ def _correlate_formula_observation(
     matched: list[dict[str, Any]] = []
     mismatches: list[dict[str, Any]] = []
     missing_probe_post: list[dict[str, Any]] = []
+    pressure_budget_records: list[dict[str, Any]] = []
+    total_pressure_below_pb_records: list[dict[str, Any]] = []
+    pressure_drop_explained_records: list[dict[str, Any]] = []
     for record in formula_records:
         formula_p = record["values"].get("perturbation_pressure_pa")
         if formula_p is None:
@@ -812,12 +815,73 @@ def _correlate_formula_observation(
         matched.append(item)
         if not item["matches_within_tolerance"]:
             mismatches.append(item)
-    return _diag(
+
+        total_pressure = record["values"].get("total_pressure")
+        pb_value = record["values"].get("PB")
+        if total_pressure is None or pb_value is None:
+            continue
+        total_minus_pb = total_pressure - pb_value
+        perturbation_minus_total_minus_pb = formula_p - total_minus_pb
+        post_matches_total_minus_pb = (
+            abs(probe_p - total_minus_pb) <= PRESSURE_MATCH_TOLERANCE_PA
+        )
+        large_drop = probe_delta is not None and probe_delta <= -LARGE_P_DROP_PA
+        drop_matches_total_minus_pb = (
+            probe_delta is not None
+            and key in static_p
+            and abs(probe_delta - (total_minus_pb - static_p[key]))
+            <= PRESSURE_MATCH_TOLERANCE_PA
+        )
+        drop_explained = bool(
+            large_drop
+            and total_pressure < pb_value
+            and post_matches_total_minus_pb
+            and drop_matches_total_minus_pb
+        )
+        budget = {
+            "i": record["i"],
+            "j": record["j"],
+            "k": record["k"],
+            "total_pressure_pa": total_pressure,
+            "PB": pb_value,
+            "perturbation_pressure_pa": formula_p,
+            "probe_post_pressure_refresh_p": probe_p,
+            "total_pressure_minus_pb_pa": total_minus_pb,
+            "perturbation_minus_total_minus_pb_pa": (
+                perturbation_minus_total_minus_pb
+            ),
+            "formula_total_pressure_below_pb": total_pressure < pb_value,
+            "post_refresh_p_matches_total_minus_pb": post_matches_total_minus_pb,
+            "probe_delta_p": probe_delta,
+            "large_probe_drop": large_drop,
+            "pressure_drop_expected_from_total_minus_pb_pa": (
+                None if key not in static_p else total_minus_pb - static_p[key]
+            ),
+            "probe_delta_matches_total_minus_pb_minus_static_p": (
+                drop_matches_total_minus_pb
+            ),
+            "large_drop_explained_by_formula_base_subtraction": drop_explained,
+        }
+        pressure_budget_records.append(budget)
+        if budget["formula_total_pressure_below_pb"]:
+            total_pressure_below_pb_records.append(budget)
+        if drop_explained:
+            pressure_drop_explained_records.append(budget)
+    correlation = _diag(
         match_tolerance_pa=PRESSURE_MATCH_TOLERANCE_PA,
         matched_records=matched,
         pressure_mismatches=mismatches,
         missing_post_pressure_probe_records=missing_probe_post,
     )
+    if pressure_budget_records:
+        correlation["pressure_budget"] = _diag(
+            records=pressure_budget_records,
+            total_pressure_below_pb_records=total_pressure_below_pb_records,
+            pressure_drop_explained_by_base_subtraction_records=(
+                pressure_drop_explained_records
+            ),
+        )
+    return correlation
 
 
 def _formula_claims_enabled(
@@ -1062,6 +1126,40 @@ def _build_formula_risk_flags(
                     "match_tolerance_pa": PRESSURE_MATCH_TOLERANCE_PA,
                     "count": len(pressure_mismatches),
                     "examples": pressure_mismatches[:20],
+                },
+            )
+        )
+
+    pressure_budget = formula_correlation.get("pressure_budget", {})
+    below_pb_records = pressure_budget.get("total_pressure_below_pb_records", [])
+    if below_pb_records:
+        flags.append(
+            _risk(
+                "formula_total_pressure_below_base_pressure",
+                "warning",
+                "Formula observation total pressure is below the base pressure, so perturbation pressure is negative by construction.",
+                {
+                    "match_tolerance_pa": PRESSURE_MATCH_TOLERANCE_PA,
+                    "count": len(below_pb_records),
+                    "examples": below_pb_records[:20],
+                },
+            )
+        )
+
+    explained_records = pressure_budget.get(
+        "pressure_drop_explained_by_base_subtraction_records", []
+    )
+    if explained_records:
+        flags.append(
+            _risk(
+                "formula_pressure_drop_explained_by_base_subtraction",
+                "warning",
+                "Large post-refresh probe P drops are consistent with formula total-pressure minus base-pressure subtraction.",
+                {
+                    "match_tolerance_pa": PRESSURE_MATCH_TOLERANCE_PA,
+                    "large_drop_threshold_pa": LARGE_P_DROP_PA,
+                    "count": len(explained_records),
+                    "examples": explained_records[:20],
                 },
             )
         )

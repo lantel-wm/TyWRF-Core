@@ -78,14 +78,21 @@ def _formula_record(
     status: str = "recorded",
     valid: bool = True,
     perturbation_pressure_pa: float = 75.0,
+    pb: float = 99_700.0,
+    total_pressure: float | None = None,
 ) -> str:
+    total_pressure = (
+        pb + perturbation_pressure_pa
+        if total_pressure is None
+        else total_pressure
+    )
     return (
         f"status={status};valid={str(valid).lower()};i={i};j={j};k={k};"
         "mu_total=64200;pfu=0.72;pfd=0.28;phm=25500;log_ratio=0.003;"
-        "phi_lower=25100;phi_upper=25230;delta_phi=130;ALB=0.92;PB=99700;"
+        f"phi_lower=25100;phi_upper=25230;delta_phi=130;ALB=0.92;PB={pb};"
         "theta=301.5;alpha_total=0.83;alpha_perturbation=0.014;"
-        "alpha_from_wrf_branch=0.014;pressure_base=99700;"
-        f"total_pressure={99700.0 + perturbation_pressure_pa};"
+        f"alpha_from_wrf_branch=0.014;pressure_base={pb};"
+        f"total_pressure={total_pressure};"
         f"perturbation_pressure_pa={perturbation_pressure_pa}"
     )
 
@@ -158,6 +165,7 @@ def test_runtime_probe_parses_two_phases_and_deltas(tmp_path: Path) -> None:
     assert math.isclose(delta["P"], -5.0)
     assert math.isclose(delta["P+PB"], -5.0)
     assert payload["formula_observation"]["present"] is False
+    assert "pressure_budget" not in payload["formula_observation"]["correlation"]
     assert _flag_codes(payload) == {"formula_terms_unavailable"}
 
 
@@ -203,6 +211,13 @@ def test_formula_observation_correlates_with_probe_pressure(
     match = formula["correlation"]["matched_records"][0]
     assert math.isclose(match["difference_pa"], 0.0)
     assert math.isclose(match["probe_delta_p"], -5.0)
+    budget = formula["correlation"]["pressure_budget"]["records"][0]
+    assert math.isclose(budget["total_pressure_minus_pb_pa"], 75.0)
+    assert math.isclose(budget["perturbation_minus_total_minus_pb_pa"], 0.0)
+    assert budget["formula_total_pressure_below_pb"] is False
+    assert budget["post_refresh_p_matches_total_minus_pb"] is True
+    assert math.isclose(budget["probe_delta_p"], -5.0)
+    assert budget["large_drop_explained_by_formula_base_subtraction"] is False
 
 
 def test_formula_observation_flags_count_mismatch_and_malformed_values(
@@ -258,6 +273,62 @@ def test_formula_observation_flags_pressure_mismatch(tmp_path: Path) -> None:
     assert "formula_pressure_probe_mismatch" in codes
     mismatch = payload["formula_observation"]["correlation"]["pressure_mismatches"][0]
     assert math.isclose(mismatch["difference_pa"], 0.25)
+    budget = payload["formula_observation"]["correlation"]["pressure_budget"][
+        "records"
+    ][0]
+    assert budget["post_refresh_p_matches_total_minus_pb"] is False
+    assert math.isclose(budget["total_pressure_minus_pb_pa"], 75.25)
+
+
+def test_formula_observation_pressure_budget_flags_below_base_pressure(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    pb = 99_711.8828
+    total_pressure = 95_539.724
+    perturbation_pressure_pa = total_pressure - pb
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.1953125, pb=pb),
+            _record(
+                "post_pressure_refresh",
+                160,
+                49,
+                0,
+                p=perturbation_pressure_pa,
+                pb=pb,
+            ),
+        ]
+    )
+    attrs = _probe_attrs(values=values, record_count=2)
+    attrs["TYWRF_PRESSURE_COLUMN_PROBE_LEVEL_COUNT"] = 1
+    attrs["TYWRF_PRESSURE_COLUMN_PROBE_LEVELS"] = "0"
+    attrs.update(
+        _formula_attrs(
+            values=_formula_record(
+                perturbation_pressure_pa=perturbation_pressure_pa,
+                pb=pb,
+                total_pressure=total_pressure,
+            ),
+            record_count=1,
+        )
+    )
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "formula_total_pressure_below_base_pressure" in codes
+    assert "formula_pressure_drop_explained_by_base_subtraction" in codes
+    budget = payload["formula_observation"]["correlation"]["pressure_budget"][
+        "records"
+    ][0]
+    assert math.isclose(budget["total_pressure_minus_pb_pa"], perturbation_pressure_pa)
+    assert math.isclose(budget["perturbation_minus_total_minus_pb_pa"], 0.0)
+    assert budget["formula_total_pressure_below_pb"] is True
+    assert budget["post_refresh_p_matches_total_minus_pb"] is True
+    assert math.isclose(budget["probe_delta_p"], -4252.3541125)
+    assert budget["large_drop_explained_by_formula_base_subtraction"] is True
 
 
 def test_formula_observation_flags_nonfinite_terms(tmp_path: Path) -> None:

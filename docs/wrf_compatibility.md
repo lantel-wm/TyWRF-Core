@@ -1360,6 +1360,36 @@ from reference-end truth, generate oracle candidates, promote audit/probe/
 hidden-seam output to gate evidence, advance to `00:20`, reduce d02 below
 `2 km`, or introduce best-track nudging.
 
+D63 is now complete and synchronized. Commit `3e1f6a7`
+(`Add selected-field formula observation telemetry`) has been pushed to
+`origin/main`. Full code validation passed CTest `29/29`, pytest `195/195`,
+and `git diff --check`.
+
+The D63 real KROSA candidate is
+`build/validation/r63_pressure_formula_observation/wrfout_d02_2025-07-26_00:10:00`,
+with audit report
+`build/validation/r63_pressure_formula_observation/runtime_probe_audit.json`.
+It is telemetry/evidence-only, not a compatibility or validation-gate pass.
+The audit shows formula observation is present, with `25` formula records, all
+recorded and valid, and `0` pressure mismatches against the post-refresh probe
+`P`. Therefore the negative perturbation pressure is now traced to the recorded
+formula/base-pressure terms themselves, not to a NetCDF encoding problem or an
+audit/probe mismatch.
+
+The strict d02 `00:10` gate still fails for the D63 candidate. The first
+failing field is `U` normalized RMSE `0.117875`; additional failures are `V`
+`0.134244`, `MU` `0.133382`, `P` `6.334952`, and storm-center error
+`43.482716 km`. D63 candidate fields `U`, `V`, `T`, `PH`, `MU`, `P`,
+`QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT` are numerically identical to D61, with
+maximum absolute difference `0.0`.
+
+Round D64 compatibility work must stay on the diagnostic boundary: pressure
+budget audit and pressure source/formula audit come before any formula
+correction. D64 may attribute which terms drive the negative `P`, but it must
+not patch formulas, generate reference-end or oracle candidates, use audit/
+probe/hidden-seam output as gate evidence, advance to `00:20`, reduce d02
+below `2 km`, or introduce best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

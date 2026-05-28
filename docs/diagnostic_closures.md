@@ -896,6 +896,35 @@ reference-end oracle candidate generation, cannot promote audit/probe/
 hidden-seam output to gate evidence, cannot advance validation to `00:20`,
 cannot reduce d02 below `2 km`, and cannot introduce best-track nudging.
 
+Round D63 is complete but remains outside closure scope:
+
+- Commit `3e1f6a7` (`Add selected-field formula observation telemetry`) is
+  pushed to `origin/main`.
+- Full code validation passed CTest `29/29`, pytest `195/195`, and
+  `git diff --check`.
+- The real candidate
+  `build/validation/r63_pressure_formula_observation/wrfout_d02_2025-07-26_00:10:00`
+  and audit
+  `build/validation/r63_pressure_formula_observation/runtime_probe_audit.json`
+  report formula observation present, `25` formula records, all recorded and
+  valid, and `0` pressure mismatches against post-refresh probe `P`.
+- Negative post-refresh `P` is therefore traced to the observed formula and
+  base-pressure terms, not to a NetCDF writer mismatch, audit parser mismatch,
+  or hidden probe disagreement.
+- The strict `00:10` gate still fails: first failing field `U` normalized RMSE
+  `0.117875`, with `V = 0.134244`, `MU = 0.133382`, `P = 6.334952`, and
+  storm-center error `43.482716 km`.
+- D63 candidate fields `U`, `V`, `T`, `PH`, `MU`, `P`, `QVAPOR`, `PB`, `PHB`,
+  `MUB`, and `HGT` are numerically identical to D61, with max absolute
+  difference `0.0`.
+
+Round D64 must audit pressure budget and source/formula ownership before any
+formula correction. A closure must not use D64 observations to patch pressure,
+rewrite formula terms, tune from reference-end truth, generate reference-end or
+oracle candidates, convert audit/probe/hidden-seam output into gate evidence,
+advance validation to `00:20`, reduce d02 below `2 km`, or introduce
+best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
