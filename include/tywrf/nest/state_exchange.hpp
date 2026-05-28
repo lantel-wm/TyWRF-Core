@@ -18,11 +18,22 @@ enum class StateExchangeField : std::uint8_t {
   ph,
 };
 
+enum class WrfMovingNestBaseStateExchangeAction : std::uint8_t {
+  interpolate_exposed_cells,
+  recompute_from_mub_after_interpolation,
+  preserve_interpolated_when_rebalance_zero,
+  static_height_input,
+};
+
 struct WrfMovingNestBaseStateExchangeCandidate {
   std::string_view wrf_name;
+  WrfMovingNestBaseStateExchangeAction action =
+      WrfMovingNestBaseStateExchangeAction::interpolate_exposed_cells;
   bool state_backed = false;
   bool static_or_provider_backed = false;
   bool selected_field_interpolated = false;
+  bool diagnostic_only = true;
+  bool selected_field_numerics_enabled = false;
 };
 
 struct WrfMovingNestBaseStateExchangeContractReport {
@@ -31,6 +42,7 @@ struct WrfMovingNestBaseStateExchangeContractReport {
   std::array<WrfMovingNestBaseStateExchangeCandidate, 7> base_state_candidates{};
   std::uint8_t base_state_candidate_count = 0;
   bool diagnostic_only = true;
+  bool selected_field_numerics_enabled = false;
   bool enables_selected_field_numerics = false;
 };
 
@@ -120,6 +132,10 @@ struct StateExchangePlan {
 
 [[nodiscard]] std::array<StateExchangeField, 6>
 selected_state_exchange_fields() noexcept;
+
+[[nodiscard]] std::string_view
+wrf_moving_nest_base_state_exchange_action_name(
+    WrfMovingNestBaseStateExchangeAction action) noexcept;
 
 [[nodiscard]] std::array<WrfMovingNestBaseStateExchangeCandidate, 7>
 wrf_moving_nest_base_state_exchange_candidates() noexcept;

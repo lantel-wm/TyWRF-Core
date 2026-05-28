@@ -111,6 +111,21 @@ const tywrf::nest::WrfMovingNestBaseStateExchangeCandidate* find_base_state_cand
   return nullptr;
 }
 
+void expect_base_state_action(
+    const tywrf::nest::WrfMovingNestBaseStateExchangeContractReport& report,
+    const std::string_view wrf_name,
+    const tywrf::nest::WrfMovingNestBaseStateExchangeAction expected_action,
+    const std::string_view expected_action_name) {
+  const auto* candidate = find_base_state_candidate(report, wrf_name);
+  assert(candidate != nullptr);
+  assert(candidate->action == expected_action);
+  assert(
+      tywrf::nest::wrf_moving_nest_base_state_exchange_action_name(candidate->action) ==
+      expected_action_name);
+  assert(candidate->diagnostic_only);
+  assert(!candidate->selected_field_numerics_enabled);
+}
+
 bool selected_field_name_equals_base_state_candidate(
     const tywrf::nest::WrfMovingNestBaseStateExchangeContractReport& report) {
   for (std::uint8_t selected_index = 0;
@@ -138,8 +153,12 @@ void test_base_state_exchange_contract_is_diagnostic_only() {
   const auto report =
       tywrf::nest::describe_wrf_moving_nest_base_state_exchange_contract();
   assert(report.active_selected_field_count == selected.size());
+  for (std::uint8_t index = 0; index < report.active_selected_field_count; ++index) {
+    assert(report.active_selected_fields[index] == selected[index]);
+  }
   assert(report.base_state_candidate_count == 7);
   assert(report.diagnostic_only);
+  assert(!report.selected_field_numerics_enabled);
   assert(!report.enables_selected_field_numerics);
 
   assert(contains_base_state_candidate(report, "PHB"));
@@ -154,6 +173,8 @@ void test_base_state_exchange_contract_is_diagnostic_only() {
   assert(!selected_field_name_equals_base_state_candidate(report));
   for (std::uint8_t index = 0; index < report.base_state_candidate_count; ++index) {
     assert(!report.base_state_candidates[index].selected_field_interpolated);
+    assert(report.base_state_candidates[index].diagnostic_only);
+    assert(!report.base_state_candidates[index].selected_field_numerics_enabled);
   }
 
   const auto* phb = find_base_state_candidate(report, "PHB");
@@ -170,6 +191,51 @@ void test_base_state_exchange_contract_is_diagnostic_only() {
   assert(t_init != nullptr && !t_init->state_backed && t_init->static_or_provider_backed);
   assert(ht != nullptr && !ht->state_backed && ht->static_or_provider_backed);
   assert(hgt != nullptr && !hgt->state_backed && hgt->static_or_provider_backed);
+
+  expect_base_state_action(
+      report,
+      "PHB",
+      tywrf::nest::WrfMovingNestBaseStateExchangeAction::
+          preserve_interpolated_when_rebalance_zero,
+      "preserve_interpolated_when_rebalance_zero");
+  expect_base_state_action(
+      report,
+      "MUB",
+      tywrf::nest::WrfMovingNestBaseStateExchangeAction::interpolate_exposed_cells,
+      "interpolate_exposed_cells");
+  expect_base_state_action(
+      report,
+      "PB",
+      tywrf::nest::WrfMovingNestBaseStateExchangeAction::
+          recompute_from_mub_after_interpolation,
+      "recompute_from_mub_after_interpolation");
+  expect_base_state_action(
+      report,
+      "ALB",
+      tywrf::nest::WrfMovingNestBaseStateExchangeAction::
+          recompute_from_mub_after_interpolation,
+      "recompute_from_mub_after_interpolation");
+  expect_base_state_action(
+      report,
+      "T_INIT",
+      tywrf::nest::WrfMovingNestBaseStateExchangeAction::
+          recompute_from_mub_after_interpolation,
+      "recompute_from_mub_after_interpolation");
+  expect_base_state_action(
+      report,
+      "HT",
+      tywrf::nest::WrfMovingNestBaseStateExchangeAction::static_height_input,
+      "static_height_input");
+  expect_base_state_action(
+      report,
+      "HGT",
+      tywrf::nest::WrfMovingNestBaseStateExchangeAction::static_height_input,
+      "static_height_input");
+
+  assert(
+      tywrf::nest::wrf_moving_nest_base_state_exchange_action_name(
+          static_cast<tywrf::nest::WrfMovingNestBaseStateExchangeAction>(255)) ==
+      std::string_view("unknown"));
 }
 
 void test_exposed_strip_accounting() {

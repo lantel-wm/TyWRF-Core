@@ -980,6 +980,42 @@ but it must not generate reference-end or oracle candidates, convert
 audit/probe/hidden-seam output into gate evidence, reduce d02 below `2 km`, or
 introduce best-track nudging.
 
+At D67 start, D66 was locally committed as `09d6ba2`
+(`Add moving-nest base-state exchange contract`) but not yet pushed. Local
+`main` was ahead of `origin/main` by one commit; `origin/main` remained
+`07908b1` because SSH push on port `22` timed out and SSH-over-443 failed with
+`Permission denied (publickey)`. D66 validation before the local commit passed
+CTest `29/29` and pytest `197/197`.
+
+The D66 contract remains outside diagnostic-closure authority. It records
+selected fields `U`, `V`, `MU`, `QVAPOR`, `T`, and `PH`; base-state candidates
+`PHB`, `MUB`, `PB`, `ALB`, `T_INIT`, `HT`, and `HGT`; no selected-field
+interpolation for those base-state candidates; and no `P` base-state candidate.
+`PHB`, `MUB`, and `PB` are State-backed candidates, while `ALB`, `T_INIT`,
+`HT`, and `HGT` are static/provider-backed candidates. The contract is marked
+`diagnostic_only = true` and `enables_selected_field_numerics = false`.
+Exposed-child exchange planning counts future interpolation work without
+writing fields: `performed_interpolation = false`, `modifies_overlap = false`,
+and `modifies_halo = false`.
+
+B66 found that WRF generated unstaggered moving-nest mask semantics
+(`imask_nostag`) apply to `PHB`, `T_INIT`, `MUB`, `ALB`, `PB`, and `HT`, and
+that WRF `start_domain` recompute rules must remain distinct from closure
+patches or selected-field numerical interpolation. A closure must not use those
+facts to overwrite base fields, hide missing exposed-mask actions, or repair a
+candidate with reference-end truth.
+
+D67 closure boundary: an opt-in diagnostic base-field provenance/action report
+and exposed-mask regression design are allowed, but only as audit artifacts.
+They may expose base-field source/action categories for newly exposed d02
+cells and test WRF-style mask geometry. Action labels such as
+`interpolate_exposed_cells`, `recompute_from_mub_after_interpolation`,
+`preserve_interpolated_when_rebalance_zero`, and `static_height_input` are
+diagnostic report labels, not closure permissions. They must not open the
+selected-field numerical path, generate reference-end or oracle candidates,
+convert audit/probe/hidden-seam output into gate evidence, advance validation
+to `00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

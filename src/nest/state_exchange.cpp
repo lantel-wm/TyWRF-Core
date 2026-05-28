@@ -315,16 +315,84 @@ std::array<StateExchangeField, 6> selected_state_exchange_fields() noexcept {
   };
 }
 
+std::string_view wrf_moving_nest_base_state_exchange_action_name(
+    const WrfMovingNestBaseStateExchangeAction action) noexcept {
+  switch (action) {
+    case WrfMovingNestBaseStateExchangeAction::interpolate_exposed_cells:
+      return "interpolate_exposed_cells";
+    case WrfMovingNestBaseStateExchangeAction::recompute_from_mub_after_interpolation:
+      return "recompute_from_mub_after_interpolation";
+    case WrfMovingNestBaseStateExchangeAction::preserve_interpolated_when_rebalance_zero:
+      return "preserve_interpolated_when_rebalance_zero";
+    case WrfMovingNestBaseStateExchangeAction::static_height_input:
+      return "static_height_input";
+  }
+  return "unknown";
+}
+
 std::array<WrfMovingNestBaseStateExchangeCandidate, 7>
 wrf_moving_nest_base_state_exchange_candidates() noexcept {
   return {
-      WrfMovingNestBaseStateExchangeCandidate{"PHB", true, false, false},
-      WrfMovingNestBaseStateExchangeCandidate{"MUB", true, false, false},
-      WrfMovingNestBaseStateExchangeCandidate{"PB", true, false, false},
-      WrfMovingNestBaseStateExchangeCandidate{"ALB", false, true, false},
-      WrfMovingNestBaseStateExchangeCandidate{"T_INIT", false, true, false},
-      WrfMovingNestBaseStateExchangeCandidate{"HT", false, true, false},
-      WrfMovingNestBaseStateExchangeCandidate{"HGT", false, true, false},
+      WrfMovingNestBaseStateExchangeCandidate{
+          "PHB",
+          WrfMovingNestBaseStateExchangeAction::
+              preserve_interpolated_when_rebalance_zero,
+          true,
+          false,
+          false,
+          true,
+          false},
+      WrfMovingNestBaseStateExchangeCandidate{
+          "MUB",
+          WrfMovingNestBaseStateExchangeAction::interpolate_exposed_cells,
+          true,
+          false,
+          false,
+          true,
+          false},
+      WrfMovingNestBaseStateExchangeCandidate{
+          "PB",
+          WrfMovingNestBaseStateExchangeAction::
+              recompute_from_mub_after_interpolation,
+          true,
+          false,
+          false,
+          true,
+          false},
+      WrfMovingNestBaseStateExchangeCandidate{
+          "ALB",
+          WrfMovingNestBaseStateExchangeAction::
+              recompute_from_mub_after_interpolation,
+          false,
+          true,
+          false,
+          true,
+          false},
+      WrfMovingNestBaseStateExchangeCandidate{
+          "T_INIT",
+          WrfMovingNestBaseStateExchangeAction::
+              recompute_from_mub_after_interpolation,
+          false,
+          true,
+          false,
+          true,
+          false},
+      WrfMovingNestBaseStateExchangeCandidate{
+          "HT",
+          WrfMovingNestBaseStateExchangeAction::static_height_input,
+          false,
+          true,
+          false,
+          true,
+          false},
+      WrfMovingNestBaseStateExchangeCandidate{
+          "HGT",
+          WrfMovingNestBaseStateExchangeAction::static_height_input,
+          false,
+          true,
+          false,
+          true,
+          false},
   };
 }
 
@@ -339,6 +407,7 @@ describe_wrf_moving_nest_base_state_exchange_contract() noexcept {
   report.base_state_candidate_count =
       static_cast<std::uint8_t>(report.base_state_candidates.size());
   report.diagnostic_only = true;
+  report.selected_field_numerics_enabled = false;
   report.enables_selected_field_numerics = false;
   return report;
 }

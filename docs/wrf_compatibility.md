@@ -1437,6 +1437,50 @@ open the selected-field numerical path yet, generate reference-end or oracle
 candidates, treat audit/probe/hidden-seam output as gate evidence, reduce d02
 below `2 km`, or introduce best-track nudging.
 
+At D67 start, D66 was locally committed as `09d6ba2`
+(`Add moving-nest base-state exchange contract`) but not yet pushed. Local
+`main` was ahead of `origin/main` by one commit; `origin/main` remained
+`07908b1` because SSH push on port `22` timed out and SSH-over-443 failed with
+`Permission denied (publickey)`.
+
+The D66 contract is diagnostic-only. It reports active selected fields
+`U`, `V`, `MU`, `QVAPOR`, `T`, and `PH`, while the WRF broad base-state
+candidate set is `PHB`, `MUB`, `PB`, `ALB`, `T_INIT`, `HT`, and `HGT`.
+`PHB`, `MUB`, and `PB` are State-backed candidates; `ALB`, `T_INIT`, `HT`,
+and `HGT` are static/provider-backed candidates. No base-state candidate is
+marked as selected-field interpolated, `P` is excluded from that base-state
+candidate list, `diagnostic_only = true`, and
+`enables_selected_field_numerics = false`.
+
+D66 also adds exposed-child exchange planning for the selected fields. The
+plan describes newly exposed active child strips, their stagger, point counts,
+and whether future parent interpolation is required. It does not interpolate,
+does not mutate fields, and reports `performed_interpolation = false`,
+`modifies_overlap = false`, and `modifies_halo = false`. D66 validation before
+the local commit passed CTest `29/29` and pytest `197/197`.
+
+B66 refined the WRF compatibility target: WRF's generated moving-nest
+`imask_nostag` semantics apply to `PHB`, `T_INIT`, `MUB`, `ALB`, `PB`, and
+`HT`, and WRF `start_domain` recompute rules govern which generated/base
+fields are recomputed after nest movement. TyWRF must therefore distinguish
+overlap remap, exposed-mask parent/base interpolation, static/provider
+generation, and `start_domain` recompute provenance instead of treating these
+fields as ordinary selected-field numerical outputs.
+
+D67 compatibility direction is an opt-in diagnostic base-field
+provenance/action report plus exposed-mask regression design. The report should
+make base-field action and source state explicit for exposed d02 cells, and
+the regression design should pin WRF-style unstaggered exposed-mask geometry.
+The intended action vocabulary is diagnostic-only:
+`interpolate_exposed_cells` for `MUB`,
+`recompute_from_mub_after_interpolation` for `PB`, `ALB`, and `T_INIT`,
+`preserve_interpolated_when_rebalance_zero` for `PHB`, and
+`static_height_input` for `HT`/`HGT`.
+D67 still must not open the selected-field numerical path, generate
+reference-end or oracle candidates, treat audit/probe/hidden-seam output as
+gate evidence, advance validation to `00:20`, reduce d02 below `2 km`, or
+introduce best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
