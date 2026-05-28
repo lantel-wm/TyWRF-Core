@@ -1535,6 +1535,34 @@ or restart substitutes as compatibility evidence. It must not advance
 validation to `00:20`, reduce d02 below `2 km`, or introduce best-track
 nudging.
 
+D71 is now complete, fully validated, pushed, and synchronized at commit
+`9b08d09` (`Guard diagnostic adapter gate metadata`). The guard keeps
+diagnostic adapter artifacts classified by role/kind before any positive
+candidate booleans are considered, so pseudo-positive adapter metadata cannot
+be promoted into a normal compatibility candidate. `main` and `origin/main`
+are synchronized at this commit, and the strict d02
+`2025-07-26_00:10:00` gate still fails.
+
+D72 may wire an opt-in diagnostic adapter report path for the exposed
+base-state adapter. That path is limited to reporting and diagnostic
+staging/audit metadata. It must not be connected to the normal
+pressure-refresh candidate path, must not write or relabel a production
+`selected_field_cycle` candidate, and must not change strict-gate
+eligibility. Any D72 adapter artifact must remain metadata non-gate:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
+
+The strict d02 gate must reject D72 diagnostic adapter output by default. Such
+output is not a model pass, not pressure-refresh gate evidence, and not
+validated integrator output. D72 must not use reference-end truth, oracle or
+reference-copy products, diagnostic/probe/helper output, adapter reports, or
+restart substitutes as compatibility evidence; it must not advance validation
+to `00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

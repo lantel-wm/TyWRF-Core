@@ -13,6 +13,7 @@ START = "2025-07-26_00:00:00"
 END = "2025-07-26_06:00:00"
 END_FILE = "wrfout_d02_2025-07-26_06:00:00"
 SELECTED_FIELD_INTEGRATOR_KIND = "selected_field_integrator_v0"
+SELECTED_FIELD_DIAGNOSTIC_ADAPTER_KIND = "selected_field_diagnostic_adapter_v0"
 PRODUCTION_CANDIDATE_ATTRS = {
     "TYWRF_GATE_CANDIDATE": "true",
     "TYWRF_INTEGRATOR_OUTPUT": "true",
@@ -222,6 +223,49 @@ def test_cycle_gate_rejects_related_artifact_metadata_tokens(
     assert metadata.status == "failed"
     assert f"{metadata_name}={metadata_value}" in (metadata.message or "")
     assert {field.status for field in report.cycles[0].fields} == {"passed"}
+
+
+def test_cycle_gate_rejects_selected_field_diagnostic_adapter_ready_counts(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_CANDIDATE_KIND": SELECTED_FIELD_DIAGNOSTIC_ADAPTER_KIND,
+            "TYWRF_SELECTED_FIELD_DIAGNOSTIC_ADAPTER": (
+                SELECTED_FIELD_DIAGNOSTIC_ADAPTER_KIND
+            ),
+            "TYWRF_SELECTED_FIELD_DIAGNOSTIC_ADAPTER_READY": "true",
+            "TYWRF_SELECTED_FIELD_DIAGNOSTIC_ADAPTER_READY_COUNT": 25,
+            "TYWRF_SELECTED_FIELD_DIAGNOSTIC_ADAPTER_TOTAL_COUNT": 25,
+            "TYWRF_SELECTED_FIELD_STAGING_READY": "true",
+            "TYWRF_SELECTED_FIELD_STAGING_COLUMN_COUNT": 25,
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    diagnostics = {metric.name: metric for metric in report.cycles[0].diagnostics}
+    metadata = diagnostics["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert metadata.status == "failed"
+    assert f"TYWRF_CANDIDATE_KIND={SELECTED_FIELD_DIAGNOSTIC_ADAPTER_KIND}" in (
+        metadata.message or ""
+    )
+    assert (
+        f"TYWRF_SELECTED_FIELD_DIAGNOSTIC_ADAPTER={SELECTED_FIELD_DIAGNOSTIC_ADAPTER_KIND}"
+        in (metadata.message or "")
+    )
+    assert "TYWRF_SELECTED_FIELD_DIAGNOSTIC_ADAPTER_READY=true" in (
+        metadata.message or ""
+    )
+    assert "TYWRF_SELECTED_FIELD_STAGING_READY=true" in (metadata.message or "")
+    assert {field.status for field in report.cycles[0].fields} == {"passed"}
+    assert {
+        metric.status
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
 
 
 def test_cycle_gate_allows_false_related_metadata_flags_for_integrator_candidate(

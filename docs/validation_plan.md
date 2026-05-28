@@ -1294,6 +1294,32 @@ remain excluded from strict-gate evidence. Validation must not use
 reference-end truth or oracle candidates, must not advance to `00:20`, must not
 lower d02 below `2 km`, and must not introduce best-track nudging.
 
+D71 is now complete, fully validated, pushed, and synchronized at commit
+`9b08d09` (`Guard diagnostic adapter gate metadata`). Its result is a metadata
+guard, not a numerical model improvement: `main` and `origin/main` are
+synchronized, and the strict d02 `2025-07-26_00:10:00` gate still fails. The
+guard requires strict-gate tooling to reject helper/probe/adapter/dry-run/
+staging/experimental/diagnostic/oracle/reference-copy roles before reporting
+any pass/fail interpretation from field metrics.
+
+D72 may add an opt-in diagnostic adapter report path only. It must remain
+separate from the normal pressure-refresh candidate path and cannot be used as
+the pressure-refresh producer for a strict d02 candidate. Every D72 diagnostic
+adapter report or artifact must carry non-gate metadata:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
+
+Default strict gate behavior must reject D72 diagnostic adapter output. A D72
+diagnostic report can explain adapter wiring state, but it is not a model
+pass, cannot satisfy `00:10`, and cannot permit validation to advance to
+`00:20`. It must not use reference-end truth, oracle/reference-copy output,
+diagnostic/probe/helper artifacts, adapter telemetry, or restart substitutes as
+gate evidence; d02 remains `2 km`, and best-track nudging remains out of scope.
+
 Example:
 
 ```bash

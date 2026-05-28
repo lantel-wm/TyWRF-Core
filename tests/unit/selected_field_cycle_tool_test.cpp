@@ -1386,6 +1386,7 @@ void assert_hidden_apply_flag_absent_from_help(
   assert(help.find("--pressure-column-probe") != std::string::npos);
   assert(help.find("--pressure-column-levels") != std::string::npos);
   assert(help.find("--experimental-pressure-refresh-apply") == std::string::npos);
+  assert(help.find("--diagnostic-base-state-adapter-report") == std::string::npos);
   assert(help.find("--candidate-disposition-self-test") == std::string::npos);
 }
 
@@ -1456,6 +1457,104 @@ void assert_experimental_pressure_refresh_apply(
       output,
       log_path,
       {true, false, false, "selected_field_pressure_refresh_experimental_apply_v0"});
+}
+
+void assert_diagnostic_adapter_report_path(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path) {
+  std::filesystem::remove(output);
+  assert(!std::filesystem::exists(output));
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, output) +
+      " --diagnostic-base-state-adapter-report >" + shell_quote(log_path) + " 2>&1");
+  assert(std::filesystem::exists(output));
+
+  const auto log = read_file(log_path);
+  assert(log.find("\"status\": \"selected_field_diagnostic_adapter_reported\"") !=
+         std::string::npos);
+  assert(log.find("\"candidate_kind\": \"selected_field_diagnostic_adapter_v0\"") !=
+         std::string::npos);
+  assert(log.find("\"diagnostic_only\": true") != std::string::npos);
+  assert(log.find("\"gate_candidate\": false") != std::string::npos);
+  assert(log.find("\"integrator_output\": false") != std::string::npos);
+  assert(log.find("\"pressure_refresh_applied\": true") == std::string::npos);
+  assert(log.find("\"pressure_refresh_integration_status\"") == std::string::npos);
+  assert(log.find("\"diagnostic_adapter_opt_in\": true") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_ok\": true") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_diagnostic_only\": true") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_gate_candidate\": false") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_integrator_output\": false") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_writes_netcdf\": false") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_writes_candidate\": false") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_called_d68_exchange\": true") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_called_d69_recompute\": true") != std::string::npos);
+  assert(log.find("\"diagnostic_adapter_integration_status\": "
+                  "\"staging_report_only_no_gate_no_integrator\"") != std::string::npos);
+  assert(json_number_field(log, "diagnostic_adapter_c3h_count") == 2.0);
+  assert(json_number_field(log, "diagnostic_adapter_c4h_count") == 2.0);
+  assert(json_number_field(log, "diagnostic_adapter_exposed_mass_cell_count") > 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_recomputed_point_count") > 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_invalid_point_count") == 0.0);
+  assert_disposition_report_matches_metadata(
+      output,
+      log_path,
+      {true, false, false, "selected_field_diagnostic_adapter_v0"});
+
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open diagnostic adapter output");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_OPT_IN") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_OK") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_DIAGNOSTIC_ONLY") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_GATE_CANDIDATE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_INTEGRATOR_OUTPUT") == "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SELECTED_FIELD_NUMERICS_ENABLED") ==
+      "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_WRITES_NETCDF") == "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_WRITES_CANDIDATE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_CALLED_D68_EXCHANGE") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_CALLED_D69_RECOMPUTE") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_HT_DIAGNOSTIC_LABEL") == "HGT");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_HT_IS_HGT_ALIAS") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_CREATES_TERRAIN_OWNER") == "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_TERRAIN_OWNER_CREATED") == "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_METADATA_SOURCE") ==
+         template_path.string());
+  assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_C3H_COUNT") == 2.0);
+  assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_C4H_COUNT") == 2.0);
+  assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_EXPOSED_MASS_CELL_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_RECOMPUTED_POINT_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_INVALID_POINT_COUNT") == 0.0);
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
+  const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
+  assert(events.find(":diagnostic_adapter_report(") != std::string::npos);
+  assert(timeline_field_value(events, "diagnostic_adapter_report", "opt_in") == "true");
+  assert(timeline_field_value(events, "diagnostic_adapter_report", "diagnostic_only") == "true");
+  assert(timeline_field_value(events, "diagnostic_adapter_report", "gate_candidate") == "false");
+  assert(timeline_field_value(events, "diagnostic_adapter_report", "integrator_output") == "false");
+  assert(timeline_field_value(events, "diagnostic_adapter_report", "writes_candidate") == "false");
+  assert(timeline_field_value(events, "pressure_refresh_apply", "applied") == "false");
+  const auto candidate_message = read_text_attr(file_id, "TYWRF_CANDIDATE_MESSAGE");
+  assert(candidate_message.find("Diagnostic-only selected-field base-state adapter") !=
+         std::string::npos);
+  assert(candidate_message.find("not a validation gate pass or normal integrator output") !=
+         std::string::npos);
+  assert(candidate_message.find("staging buffers only") != std::string::npos);
+
+  const auto preserved_exposed_p = linear_3d(1, 9, 9, 60'000.0F, 1.0F, 10.0F, 100.0F);
+  const auto preserved_pb = linear_3d(1, 9, 9, 80'000.0F, 1.0F, 10.0F, 100.0F);
+  const auto preserved_phb = linear_3d(2, 9, 9, 90'000.0F, 1.0F, 10.0F, 100.0F);
+  const auto preserved_mub = linear_2d(9, 9, 100'000.0F, 1.0F, 10.0F);
+  expect_close(read_3d_value(file_id, "P", 1, 9, 9), preserved_exposed_p, "adapter P preserved");
+  expect_close(read_3d_value(file_id, "PB", 1, 9, 9), preserved_pb, "adapter PB preserved");
+  expect_close(read_3d_value(file_id, "PHB", 2, 9, 9), preserved_phb, "adapter PHB preserved");
+  expect_close(read_2d_value(file_id, "MUB", 9, 9), preserved_mub, "adapter MUB preserved");
+  check_nc(nc_close(file_id), "close diagnostic adapter output");
 }
 
 void run_rejection_tests(
@@ -1530,6 +1629,13 @@ void run_rejection_tests(
              "--experimental-pressure-refresh-apply requires --pressure-refresh") !=
          std::string::npos);
 
+  const auto adapter_pressure_output = root / "adapter_pressure_rejected";
+  const auto adapter_pressure_status = run_command_status(
+      base_command(executable, d01_start, d02_start, template_path, adapter_pressure_output) +
+      " --pressure-refresh --diagnostic-base-state-adapter-report >/dev/null 2>&1");
+  assert(adapter_pressure_status != 0);
+  assert(!std::filesystem::exists(adapter_pressure_output));
+
   const std::vector<std::string> bad_probe_options = {
       "--pressure-column-probe 9",
       "--pressure-column-probe bad",
@@ -1578,6 +1684,8 @@ int main(const int argc, char** argv) {
         root / "tywrf_selected_field_pressure_formula_outside_d02_2025-07-26_00:10:00";
     const auto experimental_pressure_output =
         root / "tywrf_selected_field_experimental_pressure_d02_2025-07-26_00:10:00";
+    const auto diagnostic_adapter_output =
+        root / "tywrf_selected_field_diagnostic_adapter_d02_2025-07-26_00:10:00";
     const auto invalid_pressure_output =
         root / "tywrf_selected_field_invalid_pressure_d02_2025-07-26_00:10:00";
     const auto default_log = root / "selected_field_default.log";
@@ -1586,6 +1694,7 @@ int main(const int argc, char** argv) {
     const auto pressure_column_probe_refresh_log = root / "pressure_column_probe_refresh.log";
     const auto pressure_formula_outside_log = root / "pressure_formula_outside.log";
     const auto experimental_pressure_log = root / "pressure_refresh_experimental_apply.log";
+    const auto diagnostic_adapter_log = root / "diagnostic_adapter_report.log";
     const auto invalid_pressure_log = root / "pressure_refresh_invalid_dry_run.log";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
     create_wrf_fixture(
@@ -1655,6 +1764,13 @@ int main(const int argc, char** argv) {
         pressure_template_path,
         experimental_pressure_output,
         experimental_pressure_log);
+    assert_diagnostic_adapter_report_path(
+        executable,
+        d01_start,
+        d02_start,
+        pressure_template_path,
+        diagnostic_adapter_output,
+        diagnostic_adapter_log);
     assert_pressure_refresh_invalid_dry_run_fail_closed(
         executable,
         d01_invalid_pressure_start,

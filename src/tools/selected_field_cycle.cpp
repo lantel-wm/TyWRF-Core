@@ -2,6 +2,7 @@
 #include "tywrf/dynamics/pressure_refresh_hook.hpp"
 #include "tywrf/io/pressure_refresh_io.hpp"
 #include "tywrf/io/wrf_state_io.hpp"
+#include "tywrf/nest/base_state_exchange_adapter.hpp"
 #include "tywrf/nest/parent_child_interpolation.hpp"
 #include "tywrf/nest/static_fields.hpp"
 #include "tywrf/nest/state_exchange.hpp"
@@ -115,6 +116,7 @@ struct Options {
   bool has_to_parent_start = false;
   bool pressure_refresh = false;
   bool experimental_pressure_refresh_apply = false;
+  bool diagnostic_adapter_report = false;
   bool pretty = false;
   std::vector<std::string> variables;
   std::vector<std::pair<std::int32_t, std::int32_t>> pressure_column_probe_columns;
@@ -165,6 +167,10 @@ struct CandidateReport {
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport>
       pressure_refresh_dry_run_contract;
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh;
+  std::optional<tywrf::nest::ExposedBaseStateExchangeAdapterReport>
+      diagnostic_adapter;
+  std::filesystem::path diagnostic_adapter_metadata_source;
+  std::size_t diagnostic_adapter_metadata_time_index = 0;
   std::filesystem::path pressure_refresh_metadata_source;
   std::size_t pressure_refresh_metadata_time_index = 0;
   std::uint64_t pressure_refresh_changed_p_points = 0;
@@ -193,8 +199,58 @@ struct StaticFieldSet {
   tywrf::FieldStorage2D<float> hgt;
 };
 
+struct DiagnosticBaseStateAdapterStaging {
+  explicit DiagnosticBaseStateAdapterStaging(const tywrf::Grid& grid)
+      : phb(grid.w_layout()),
+        mub(grid.surface_layout()),
+        pb(grid.mass_layout()),
+        t_init(grid.mass_layout()),
+        alb(grid.mass_layout()),
+        ht(grid.surface_layout()) {}
+
+  tywrf::FieldStorage3D<float> phb;
+  tywrf::FieldStorage2D<float> mub;
+  tywrf::FieldStorage3D<float> pb;
+  tywrf::FieldStorage3D<float> t_init;
+  tywrf::FieldStorage3D<float> alb;
+  tywrf::FieldStorage2D<float> ht;
+};
+
 [[nodiscard]] const char* bool_text(const bool value) noexcept {
   return value ? "true" : "false";
+}
+
+template <typename Storage>
+void copy_storage(
+    const Storage& source,
+    Storage& destination,
+    const std::string_view label) {
+  if (source.size() != destination.size()) {
+    throw std::runtime_error(std::string(label) + " staging shape mismatch");
+  }
+  std::copy(source.data(), source.data() + source.size(), destination.data());
+}
+
+[[nodiscard]] tywrf::nest::ExposedBaseStateViews<const float>
+diagnostic_adapter_views(const DiagnosticBaseStateAdapterStaging& staging) {
+  return {
+      staging.phb.view(),
+      staging.mub.view(),
+      staging.pb.view(),
+      staging.t_init.view(),
+      staging.alb.view(),
+      staging.ht.view()};
+}
+
+[[nodiscard]] tywrf::nest::ExposedBaseStateViews<float>
+diagnostic_adapter_views(DiagnosticBaseStateAdapterStaging& staging) {
+  return {
+      staging.phb.view(),
+      staging.mub.view(),
+      staging.pb.view(),
+      staging.t_init.view(),
+      staging.alb.view(),
+      staging.ht.view()};
 }
 
 [[nodiscard]] std::string timeline_value(std::string value) {
@@ -561,6 +617,8 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       options.variables = split_variables(require_value(arg));
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
+    } else if (arg == "--diagnostic-base-state-adapter-report") {
+      options.diagnostic_adapter_report = true;
     } else if (arg == "--pressure-column-probe") {
       options.pressure_column_probe_columns =
           parse_pressure_probe_columns(require_value(arg), arg);
@@ -607,6 +665,10 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
   if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
     throw std::invalid_argument(
         "--experimental-pressure-refresh-apply requires --pressure-refresh");
+  }
+  if (options.diagnostic_adapter_report && options.pressure_refresh) {
+    throw std::invalid_argument(
+        "--diagnostic-base-state-adapter-report cannot be combined with --pressure-refresh");
   }
   if (options.has_pressure_column_probe_levels &&
       options.pressure_column_probe_columns.empty()) {
@@ -1378,6 +1440,12 @@ struct CandidateDisposition {
     const Options& options,
     const CandidateReport& report,
     const std::optional<PressureRefreshReadiness>& pressure_refresh_readiness) {
+  if (options.diagnostic_adapter_report) {
+    return candidate_disposition({
+        CandidateDispositionKind::diagnostic_adapter,
+        report.diagnostic_adapter.has_value(),
+        report.diagnostic_adapter.has_value() && report.diagnostic_adapter->ok()});
+  }
   const auto kind = options.experimental_pressure_refresh_apply
                         ? CandidateDispositionKind::
                               selected_field_pressure_refresh_experimental_apply
@@ -1933,6 +2001,98 @@ void apply_pressure_refresh(
       });
 }
 
+void fill_diagnostic_adapter_staging(
+    const tywrf::State<float>& candidate,
+    const StaticFieldSet& output_static,
+    const tywrf::FieldStorage3D<float>& alb,
+    DiagnosticBaseStateAdapterStaging& staging) {
+  copy_storage(candidate.phb, staging.phb, "diagnostic adapter PHB");
+  copy_storage(candidate.mub, staging.mub, "diagnostic adapter MUB");
+  copy_storage(candidate.pb, staging.pb, "diagnostic adapter PB");
+  copy_storage(candidate.t, staging.t_init, "diagnostic adapter T_INIT");
+  copy_storage(alb, staging.alb, "diagnostic adapter ALB");
+  copy_storage(output_static.hgt, staging.ht, "diagnostic adapter HT/HGT");
+}
+
+void run_diagnostic_adapter_report(
+    const Options& options,
+    const tywrf::State<float>& candidate,
+    const StaticFieldSet& output_static,
+    CandidateReport& report) {
+  tywrf::FieldStorage3D<float> metadata_alb(candidate.grid.mass_layout());
+  const auto metadata = tywrf::io::read_krosa_pressure_refresh_inputs(
+      options.template_path,
+      candidate.grid,
+      metadata_alb,
+      {.time_index = options.template_time_index});
+  require_pressure_refresh_inputs_ready(metadata);
+
+  DiagnosticBaseStateAdapterStaging source(candidate.grid);
+  DiagnosticBaseStateAdapterStaging child(candidate.grid);
+  fill_diagnostic_adapter_staging(candidate, output_static, metadata_alb, source);
+  fill_diagnostic_adapter_staging(candidate, output_static, metadata_alb, child);
+
+  const auto adapter_report =
+      tywrf::nest::apply_exposed_base_state_exchange_adapter(
+          report.remap_plan,
+          diagnostic_adapter_views(
+              static_cast<const DiagnosticBaseStateAdapterStaging&>(source)),
+          diagnostic_adapter_views(child),
+          {{metadata.metadata.c3h.data(),
+            static_cast<std::int32_t>(metadata.metadata.c3h.size())},
+           {metadata.metadata.c4h.data(),
+            static_cast<std::int32_t>(metadata.metadata.c4h.size())},
+           metadata.metadata.p_top_pa});
+
+  report.diagnostic_adapter = adapter_report;
+  report.diagnostic_adapter_metadata_source = options.template_path;
+  report.diagnostic_adapter_metadata_time_index = options.template_time_index;
+  append_timeline_event(
+      report,
+      "diagnostic_adapter_report",
+      {
+          timeline_field("opt_in", "true"),
+          timeline_field(
+              "diagnostic_only",
+              std::string(bool_text(adapter_report.diagnostic_only))),
+          timeline_field(
+              "gate_candidate",
+              std::string(bool_text(adapter_report.gate_candidate))),
+          timeline_field(
+              "integrator_output",
+              std::string(bool_text(adapter_report.integrator_output))),
+          timeline_field("ok", std::string(bool_text(adapter_report.ok()))),
+          timeline_field(
+              "called_d68",
+              std::string(bool_text(adapter_report.called_d68_exchange))),
+          timeline_field(
+              "called_d69",
+              std::string(bool_text(adapter_report.called_d69_recompute))),
+          timeline_field(
+              "writes_candidate",
+              std::string(bool_text(adapter_report.writes_candidate))),
+          timeline_field(
+              "writes_netcdf",
+              std::string(bool_text(adapter_report.writes_netcdf))),
+          timeline_field(
+              "exposed_regions",
+              static_cast<std::uint64_t>(adapter_report.exposed_region_count)),
+          timeline_field("exposed_mass_cells", adapter_report.exposed_mass_cell_count),
+          timeline_field("recomputed_points", adapter_report.recomputed_point_count),
+      });
+  if (adapter_report.ok()) {
+    return;
+  }
+
+  std::ostringstream message;
+  message << "diagnostic_base_state_adapter_report_failed";
+  if (adapter_report.result.message != nullptr &&
+      adapter_report.result.message[0] != '\0') {
+    message << ": " << adapter_report.result.message;
+  }
+  throw std::runtime_error(message.str());
+}
+
 [[nodiscard]] CandidateReport build_candidate_state(
     const tywrf::nest::ParentChildDescriptor& descriptor,
     const Options& options,
@@ -2374,6 +2534,164 @@ void write_pressure_formula_observation_attrs(
       pressure_formula_observation_values(report.pressure_formula_observations));
 }
 
+void write_diagnostic_adapter_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (!report.diagnostic_adapter.has_value()) {
+    return;
+  }
+
+  const auto& adapter = *report.diagnostic_adapter;
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_OPT_IN", "true");
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_VERSION", "d70_report_v0");
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE", adapter.source);
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_DISPOSITION", adapter.disposition);
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_EXCHANGE_SOURCE", adapter.exchange_source);
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_RECOMPUTE_SOURCE", adapter.recompute_source);
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_OK", bool_text(adapter.ok()));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_RESULT_MESSAGE",
+      adapter.result.message == nullptr ? "" : adapter.result.message);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_DIAGNOSTIC_ONLY",
+      bool_text(adapter.diagnostic_only));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_GATE_CANDIDATE",
+      bool_text(adapter.gate_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_INTEGRATOR_OUTPUT",
+      bool_text(adapter.integrator_output));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_SELECTED_FIELD_NUMERICS_ENABLED",
+      bool_text(adapter.selected_field_numerics_enabled));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_ENABLES_SELECTED_FIELD_NUMERICS",
+      bool_text(adapter.enables_selected_field_numerics));
+  write_text_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_WRITES_NETCDF", bool_text(adapter.writes_netcdf));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_WRITES_CANDIDATE",
+      bool_text(adapter.writes_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_CALLED_D68_EXCHANGE",
+      bool_text(adapter.called_d68_exchange));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_CALLED_D69_RECOMPUTE",
+      bool_text(adapter.called_d69_recompute));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_HT_SOURCE_NAME",
+      adapter.ht_source_name);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_HT_DIAGNOSTIC_LABEL",
+      adapter.ht_diagnostic_label);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_HT_IS_HGT_ALIAS",
+      bool_text(adapter.ht_is_hgt_alias));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_CREATES_TERRAIN_OWNER",
+      bool_text(adapter.creates_terrain_owner));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_TERRAIN_OWNER_CREATED",
+      bool_text(adapter.terrain_owner_created));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_METADATA_SOURCE",
+      report.diagnostic_adapter_metadata_source.string());
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_METADATA_TIME_INDEX",
+      static_cast<double>(report.diagnostic_adapter_metadata_time_index));
+  write_double_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_ACTIVE_NX", static_cast<double>(adapter.active_nx));
+  write_double_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_ACTIVE_NY", static_cast<double>(adapter.active_ny));
+  write_double_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_ACTIVE_NZ", static_cast<double>(adapter.active_nz));
+  write_double_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_C3H_COUNT", static_cast<double>(adapter.c3h_count));
+  write_double_attr(
+      file, "TYWRF_DIAGNOSTIC_ADAPTER_C4H_COUNT", static_cast<double>(adapter.c4h_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_EXPOSED_REGION_COUNT",
+      static_cast<double>(adapter.exposed_region_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_EXPOSED_MASS_CELL_COUNT",
+      static_cast<double>(adapter.exposed_mass_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_EXPOSED_SURFACE_CELL_COUNT",
+      static_cast<double>(adapter.exposed_surface_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_EXPOSED_W_FULL_COLUMN_COUNT",
+      static_cast<double>(adapter.exposed_w_full_column_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PHB_WRITTEN_POINT_COUNT",
+      static_cast<double>(adapter.phb_written_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_MUB_WRITTEN_CELL_COUNT",
+      static_cast<double>(adapter.mub_written_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_HT_WRITTEN_CELL_COUNT",
+      static_cast<double>(adapter.ht_written_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_DIRECT_WRITE_POINT_COUNT",
+      static_cast<double>(adapter.direct_write_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_EXCHANGE_RECOMPUTE_MARK_COUNT",
+      static_cast<double>(adapter.exchange_recompute_mark_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_RECOMPUTED_POINT_COUNT",
+      static_cast<double>(adapter.recomputed_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PB_RECOMPUTED_POINT_COUNT",
+      static_cast<double>(adapter.pb_recomputed_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_T_INIT_RECOMPUTED_POINT_COUNT",
+      static_cast<double>(adapter.t_init_recomputed_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_ALB_RECOMPUTED_POINT_COUNT",
+      static_cast<double>(adapter.alb_recomputed_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_INVALID_COLUMN_COUNT",
+      static_cast<double>(adapter.invalid_column_count));
+  write_double_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_INVALID_POINT_COUNT",
+      static_cast<double>(adapter.invalid_point_count));
+  write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_WRITTEN_FIELDS", "PHB,MUB,HGT,PB,T_INIT,ALB");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_INTEGRATION_STATUS",
+      "staging_report_only_no_gate_no_integrator");
+}
+
 void stamp_gate_metadata(
     const Options& options,
     const Resolution resolution,
@@ -2595,7 +2913,15 @@ void stamp_gate_metadata(
   }
   write_pressure_column_probe_attrs(file, options, report);
   write_pressure_formula_observation_attrs(file, report);
-  if (experimental_pressure_refresh_apply) {
+  write_diagnostic_adapter_attrs(file, report);
+  if (options.diagnostic_adapter_report) {
+    write_text_attr(
+        file,
+        "TYWRF_CANDIDATE_MESSAGE",
+        "Diagnostic-only selected-field base-state adapter staging report; "
+        "not a validation gate pass or normal integrator output. The D70 adapter "
+        "ran on staging buffers only and did not write selected-field candidate numerics.");
+  } else if (experimental_pressure_refresh_apply) {
     write_text_attr(
         file,
         "TYWRF_CANDIDATE_MESSAGE",
@@ -2969,6 +3295,201 @@ void write_pressure_formula_observation_json(
       pretty);
 }
 
+void write_diagnostic_adapter_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool comma,
+    const bool pretty) {
+  const auto& adapter = *report.diagnostic_adapter;
+  write_json_bool(stream, "diagnostic_adapter_opt_in", true, true, pretty);
+  write_json_string(stream, "diagnostic_adapter_version", "d70_report_v0", true, pretty);
+  write_json_string(stream, "diagnostic_adapter_source", adapter.source, true, pretty);
+  write_json_string(stream, "diagnostic_adapter_disposition", adapter.disposition, true, pretty);
+  write_json_string(
+      stream, "diagnostic_adapter_exchange_source", adapter.exchange_source, true, pretty);
+  write_json_string(
+      stream, "diagnostic_adapter_recompute_source", adapter.recompute_source, true, pretty);
+  write_json_bool(stream, "diagnostic_adapter_ok", adapter.ok(), true, pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_result_message",
+      adapter.result.message == nullptr ? "" : adapter.result.message,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "diagnostic_adapter_diagnostic_only", adapter.diagnostic_only, true, pretty);
+  write_json_bool(
+      stream, "diagnostic_adapter_gate_candidate", adapter.gate_candidate, true, pretty);
+  write_json_bool(
+      stream, "diagnostic_adapter_integrator_output", adapter.integrator_output, true, pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_selected_field_numerics_enabled",
+      adapter.selected_field_numerics_enabled,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_enables_selected_field_numerics",
+      adapter.enables_selected_field_numerics,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "diagnostic_adapter_writes_netcdf", adapter.writes_netcdf, true, pretty);
+  write_json_bool(
+      stream, "diagnostic_adapter_writes_candidate", adapter.writes_candidate, true, pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_called_d68_exchange",
+      adapter.called_d68_exchange,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_called_d69_recompute",
+      adapter.called_d69_recompute,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "diagnostic_adapter_ht_is_hgt_alias", adapter.ht_is_hgt_alias, true, pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_creates_terrain_owner",
+      adapter.creates_terrain_owner,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_terrain_owner_created",
+      adapter.terrain_owner_created,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_metadata_source",
+      report.diagnostic_adapter_metadata_source.string(),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_metadata_time_index",
+      static_cast<double>(report.diagnostic_adapter_metadata_time_index),
+      true,
+      pretty);
+  write_json_number(
+      stream, "diagnostic_adapter_active_nx", static_cast<double>(adapter.active_nx), true, pretty);
+  write_json_number(
+      stream, "diagnostic_adapter_active_ny", static_cast<double>(adapter.active_ny), true, pretty);
+  write_json_number(
+      stream, "diagnostic_adapter_active_nz", static_cast<double>(adapter.active_nz), true, pretty);
+  write_json_number(
+      stream, "diagnostic_adapter_c3h_count", static_cast<double>(adapter.c3h_count), true, pretty);
+  write_json_number(
+      stream, "diagnostic_adapter_c4h_count", static_cast<double>(adapter.c4h_count), true, pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_exposed_region_count",
+      static_cast<double>(adapter.exposed_region_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_exposed_mass_cell_count",
+      static_cast<double>(adapter.exposed_mass_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_exposed_surface_cell_count",
+      static_cast<double>(adapter.exposed_surface_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_exposed_w_full_column_count",
+      static_cast<double>(adapter.exposed_w_full_column_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_phb_written_point_count",
+      static_cast<double>(adapter.phb_written_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_mub_written_cell_count",
+      static_cast<double>(adapter.mub_written_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_ht_written_cell_count",
+      static_cast<double>(adapter.ht_written_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_direct_write_point_count",
+      static_cast<double>(adapter.direct_write_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_exchange_recompute_mark_count",
+      static_cast<double>(adapter.exchange_recompute_mark_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_recomputed_point_count",
+      static_cast<double>(adapter.recomputed_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_pb_recomputed_point_count",
+      static_cast<double>(adapter.pb_recomputed_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_t_init_recomputed_point_count",
+      static_cast<double>(adapter.t_init_recomputed_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_alb_recomputed_point_count",
+      static_cast<double>(adapter.alb_recomputed_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_invalid_column_count",
+      static_cast<double>(adapter.invalid_column_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "diagnostic_adapter_invalid_point_count",
+      static_cast<double>(adapter.invalid_point_count),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_written_fields",
+      "PHB,MUB,HGT,PB,T_INIT,ALB",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_integration_status",
+      "staging_report_only_no_gate_no_integrator",
+      comma,
+      pretty);
+}
+
 void print_report(
     const Options& options,
     const Resolution resolution,
@@ -2983,6 +3504,7 @@ void print_report(
       selected_field_candidate_disposition(options, report, pressure_refresh_readiness);
   const bool experimental_pressure_refresh_apply =
       disposition.experimental_pressure_refresh_apply;
+  const bool has_diagnostic_adapter = report.diagnostic_adapter.has_value();
   const bool has_pressure_column_probe = !report.pressure_column_observations.empty();
   const bool has_pressure_formula_observation =
       !report.pressure_formula_observations.empty();
@@ -3066,7 +3588,8 @@ void print_report(
       std::cout,
       "selected_field_timeline_events",
       join_timeline_events(report.timeline),
-      report.pressure_refresh.has_value() || has_pressure_column_probe,
+      has_diagnostic_adapter || report.pressure_refresh.has_value() ||
+          has_pressure_column_probe,
       pretty);
   if (report.pressure_refresh.has_value()) {
     const auto& pressure = *report.pressure_refresh;
@@ -3213,6 +3736,13 @@ void print_report(
         has_pressure_column_probe || has_pressure_formula_observation,
         pretty);
   }
+  if (has_diagnostic_adapter) {
+    write_diagnostic_adapter_json(
+        std::cout,
+        report,
+        has_pressure_formula_observation || has_pressure_column_probe,
+        pretty);
+  }
   if (has_pressure_formula_observation) {
     write_pressure_formula_observation_json(
         std::cout, report, has_pressure_column_probe, pretty);
@@ -3284,6 +3814,9 @@ int run(Options options) {
       report);
   capture_pressure_column_observations(
       options, "post_static_refresh", candidate, output_static, report);
+  if (options.diagnostic_adapter_report) {
+    run_diagnostic_adapter_report(options, candidate, output_static, report);
+  }
   if (options.pressure_refresh) {
     probe_pressure_refresh_provider_readiness(options, candidate, output_static, report);
     probe_pressure_refresh_dry_run_contract(options, candidate, output_static, report);

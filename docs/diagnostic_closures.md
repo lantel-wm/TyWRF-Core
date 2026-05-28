@@ -1074,6 +1074,32 @@ and diagnostic/probe/helper/adapter/dry-run/staging/experimental outputs remain
 forbidden as closure or gate evidence. Validation must not advance to `00:20`,
 reduce d02 below `2 km`, or introduce best-track nudging.
 
+D71 is complete, fully validated, pushed, and synchronized at commit
+`9b08d09` (`Guard diagnostic adapter gate metadata`). The guard reinforces the
+closure boundary by preventing diagnostic adapter roles from borrowing
+positive selected-field or integrator metadata. This was a metadata-defense
+milestone only; it did not make the strict d02 `00:10` gate pass.
+
+D72 may expose the base-state adapter through an opt-in diagnostic adapter
+report path. That path is diagnostic telemetry only. It must not connect to the
+normal pressure-refresh candidate path, must not patch candidate fields, and
+must not write or relabel normal integrator output. Its file/report metadata
+must stay non-gate:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
+
+Strict gate tooling must reject D72 diagnostic adapter output by default. A D72
+report can document helper/provider/adapter state, but it is not a model pass,
+not a diagnostic closure permission, and not a substitute for pressure-refresh
+candidate production. It must not use reference-end truth, oracle/reference-copy
+products, diagnostic/probe/helper outputs, adapter telemetry, or restart
+substitutes to close failed metrics. It must not advance validation to
+`00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
