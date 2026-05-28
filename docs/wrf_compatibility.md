@@ -1579,14 +1579,29 @@ gate_candidate = false
 integrator_output = false
 ```
 
-D73 compatibility work is limited to diagnostic smoke/audit boundaries for that
-opt-in adapter path. The strict d02 gate must reject adapter, helper, staging,
-dry-run, probe, diagnostic, oracle, and reference-copy roles/kinds before
-interpreting field RMSE or TC diagnostics. Even if an adapter-side report shows
-passing field thresholds, storm-center, MSLP, or Vmax values, the artifact is
-still not a gate candidate and cannot count as the strict
-`2025-07-26_00:10:00` pass. The current strict gate remains failed, so
-validation must stop at `00:10` and must not advance to `00:20`.
+D73 is now complete, verified, pushed, and synchronized at commit `b73704f`.
+It kept the opt-in adapter smoke/audit boundary diagnostic-only: the strict d02
+gate rejects adapter, helper, staging, dry-run, probe, diagnostic, oracle, and
+reference-copy roles/kinds before interpreting field RMSE or TC diagnostics.
+Even if an adapter-side report shows passing field thresholds, storm-center,
+MSLP, or Vmax values, the artifact is still not a gate candidate and cannot
+count as the strict `2025-07-26_00:10:00` pass. The current strict gate remains
+failed, so validation must stop at `00:10` and must not advance to `00:20`.
+
+D74 compatibility work is provider-only planning/implementation for a
+non-oracle child-shaped base-state source staging provider. This provider is a
+diagnostic/test-only source contract intended to replace `source==child`
+staging in a later hidden adapter wiring round. It must not be connected to
+`selected_field_cycle`, must not write normal candidates, must not mark
+anything as gate-eligible, and must not relax strict-gate metadata or
+disposition checks. Any D74 report, fixture, or staged buffer remains
+non-gate compatibility context only:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
 
 ## Physics Bridge Compatibility Notes
 

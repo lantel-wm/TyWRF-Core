@@ -1334,15 +1334,30 @@ gate_candidate = false
 integrator_output = false
 ```
 
-D73 diagnostic smoke/audit work may verify that this opt-in path reports the
-expected adapter/helper/staging metadata and that strict-gate rejection remains
-active. The rejection is metadata-first: default strict-gate tooling must reject
-adapter, helper, staging, dry-run, probe, diagnostic, oracle, and
-reference-copy roles/kinds before interpreting RMSE fields or TC diagnostics.
-Passing-looking field RMSE, storm-center, MSLP, or Vmax numbers from one of
-those artifacts must still be reported as non-gate diagnostic evidence, not as
-a `2025-07-26_00:10:00` validation pass. The strict `00:10` gate still fails,
-so validation must not proceed to `00:20`.
+D73 is now complete, verified, pushed, and synchronized at commit `b73704f`.
+It verified that the opt-in adapter smoke/audit path reports expected
+adapter/helper/staging metadata and that strict-gate rejection remains active.
+The rejection is metadata-first: default strict-gate tooling must reject
+adapter, helper, staging, dry-run, probe, diagnostic, oracle, and reference-copy
+roles/kinds before interpreting RMSE fields or TC diagnostics. Passing-looking
+field RMSE, storm-center, MSLP, or Vmax numbers from one of those artifacts must
+still be reported as non-gate diagnostic evidence, not as a
+`2025-07-26_00:10:00` validation pass. The strict `00:10` gate still fails, so
+validation must not proceed to `00:20`.
+
+D74 may stage only a non-oracle child-shaped base-state source provider for
+diagnostic/test use. Its purpose is to replace `source==child` staging in a
+later hidden adapter wiring round, not to change validation behavior in this
+round. D74 must not connect the provider to `selected_field_cycle`, write or
+relabel normal candidates, set positive gate metadata, or weaken the strict
+metadata/disposition checks. Default strict-gate tooling must continue to treat
+D74 provider reports, fixtures, and staged outputs as non-gate artifacts:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
 
 Example:
 
