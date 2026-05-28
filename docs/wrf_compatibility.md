@@ -1911,12 +1911,13 @@ SLP diagnostic still failed storm-center distance at `43.4827156063485 km`;
 minimum SLP error and Vmax10m error passed. The strict `00:10` gate remains
 failed and validation must not advance to `00:20`.
 
-D91 scope is limited to residual localization, audit metadata/delta
-improvements, and default-off advection-form or upwind sensitivity work if it
-is implemented. D91 must not claim a validation pass, must not advance to
-`00:20`, must not use reference-end/oracle data, must not reduce d02 below
-`2 km`, must not introduce best-track nudging, and must not couple this wind
-sensitivity work to pressure refresh, physics, `P`, `MU`, `PB`, or `PHB`.
+D91 is complete, verified, and pushed at commit `2a2de69`
+(`Add wind advection form sensitivity`). Its scope remained residual
+localization, audit metadata/delta improvements, and default-off
+advection-form sensitivity. D91 must not be read as a validation pass, must not
+advance to `00:20`, must not use reference-end/oracle data, must not reduce d02
+below `2 km`, must not introduce best-track nudging, and must not couple this
+wind sensitivity work to pressure refresh or physics.
 
 D91 adds `--wind-tendency-advection-form centered|upwind` for selected-field
 `self_advection` and keeps `centered` as the default. The centered
@@ -1931,6 +1932,29 @@ normalized RMSE `0.16408002949211245` and `V` normalized RMSE
 selected-field wind-only result, so the next compatibility step should move
 toward tendency decomposition and pressure-gradient/mass-coupled wind
 experiments rather than declaring an advection-form closure.
+
+The D91 wind audit extension also records advection-form metadata, including
+`TYWRF_WIND_TENDENCY_ADVECTION_FORM`, and reports explicit baseline-delta
+statistics for candidate-versus-baseline comparisons. These diagnostics support
+residual localization only; they do not change the strict gate result.
+
+D92 scope is tendency-decomposition audit plus a standalone, default-off
+pressure-gradient wind-tendency staging skeleton. D92 must not claim a gate
+pass, must not advance to `00:20`, must not use reference-end/oracle data for
+model updates, must not reduce d02 below `2 km`, must not introduce best-track
+nudging, and must not couple the staging skeleton to physics or pressure
+refresh in this round.
+
+The D92 wind tendency decomposition audit contract is diagnostic-only: reports
+must set `diagnostic_only=true`, `uses_reference_end_truth=true`, and
+`advances_00_20=false`. The residual is
+`(candidate_end-candidate_start)-(reference_end-reference_start)`, so
+reference-end truth is allowed only for post-run audit decomposition, never for
+model updates. `--child-delta` is in child-grid cells; the
+`--from-parent-start/--to-parent-start` difference is an unscaled parent index
+delta, so D90/D91 parent-ratio-scaled decompositions must pass the scaled width
+directly with `--child-delta`. This audit is not gate evidence and cannot
+justify `00:20` progression.
 
 ## Physics Bridge Compatibility Notes
 
