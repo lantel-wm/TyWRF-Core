@@ -1104,6 +1104,29 @@ from reference-end truth, promote probe/audit/hidden-seam output to gate
 evidence, advance validation to `00:20`, reduce d02 below `2 km`, or add
 best-track nudging.
 
+D62 completion status supersedes the earlier push blocker. Commit `655df5b`
+(`Add pressure formula observation audit`) is pushed to `origin/main`, and that
+push also delivered D61 commit `ab68c51`
+(`Add runtime pressure probes and timeline audit`). The D62 full validation
+passed CTest `29/29`, pytest `188/188`, and `git diff --check`.
+
+The D62 runtime probe audit output is
+`build/validation/r62_pressure_column_runtime_probe_audit.json`. It parsed
+`50/50` records consistently and remains diagnostic-only. The reported risks
+are `post_pressure_refresh_p_negative`, `large_p_drop_magnitude`, and
+`formula_terms_unavailable`; the minimum post-refresh `P` is
+`-4174.87305 Pa`, and the largest drop is `(161,49,k=0)` with
+`delta_P = -4257.17773 Pa`.
+
+D63 validation work should wire the D62 core formula observation into the
+selected-field `--pressure-column-probe` NetCDF/JSON output and extend the
+runtime probe audit to parse those formula observation attributes. These
+records may explain the pressure-refresh path at selected columns, but they
+remain diagnostic-only. They cannot produce gate candidates, patch fields, tune
+formulas from reference-end truth, promote audit/probe/hidden-seam output to
+gate evidence, advance validation to `00:20`, reduce d02 below `2 km`, or add
+best-track nudging.
+
 Example:
 
 ```bash

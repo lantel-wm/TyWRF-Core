@@ -677,6 +677,11 @@ void assert_pressure_refresh_readiness_attrs(const int file_id) {
       "override:moved_candidate_HGT");
 }
 
+void assert_no_pressure_formula_observation_attrs(const int file_id) {
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_ENABLED"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES"));
+}
+
 void assert_successful_candidate(
     const std::filesystem::path& output,
     const bool pressure_refresh = false,
@@ -783,6 +788,9 @@ void assert_successful_candidate(
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_EVIDENCE_ONLY") == "true");
   } else {
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_ENABLED"));
+  }
+  if (!(pressure_refresh && pressure_column_probe)) {
+    assert_no_pressure_formula_observation_attrs(file_id);
   }
   assert_selected_field_timeline_attrs(
       file_id, pressure_refresh, experimental_pressure_refresh, pressure_column_probe);
@@ -950,6 +958,62 @@ void assert_pressure_column_probe_output(
   assert(values.find(";T=") != std::string::npos);
   assert(values.find(";QVAPOR=") != std::string::npos);
   assert(values.find(";HGT=") != std::string::npos);
+  if (pressure_refresh) {
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VERSION") == "runtime_v0");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_ENABLED") == "true");
+    assert(
+        read_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_EVIDENCE_ONLY") ==
+        "true");
+    assert(
+        read_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_INDEX_BASE") ==
+        "zero_based_mass_grid");
+    assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_REQUEST_COUNT") == 2);
+    assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_RECORD_COUNT") == 2);
+    assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALID_COUNT") == 2);
+    assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_INVALID_COUNT") == 0);
+    assert(
+        read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUT_OF_BOUNDS_COUNT") ==
+        0);
+    assert(
+        read_int_attr(
+            file_id,
+            "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUTSIDE_TARGET_REGION_COUNT") == 0);
+    const auto formula_fields =
+        read_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_FIELDS");
+    assert(contains_csv_value(formula_fields, "status"));
+    assert(contains_csv_value(formula_fields, "valid"));
+    assert(contains_csv_value(formula_fields, "mu_total"));
+    assert(contains_csv_value(formula_fields, "ALB"));
+    assert(contains_csv_value(formula_fields, "PB"));
+    assert(contains_csv_value(formula_fields, "theta"));
+    assert(contains_csv_value(formula_fields, "alpha_from_wrf_branch"));
+    assert(contains_csv_value(formula_fields, "perturbation_pressure_pa"));
+    const auto formula_values =
+        read_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES");
+    assert(formula_values.find("status=recorded;valid=1;i=9;j=9;k=0") !=
+           std::string::npos);
+    assert(formula_values.find("status=recorded;valid=1;i=9;j=9;k=1") !=
+           std::string::npos);
+    assert(formula_values.find(";mu_total=") != std::string::npos);
+    assert(formula_values.find(";pfu=") != std::string::npos);
+    assert(formula_values.find(";pfd=") != std::string::npos);
+    assert(formula_values.find(";phm=") != std::string::npos);
+    assert(formula_values.find(";log_ratio=") != std::string::npos);
+    assert(formula_values.find(";phi_lower=") != std::string::npos);
+    assert(formula_values.find(";phi_upper=") != std::string::npos);
+    assert(formula_values.find(";delta_phi=") != std::string::npos);
+    assert(formula_values.find(";ALB=") != std::string::npos);
+    assert(formula_values.find(";PB=") != std::string::npos);
+    assert(formula_values.find(";theta=") != std::string::npos);
+    assert(formula_values.find(";alpha_total=") != std::string::npos);
+    assert(formula_values.find(";alpha_perturbation=") != std::string::npos);
+    assert(formula_values.find(";alpha_from_wrf_branch=") != std::string::npos);
+    assert(formula_values.find(";pressure_base=") != std::string::npos);
+    assert(formula_values.find(";total_pressure=") != std::string::npos);
+    assert(formula_values.find(";perturbation_pressure_pa=") != std::string::npos);
+  } else {
+    assert_no_pressure_formula_observation_attrs(file_id);
+  }
   check_nc(nc_close(file_id), "close probe output");
 
   const auto log = read_file(log_path);
@@ -965,6 +1029,34 @@ void assert_pressure_column_probe_output(
   assert(log.find("\"pressure_column_probe_levels\": \"0,1\"") != std::string::npos);
   assert(log.find("\"pressure_column_probe_not_available\":") != std::string::npos);
   assert(log.find("P_PLUS_PB=") != std::string::npos);
+  if (pressure_refresh) {
+    assert(
+        log.find("\"pressure_formula_observation_enabled\": true") !=
+        std::string::npos);
+    assert(
+        log.find("\"pressure_formula_observation_version\": \"runtime_v0\"") !=
+        std::string::npos);
+    assert(
+        log.find("\"pressure_formula_observation_evidence_only\": true") !=
+        std::string::npos);
+    assert(
+        log.find("\"pressure_formula_observation_index_base\": \"zero_based_mass_grid\"") !=
+        std::string::npos);
+    assert(
+        log.find("\"pressure_formula_observation_request_count\": 2") !=
+        std::string::npos);
+    assert(
+        log.find("\"pressure_formula_observation_record_count\": 2") !=
+        std::string::npos);
+    assert(
+        log.find("\"pressure_formula_observation_valid_count\": 2") !=
+        std::string::npos);
+    assert(log.find("status=recorded;valid=1;i=9;j=9;k=0") != std::string::npos);
+    assert(log.find("alpha_from_wrf_branch=") != std::string::npos);
+    assert(log.find("perturbation_pressure_pa=") != std::string::npos);
+  } else {
+    assert(log.find("pressure_formula_observation_enabled") == std::string::npos);
+  }
 }
 
 [[nodiscard]] std::uint64_t log_u64_field(
@@ -1148,6 +1240,53 @@ void assert_pressure_column_probe_pressure_refresh_path(
   assert(std::filesystem::exists(output));
   assert_successful_candidate(output, true, template_path, false, true);
   assert_pressure_column_probe_output(output, log_path, true);
+}
+
+void assert_pressure_formula_observation_outside_target_status(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path) {
+  std::filesystem::remove(output);
+  assert(!std::filesystem::exists(output));
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, output) +
+      " --pressure-refresh --pressure-column-probe " +
+      shell_quote(std::string("9,9;0,0")) + " --pressure-column-levels 0 >" +
+      shell_quote(log_path) + " 2>&1");
+  assert(std::filesystem::exists(output));
+  assert_successful_candidate(output, true, template_path, false, true);
+
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open formula output");
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_REQUEST_COUNT") == 2);
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_RECORD_COUNT") == 2);
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALID_COUNT") == 1);
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_INVALID_COUNT") == 0);
+  assert(
+      read_int_attr(
+          file_id,
+          "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUTSIDE_TARGET_REGION_COUNT") == 1);
+  const auto values =
+      read_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES");
+  assert(values.find("status=recorded;valid=1;i=9;j=9;k=0") != std::string::npos);
+  assert(
+      values.find("status=request_outside_target_region;valid=0;i=0;j=0;k=0") !=
+      std::string::npos);
+  check_nc(nc_close(file_id), "close formula output");
+
+  const auto log = read_file(log_path);
+  assert(
+      log.find("\"pressure_formula_observation_valid_count\": 1") !=
+      std::string::npos);
+  assert(
+      log.find("\"pressure_formula_observation_outside_target_region_count\": 1") !=
+      std::string::npos);
+  assert(
+      log.find("status=request_outside_target_region;valid=0;i=0;j=0;k=0") !=
+      std::string::npos);
 }
 
 void assert_pressure_refresh_invalid_dry_run_fail_closed(
@@ -1379,6 +1518,8 @@ int main(const int argc, char** argv) {
         root / "tywrf_selected_field_pressure_column_probe_d02_2025-07-26_00:10:00";
     const auto pressure_column_probe_refresh_output =
         root / "tywrf_selected_field_pressure_column_probe_refresh_d02_2025-07-26_00:10:00";
+    const auto pressure_formula_outside_output =
+        root / "tywrf_selected_field_pressure_formula_outside_d02_2025-07-26_00:10:00";
     const auto experimental_pressure_output =
         root / "tywrf_selected_field_experimental_pressure_d02_2025-07-26_00:10:00";
     const auto invalid_pressure_output =
@@ -1386,6 +1527,7 @@ int main(const int argc, char** argv) {
     const auto pressure_log = root / "pressure_refresh_normal_apply.log";
     const auto pressure_column_probe_log = root / "pressure_column_probe.log";
     const auto pressure_column_probe_refresh_log = root / "pressure_column_probe_refresh.log";
+    const auto pressure_formula_outside_log = root / "pressure_formula_outside.log";
     const auto experimental_pressure_log = root / "pressure_refresh_experimental_apply.log";
     const auto invalid_pressure_log = root / "pressure_refresh_invalid_dry_run.log";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
@@ -1435,6 +1577,13 @@ int main(const int argc, char** argv) {
         pressure_template_path,
         pressure_column_probe_refresh_output,
         pressure_column_probe_refresh_log);
+    assert_pressure_formula_observation_outside_target_status(
+        executable,
+        d01_start,
+        d02_start,
+        pressure_template_path,
+        pressure_formula_outside_output,
+        pressure_formula_outside_log);
     assert_experimental_pressure_refresh_apply(
         executable,
         d01_start,

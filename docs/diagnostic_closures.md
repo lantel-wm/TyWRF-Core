@@ -872,6 +872,30 @@ Round D62 keeps the D61 runtime probe and timeline audit outside closure scope:
   hidden-seam output to gate evidence, reduce d02 below `2 km`, or introduce
   best-track nudging.
 
+Round D62 is now synchronized to the remote repository:
+
+- Commit `655df5b` (`Add pressure formula observation audit`) is pushed to
+  `origin/main`, and the same push also delivered the previously blocked D61
+  commit `ab68c51`.
+- D62 full validation passed CTest `29/29`, pytest `188/188`, and
+  `git diff --check`.
+- The D62 runtime probe audit
+  `build/validation/r62_pressure_column_runtime_probe_audit.json` parsed
+  `50/50` records consistently. It reports
+  `post_pressure_refresh_p_negative`, `large_p_drop_magnitude`, and
+  `formula_terms_unavailable`; the minimum post-refresh `P` is
+  `-4174.87305 Pa`, and the largest drop is `(161,49,k=0)` with
+  `delta_P = -4257.17773 Pa`.
+
+Round D63 may connect the D62 core formula observation to the selected-field
+`--pressure-column-probe` NetCDF/JSON output and extend the audit parser for
+the new formula observation attributes. This is still outside closure scope:
+formula probes and audits cannot become accepted pressure closures, cannot
+patch fields, cannot tune output from reference-end truth, cannot use
+reference-end oracle candidate generation, cannot promote audit/probe/
+hidden-seam output to gate evidence, cannot advance validation to `00:20`,
+cannot reduce d02 below `2 km`, and cannot introduce best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

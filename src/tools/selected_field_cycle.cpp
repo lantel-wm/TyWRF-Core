@@ -70,6 +70,33 @@ const std::vector<std::string>& pressure_column_probe_unavailable_names() {
   return names;
 }
 
+const std::vector<std::string>& pressure_formula_observation_field_names() {
+  static const std::vector<std::string> names = {
+      "status",
+      "valid",
+      "i",
+      "j",
+      "k",
+      "mu_total",
+      "pfu",
+      "pfd",
+      "phm",
+      "log_ratio",
+      "phi_lower",
+      "phi_upper",
+      "delta_phi",
+      "ALB",
+      "PB",
+      "theta",
+      "alpha_total",
+      "alpha_perturbation",
+      "alpha_from_wrf_branch",
+      "pressure_base",
+      "total_pressure",
+      "perturbation_pressure_pa"};
+  return names;
+}
+
 struct Options {
   std::filesystem::path d01_start_state_path;
   std::filesystem::path d02_start_state_path;
@@ -147,6 +174,8 @@ struct CandidateReport {
   double cen_lat = 0.0;
   double cen_lon = 0.0;
   std::vector<PressureColumnObservation> pressure_column_observations;
+  std::vector<tywrf::dynamics::PressureRefreshFormulaObservation>
+      pressure_formula_observations;
 };
 
 struct PressureRefreshReportParity {
@@ -892,6 +921,11 @@ void require_finite_static_fields(const StaticFieldSet& fields) {
   return !options.pressure_column_probe_columns.empty();
 }
 
+[[nodiscard]] bool pressure_formula_observation_enabled(
+    const Options& options) {
+  return options.pressure_refresh && pressure_column_probe_enabled(options);
+}
+
 void finalize_pressure_column_probe_options(Options& options, const tywrf::Grid& grid) {
   if (!pressure_column_probe_enabled(options)) {
     return;
@@ -993,6 +1027,97 @@ void finalize_pressure_column_probe_options(Options& options, const tywrf::Grid&
            << ";T=" << format_probe_double(value.t)
            << ";QVAPOR=" << format_probe_double(value.qvapor)
            << ";HGT=" << format_probe_double(value.hgt);
+  }
+  return joined.str();
+}
+
+[[nodiscard]] const char* pressure_formula_observation_status_name(
+    const tywrf::dynamics::PressureRefreshObservationStatus status) noexcept {
+  switch (status) {
+    case tywrf::dynamics::PressureRefreshObservationStatus::not_recorded:
+      return "not_recorded";
+    case tywrf::dynamics::PressureRefreshObservationStatus::recorded:
+      return "recorded";
+    case tywrf::dynamics::PressureRefreshObservationStatus::request_out_of_bounds:
+      return "request_out_of_bounds";
+    case tywrf::dynamics::PressureRefreshObservationStatus::
+        request_outside_target_region:
+      return "request_outside_target_region";
+    case tywrf::dynamics::PressureRefreshObservationStatus::invalid_mu_total:
+      return "invalid_mu_total";
+    case tywrf::dynamics::PressureRefreshObservationStatus::
+        invalid_pressure_levels:
+      return "invalid_pressure_levels";
+    case tywrf::dynamics::PressureRefreshObservationStatus::invalid_log_ratio:
+      return "invalid_log_ratio";
+    case tywrf::dynamics::PressureRefreshObservationStatus::invalid_delta_phi:
+      return "invalid_delta_phi";
+    case tywrf::dynamics::PressureRefreshObservationStatus::invalid_alb:
+      return "invalid_alb";
+    case tywrf::dynamics::PressureRefreshObservationStatus::invalid_pb:
+      return "invalid_pb";
+    case tywrf::dynamics::PressureRefreshObservationStatus::invalid_theta:
+      return "invalid_theta";
+    case tywrf::dynamics::PressureRefreshObservationStatus::invalid_alpha:
+      return "invalid_alpha";
+    case tywrf::dynamics::PressureRefreshObservationStatus::
+        invalid_pressure_base:
+      return "invalid_pressure_base";
+    case tywrf::dynamics::PressureRefreshObservationStatus::
+        invalid_total_pressure:
+      return "invalid_total_pressure";
+  }
+  return "not_recorded";
+}
+
+[[nodiscard]] std::vector<tywrf::dynamics::PressureRefreshObservationRequest>
+make_pressure_formula_observation_requests(const Options& options) {
+  std::vector<tywrf::dynamics::PressureRefreshObservationRequest> requests;
+  if (!pressure_formula_observation_enabled(options)) {
+    return requests;
+  }
+  requests.reserve(
+      options.pressure_column_probe_columns.size() *
+      options.pressure_column_probe_levels.size());
+  for (const auto [column_i, column_j] : options.pressure_column_probe_columns) {
+    for (const auto level : options.pressure_column_probe_levels) {
+      requests.push_back({column_i, column_j, level});
+    }
+  }
+  return requests;
+}
+
+[[nodiscard]] std::string pressure_formula_observation_values(
+    const std::vector<tywrf::dynamics::PressureRefreshFormulaObservation>& observations) {
+  std::ostringstream joined;
+  for (std::size_t index = 0; index < observations.size(); ++index) {
+    if (index != 0) {
+      joined << "|";
+    }
+    const auto& value = observations[index];
+    joined << "status=" << pressure_formula_observation_status_name(value.status)
+           << ";valid=" << static_cast<int>(value.valid) << ";i=" << value.i
+           << ";j=" << value.j << ";k=" << value.k
+           << ";mu_total=" << format_probe_double(value.mu_total)
+           << ";pfu=" << format_probe_double(value.pfu)
+           << ";pfd=" << format_probe_double(value.pfd)
+           << ";phm=" << format_probe_double(value.phm)
+           << ";log_ratio=" << format_probe_double(value.log_ratio)
+           << ";phi_lower=" << format_probe_double(value.phi_lower)
+           << ";phi_upper=" << format_probe_double(value.phi_upper)
+           << ";delta_phi=" << format_probe_double(value.delta_phi)
+           << ";ALB=" << format_probe_double(value.alb)
+           << ";PB=" << format_probe_double(value.pb)
+           << ";theta=" << format_probe_double(value.theta)
+           << ";alpha_total=" << format_probe_double(value.alpha_total)
+           << ";alpha_perturbation="
+           << format_probe_double(value.alpha_perturbation)
+           << ";alpha_from_wrf_branch="
+           << format_probe_double(value.alpha_from_wrf_branch)
+           << ";pressure_base=" << format_probe_double(value.pressure_base)
+           << ";total_pressure=" << format_probe_double(value.total_pressure)
+           << ";perturbation_pressure_pa="
+           << format_probe_double(value.perturbation_pressure_pa);
   }
   return joined.str();
 }
@@ -1546,8 +1671,19 @@ void apply_pressure_refresh(
   const std::vector<float> phb_before(
       candidate.phb.data(), candidate.phb.data() + candidate.phb.size());
   const auto terrain_override = make_moved_candidate_hgt_terrain_override(output_static);
+  auto formula_observation_requests =
+      make_pressure_formula_observation_requests(options);
+  std::vector<tywrf::dynamics::PressureRefreshFormulaObservation>
+      formula_observation_records(formula_observation_requests.size());
   tywrf::dynamics::KrosaPressureRefreshHookOptions hook_options{};
   hook_options.terrain_override = &terrain_override;
+  if (!formula_observation_requests.empty()) {
+    hook_options.pressure_refresh.observation = {
+        formula_observation_requests.data(),
+        static_cast<std::int32_t>(formula_observation_requests.size()),
+        formula_observation_records.data(),
+        static_cast<std::int32_t>(formula_observation_records.size())};
+  }
   auto hook_report = tywrf::dynamics::apply_krosa_moving_nest_pressure_refresh_hook(
       report.remap_plan,
       candidate,
@@ -1566,6 +1702,10 @@ void apply_pressure_refresh(
   report.pressure_refresh_metadata_source = options.template_path;
   report.pressure_refresh_metadata_time_index = options.template_time_index;
   report.pressure_refresh = hook_report;
+  if (!formula_observation_records.empty()) {
+    report.pressure_formula_observations =
+        std::move(formula_observation_records);
+  }
   append_timeline_event(
       report,
       "pressure_refresh_apply",
@@ -1973,6 +2113,57 @@ void write_pressure_column_probe_attrs(
       pressure_column_probe_values(report.pressure_column_observations));
 }
 
+void write_pressure_formula_observation_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (report.pressure_formula_observations.empty() ||
+      !report.pressure_refresh.has_value()) {
+    return;
+  }
+
+  const auto& compute = report.pressure_refresh->compute_report;
+  write_text_attr(file, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VERSION", "runtime_v0");
+  write_text_attr(file, "TYWRF_PRESSURE_FORMULA_OBSERVATION_ENABLED", "true");
+  write_text_attr(file, "TYWRF_PRESSURE_FORMULA_OBSERVATION_EVIDENCE_ONLY", "true");
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_INDEX_BASE",
+      "zero_based_mass_grid");
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_REQUEST_COUNT",
+      static_cast<std::int32_t>(compute.observation_request_count));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_RECORD_COUNT",
+      static_cast<std::int32_t>(compute.observation_record_count));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALID_COUNT",
+      static_cast<std::int32_t>(compute.observation_valid_count));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_INVALID_COUNT",
+      static_cast<std::int32_t>(compute.observation_invalid_count));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUT_OF_BOUNDS_COUNT",
+      static_cast<std::int32_t>(compute.observation_out_of_bounds_count));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUTSIDE_TARGET_REGION_COUNT",
+      static_cast<std::int32_t>(
+          compute.observation_outside_target_region_count));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_FIELDS",
+      join_variables(pressure_formula_observation_field_names()));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES",
+      pressure_formula_observation_values(report.pressure_formula_observations));
+}
+
 void stamp_gate_metadata(
     const Options& options,
     const Resolution resolution,
@@ -2200,6 +2391,7 @@ void stamp_gate_metadata(
         parity.overlap_halo_untouched ? "true" : "false");
   }
   write_pressure_column_probe_attrs(file, options, report);
+  write_pressure_formula_observation_attrs(file, report);
   if (experimental_pressure_refresh_apply) {
     write_text_attr(
         file,
@@ -2507,6 +2699,73 @@ void write_pressure_column_probe_json(
       pretty);
 }
 
+void write_pressure_formula_observation_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool comma,
+    const bool pretty) {
+  const auto& compute = report.pressure_refresh->compute_report;
+  write_json_bool(stream, "pressure_formula_observation_enabled", true, true, pretty);
+  write_json_string(
+      stream, "pressure_formula_observation_version", "runtime_v0", true, pretty);
+  write_json_bool(
+      stream, "pressure_formula_observation_evidence_only", true, true, pretty);
+  write_json_string(
+      stream,
+      "pressure_formula_observation_index_base",
+      "zero_based_mass_grid",
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_formula_observation_request_count",
+      static_cast<double>(compute.observation_request_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_formula_observation_record_count",
+      static_cast<double>(compute.observation_record_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_formula_observation_valid_count",
+      static_cast<double>(compute.observation_valid_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_formula_observation_invalid_count",
+      static_cast<double>(compute.observation_invalid_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_formula_observation_out_of_bounds_count",
+      static_cast<double>(compute.observation_out_of_bounds_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_formula_observation_outside_target_region_count",
+      static_cast<double>(compute.observation_outside_target_region_count),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_formula_observation_fields",
+      join_variables(pressure_formula_observation_field_names()),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_formula_observation_values",
+      pressure_formula_observation_values(report.pressure_formula_observations),
+      comma,
+      pretty);
+}
+
 void print_report(
     const Options& options,
     const Resolution resolution,
@@ -2527,6 +2786,8 @@ void print_report(
   const bool gate_candidate =
       report.pressure_refresh.has_value() ? pressure_refresh_gate_candidate : true;
   const bool has_pressure_column_probe = !report.pressure_column_observations.empty();
+  const bool has_pressure_formula_observation =
+      !report.pressure_formula_observations.empty();
   std::cout << "{" << (pretty ? "\n" : "");
   write_json_string(
       std::cout,
@@ -2754,8 +3015,12 @@ void print_report(
         std::cout,
         "pressure_refresh_overlap_halo_untouched",
         parity.overlap_halo_untouched,
-        has_pressure_column_probe,
+        has_pressure_column_probe || has_pressure_formula_observation,
         pretty);
+  }
+  if (has_pressure_formula_observation) {
+    write_pressure_formula_observation_json(
+        std::cout, report, has_pressure_column_probe, pretty);
   }
   if (has_pressure_column_probe) {
     write_pressure_column_probe_json(std::cout, options, report, false, pretty);

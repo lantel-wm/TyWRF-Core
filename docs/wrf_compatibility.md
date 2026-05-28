@@ -1331,6 +1331,35 @@ generate oracle candidates, treat audit/probe/hidden-seam output as gate
 evidence, advance to `00:20`, lower d02 below `2 km`, or introduce best-track
 nudging.
 
+## Round D63 Formula Observation Integration Direction
+
+D62 is now integrated and synchronized. Commit `655df5b`
+(`Add pressure formula observation audit`) has been pushed to `origin/main`,
+and the same successful push also delivered the previously blocked D61 commit
+`ab68c51` (`Add runtime pressure probes and timeline audit`). The D62 full
+validation passed CTest `29/29`, pytest `188/188`, and `git diff --check`.
+
+The D62 runtime probe audit
+`build/validation/r62_pressure_column_runtime_probe_audit.json` is
+diagnostic-only. It parsed `50/50` pressure-column records consistently. The
+active risk flags are `post_pressure_refresh_p_negative`,
+`large_p_drop_magnitude`, and `formula_terms_unavailable`. The minimum
+post-refresh `P` is `-4174.87305 Pa`, and the largest pressure drop is at
+`(161,49,k=0)` with `delta_P = -4257.17773 Pa`.
+
+D63 compatibility work should connect the D62 pressure-core formula
+observation to the selected-field `--pressure-column-probe` path. The intended
+runtime output is compact NetCDF/JSON metadata for the requested
+columns/levels, including the core formula observation terms produced by the
+pressure refresh. The paired audit work should parse the new formula
+observation attributes and associate them with the existing before/after
+pressure-column deltas.
+
+D63 remains diagnostic-only. It must not patch candidate fields, tune formulas
+from reference-end truth, generate oracle candidates, promote audit/probe/
+hidden-seam output to gate evidence, advance to `00:20`, reduce d02 below
+`2 km`, or introduce best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

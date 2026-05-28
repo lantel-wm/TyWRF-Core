@@ -13,6 +13,11 @@ from tools.audit_pressure_column_runtime_probe import (
 
 FIELDS = "P,PB,P+PB,MU,MUB,MU+MUB,PH,PHB,PH+PHB,T,QVAPOR,HGT"
 NOT_AVAILABLE = "ALB,C3F,C4F,C3H,C4H,P_TOP,theta_m"
+FORMULA_FIELDS = (
+    "status,valid,i,j,k,mu_total,pfu,pfd,phm,log_ratio,phi_lower,phi_upper,"
+    "delta_phi,ALB,PB,theta,alpha_total,alpha_perturbation,"
+    "alpha_from_wrf_branch,pressure_base,total_pressure,perturbation_pressure_pa"
+)
 
 
 def _write_candidate(path: Path, attrs: dict[str, object] | None = None) -> None:
@@ -65,6 +70,55 @@ def _probe_attrs(*, values: str, record_count: int) -> dict[str, object]:
     }
 
 
+def _formula_record(
+    *,
+    i: int = 160,
+    j: int = 49,
+    k: int = 0,
+    status: str = "recorded",
+    valid: bool = True,
+    perturbation_pressure_pa: float = 75.0,
+) -> str:
+    return (
+        f"status={status};valid={str(valid).lower()};i={i};j={j};k={k};"
+        "mu_total=64200;pfu=0.72;pfd=0.28;phm=25500;log_ratio=0.003;"
+        "phi_lower=25100;phi_upper=25230;delta_phi=130;ALB=0.92;PB=99700;"
+        "theta=301.5;alpha_total=0.83;alpha_perturbation=0.014;"
+        "alpha_from_wrf_branch=0.014;pressure_base=99700;"
+        f"total_pressure={99700.0 + perturbation_pressure_pa};"
+        f"perturbation_pressure_pa={perturbation_pressure_pa}"
+    )
+
+
+def _formula_attrs(
+    *,
+    values: str,
+    record_count: int,
+    valid_count: int = 1,
+    invalid_count: int = 0,
+    out_of_bounds_count: int = 0,
+    outside_target_region_count: int = 0,
+) -> dict[str, object]:
+    return {
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_VERSION": "runtime_v0",
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_ENABLED": "true",
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_EVIDENCE_ONLY": "true",
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_INDEX_BASE": "zero_based_mass_grid",
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_REQUEST_COUNT": record_count,
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_RECORD_COUNT": record_count,
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALID_COUNT": valid_count,
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_INVALID_COUNT": invalid_count,
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUT_OF_BOUNDS_COUNT": (
+            out_of_bounds_count
+        ),
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_OUTSIDE_TARGET_REGION_COUNT": (
+            outside_target_region_count
+        ),
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_FIELDS": FORMULA_FIELDS,
+        "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES": values,
+    }
+
+
 def _flag_codes(payload: dict[str, object]) -> set[str]:
     return {item["code"] for item in payload["risk_flags"]}
 
@@ -103,7 +157,254 @@ def test_runtime_probe_parses_two_phases_and_deltas(tmp_path: Path) -> None:
     delta = level0["deltas"]["post_pressure_refresh_minus_post_static_refresh"]
     assert math.isclose(delta["P"], -5.0)
     assert math.isclose(delta["P+PB"], -5.0)
+    assert payload["formula_observation"]["present"] is False
     assert _flag_codes(payload) == {"formula_terms_unavailable"}
+
+
+def test_formula_observation_correlates_with_probe_pressure(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_static_refresh", 160, 49, 1, p=120.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+            _record("post_pressure_refresh", 160, 49, 1, p=118.0),
+        ]
+    )
+    attrs = _probe_attrs(values=values, record_count=4)
+    attrs.update(
+        _formula_attrs(
+            values=_formula_record(perturbation_pressure_pa=75.0),
+            record_count=1,
+        )
+    )
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "formula_terms_unavailable" not in codes
+    assert "probe_field_terms_unavailable" in codes
+    assert "formula_pressure_probe_mismatch" not in codes
+    assert "formula_observation_count_mismatch" not in codes
+    assert "formula_observation_invalid_status" not in codes
+    formula = payload["formula_observation"]
+    assert formula["present"] is True
+    assert formula["attrs"]["version"] == "runtime_v0"
+    assert formula["record_count"]["valid_declared"] == 1
+    assert formula["record_count"]["valid_observed"] == 1
+    assert formula["record_count"]["valid_matches_declared"] is True
+    assert {"ALB", "theta", "perturbation_pressure_pa"} <= set(
+        formula["fields"]["supplied"]
+    )
+    assert "160,49,0" in formula["records_by_column_level"]["items"]
+    match = formula["correlation"]["matched_records"][0]
+    assert math.isclose(match["difference_pa"], 0.0)
+    assert math.isclose(match["probe_delta_p"], -5.0)
+
+
+def test_formula_observation_flags_count_mismatch_and_malformed_values(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_static_refresh", 160, 49, 1, p=120.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+            _record("post_pressure_refresh", 160, 49, 1, p=118.0),
+        ]
+    )
+    malformed = _formula_record(perturbation_pressure_pa=75.0).replace(
+        "i=160", "i=bad"
+    )
+    attrs = _probe_attrs(values=values, record_count=4)
+    attrs.update(_formula_attrs(values=malformed, record_count=2, valid_count=2))
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "malformed_formula_observation_values" in codes
+    assert "formula_observation_count_mismatch" in codes
+    assert payload["formula_observation"]["record_count"]["parsed"] == 0
+    assert payload["formula_observation"]["record_count"]["declared"] == 2
+
+
+def test_formula_observation_flags_pressure_mismatch(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_static_refresh", 160, 49, 1, p=120.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+            _record("post_pressure_refresh", 160, 49, 1, p=118.0),
+        ]
+    )
+    attrs = _probe_attrs(values=values, record_count=4)
+    attrs.update(
+        _formula_attrs(
+            values=_formula_record(perturbation_pressure_pa=75.25),
+            record_count=1,
+        )
+    )
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "formula_pressure_probe_mismatch" in codes
+    mismatch = payload["formula_observation"]["correlation"]["pressure_mismatches"][0]
+    assert math.isclose(mismatch["difference_pa"], 0.25)
+
+
+def test_formula_observation_flags_nonfinite_terms(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_static_refresh", 160, 49, 1, p=120.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+            _record("post_pressure_refresh", 160, 49, 1, p=118.0),
+        ]
+    )
+    attrs = _probe_attrs(values=values, record_count=4)
+    attrs.update(
+        _formula_attrs(
+            values=_formula_record().replace("ALB=0.92", "ALB=nan"),
+            record_count=1,
+        )
+    )
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "formula_observation_nonfinite_or_invalid_terms" in codes
+    nonfinite = next(
+        flag
+        for flag in payload["risk_flags"]
+        if flag["code"] == "formula_observation_nonfinite_or_invalid_terms"
+    )
+    assert nonfinite["evidence"]["errors"][0]["field"] == "ALB"
+
+
+def test_formula_observation_accepts_cpp_skip_status_counts(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_static_refresh", 160, 49, 1, p=120.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+            _record("post_pressure_refresh", 160, 49, 1, p=118.0),
+        ]
+    )
+    formula_values = "|".join(
+        [
+            _formula_record(perturbation_pressure_pa=75.0),
+            _formula_record(
+                i=0,
+                j=0,
+                k=0,
+                status="request_out_of_bounds",
+                valid=False,
+            ),
+            _formula_record(
+                i=1,
+                j=1,
+                k=0,
+                status="request_outside_target_region",
+                valid=False,
+            ),
+        ]
+    )
+    attrs = _probe_attrs(values=values, record_count=4)
+    attrs.update(
+        _formula_attrs(
+            values=formula_values,
+            record_count=3,
+            valid_count=1,
+            invalid_count=0,
+            out_of_bounds_count=1,
+            outside_target_region_count=1,
+        )
+    )
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "formula_observation_count_mismatch" not in codes
+    assert "formula_observation_invalid_status" not in codes
+    record_count = payload["formula_observation"]["record_count"]
+    assert record_count["valid_observed"] == 1
+    assert record_count["valid_matches_declared"] is True
+    assert record_count["invalid_observed"] == 0
+    assert record_count["invalid_matches_declared"] is True
+    assert record_count["out_of_bounds_observed"] == 1
+    assert record_count["out_of_bounds_matches_declared"] is True
+    assert record_count["outside_target_region_observed"] == 1
+    assert record_count["outside_target_region_matches_declared"] is True
+
+
+def test_formula_observation_flags_invalid_status(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_static_refresh", 160, 49, 1, p=120.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+            _record("post_pressure_refresh", 160, 49, 1, p=118.0),
+        ]
+    )
+    attrs = _probe_attrs(values=values, record_count=4)
+    attrs.update(
+        _formula_attrs(
+            values=_formula_record(status="invalid_mu_total", valid=False),
+            record_count=1,
+            valid_count=0,
+            invalid_count=1,
+        )
+    )
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "formula_observation_invalid_status" in codes
+    invalid = next(
+        flag
+        for flag in payload["risk_flags"]
+        if flag["code"] == "formula_observation_invalid_status"
+    )
+    assert invalid["evidence"]["examples"][0]["status"] == "invalid_mu_total"
+
+
+def test_formula_observation_flags_missing_when_enabled_claimed(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    values = "|".join(
+        [
+            _record("post_static_refresh", 160, 49, 0, p=80.0),
+            _record("post_static_refresh", 160, 49, 1, p=120.0),
+            _record("post_pressure_refresh", 160, 49, 0, p=75.0),
+            _record("post_pressure_refresh", 160, 49, 1, p=118.0),
+        ]
+    )
+    attrs = _probe_attrs(values=values, record_count=4)
+    attrs["TYWRF_PRESSURE_COLUMN_PROBE_FORMULA_OBSERVATION_ENABLED"] = "true"
+    _write_candidate(candidate, attrs)
+
+    payload = json.loads(report_to_json(audit_pressure_column_runtime_probe(candidate)))
+    codes = _flag_codes(payload)
+
+    assert "missing_formula_observation" in codes
+    assert payload["formula_observation"]["present"] is False
 
 
 def test_runtime_probe_flags_mismatch_and_malformed_values(tmp_path: Path) -> None:

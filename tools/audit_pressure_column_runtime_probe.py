@@ -24,6 +24,7 @@ if __package__ in {None, ""} and str(PROJECT_ROOT) not in sys.path:
 
 
 ATTR_PREFIX = "TYWRF_PRESSURE_COLUMN_PROBE_"
+FORMULA_ATTR_PREFIX = "TYWRF_PRESSURE_FORMULA_OBSERVATION_"
 REQUIRED_ATTRS = (
     "VERSION",
     "ENABLED",
@@ -40,14 +41,57 @@ REQUIRED_ATTRS = (
     "NOT_AVAILABLE",
     "VALUES",
 )
+OPTIONAL_PROBE_ATTRS = ("FORMULA_OBSERVATION_ENABLED",)
+FORMULA_REQUIRED_ATTRS = (
+    "VERSION",
+    "ENABLED",
+    "EVIDENCE_ONLY",
+    "INDEX_BASE",
+    "REQUEST_COUNT",
+    "RECORD_COUNT",
+    "VALID_COUNT",
+    "INVALID_COUNT",
+    "OUT_OF_BOUNDS_COUNT",
+    "OUTSIDE_TARGET_REGION_COUNT",
+    "FIELDS",
+    "VALUES",
+)
 EXPECTED_PHASES = ("post_static_refresh", "post_pressure_refresh")
 FORMULA_TERMS = ("ALB", "C3F", "C4F", "C3H", "C4H", "P_TOP", "theta_m")
+FORMULA_ID_FIELDS = {"status", "valid", "i", "j", "k"}
+FORMULA_RECORDED_STATUS = "recorded"
+FORMULA_OUT_OF_BOUNDS_STATUS = "request_out_of_bounds"
+FORMULA_OUTSIDE_TARGET_REGION_STATUS = "request_outside_target_region"
+FORMULA_SKIPPED_STATUSES = {
+    FORMULA_OUT_OF_BOUNDS_STATUS,
+    FORMULA_OUTSIDE_TARGET_REGION_STATUS,
+}
+FORMULA_VALUE_FIELDS = (
+    "mu_total",
+    "pfu",
+    "pfd",
+    "phm",
+    "log_ratio",
+    "phi_lower",
+    "phi_upper",
+    "delta_phi",
+    "ALB",
+    "PB",
+    "theta",
+    "alpha_total",
+    "alpha_perturbation",
+    "alpha_from_wrf_branch",
+    "pressure_base",
+    "total_pressure",
+    "perturbation_pressure_pa",
+)
 VALUE_KEY_TO_FIELD = {
     "P_PLUS_PB": "P+PB",
     "MU_PLUS_MUB": "MU+MUB",
     "PH_PLUS_PHB": "PH+PHB",
 }
 LARGE_P_DROP_PA = 500.0
+PRESSURE_MATCH_TOLERANCE_PA = 1.0e-3
 
 
 def _diag(**values: Any) -> dict[str, Any]:
@@ -115,14 +159,34 @@ def _coerce_int(value: Any) -> int | None:
     return None
 
 
-def _coerce_float(value: str) -> float | None:
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bool):
+        return None
     try:
         numeric = float(value)
-    except ValueError:
+    except (TypeError, ValueError):
         return None
     if not math.isfinite(numeric):
         return None
     return numeric
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"false", "0", "no", "n"}:
+            return False
+    return None
 
 
 def _csv_items(value: Any) -> list[str]:
@@ -168,14 +232,40 @@ def _parse_levels(value: Any) -> tuple[list[int], list[str]]:
 def _read_probe_attrs(dataset: netCDF4.Dataset) -> tuple[dict[str, Any], list[str]]:
     attrs: dict[str, Any] = {}
     missing: list[str] = []
+    dataset_attrs = set(dataset.ncattrs())
     for suffix in REQUIRED_ATTRS:
         name = f"{ATTR_PREFIX}{suffix}"
-        if name not in dataset.ncattrs():
+        if name not in dataset_attrs:
             missing.append(name)
             attrs[suffix.lower()] = None
             continue
         attrs[suffix.lower()] = _attr_to_json(dataset.getncattr(name))
+    for suffix in OPTIONAL_PROBE_ATTRS:
+        name = f"{ATTR_PREFIX}{suffix}"
+        if name in dataset_attrs:
+            attrs[suffix.lower()] = _attr_to_json(dataset.getncattr(name))
     return attrs, missing
+
+
+def _read_formula_attrs(
+    dataset: netCDF4.Dataset,
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    attrs: dict[str, Any] = {}
+    missing: list[str] = []
+    dataset_attrs = set(dataset.ncattrs())
+    present = sorted(
+        name for name in dataset_attrs if name.startswith(FORMULA_ATTR_PREFIX)
+    )
+    for suffix in FORMULA_REQUIRED_ATTRS:
+        name = f"{FORMULA_ATTR_PREFIX}{suffix}"
+        key = suffix.lower()
+        if name not in dataset_attrs:
+            attrs[key] = None
+            if present:
+                missing.append(name)
+            continue
+        attrs[key] = _attr_to_json(dataset.getncattr(name))
+    return attrs, missing, present
 
 
 def _parse_record_fields(raw_record: str) -> tuple[dict[str, str], list[str]]:
@@ -268,6 +358,103 @@ def _parse_probe_values(
         )
 
     return records, errors, len(raw_records)
+
+
+def _parse_formula_values(
+    raw_values: Any,
+    declared_fields: list[str],
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]], int]:
+    if raw_values is None:
+        return [], [], [], 0
+
+    records: list[dict[str, Any]] = []
+    errors: list[str] = []
+    term_errors: list[dict[str, Any]] = []
+    raw_text = str(raw_values).strip()
+    if raw_text == "":
+        return records, errors, term_errors, 0
+
+    expected_fields = declared_fields or [*FORMULA_ID_FIELDS, *FORMULA_VALUE_FIELDS]
+    expected_numeric_fields = [
+        field for field in expected_fields if field not in FORMULA_ID_FIELDS
+    ]
+    raw_records = [item.strip() for item in raw_text.split("|")]
+    for record_index, raw_record in enumerate(raw_records, start=1):
+        if not raw_record:
+            errors.append(f"record {record_index} is empty")
+            continue
+
+        fields, field_errors = _parse_record_fields(raw_record)
+        errors.extend(f"record {record_index}: {error}" for error in field_errors)
+
+        status = fields.get("status")
+        valid = _coerce_bool(fields.get("valid"))
+        i_value = _coerce_int(fields.get("i"))
+        j_value = _coerce_int(fields.get("j"))
+        k_value = _coerce_int(fields.get("k"))
+        if status is None or status == "":
+            errors.append(f"record {record_index}: missing status")
+        if valid is None:
+            errors.append(f"record {record_index}: missing or invalid valid")
+        if i_value is None:
+            errors.append(f"record {record_index}: missing or invalid i")
+        if j_value is None:
+            errors.append(f"record {record_index}: missing or invalid j")
+        if k_value is None:
+            errors.append(f"record {record_index}: missing or invalid k")
+
+        status_kind = _formula_status_kind(status)
+        requires_formula_terms = status_kind in {"recorded", "invalid", "unknown"}
+        values: dict[str, float] = {}
+        for field in expected_numeric_fields:
+            if field not in fields:
+                if requires_formula_terms:
+                    term_errors.append(
+                        {
+                            "record_index": record_index,
+                            "field": field,
+                            "reason": "missing",
+                        }
+                    )
+                continue
+            numeric = _coerce_float(fields[field])
+            if numeric is None:
+                if requires_formula_terms:
+                    term_errors.append(
+                        {
+                            "record_index": record_index,
+                            "field": field,
+                            "raw_value": fields[field],
+                            "reason": "not_finite_float",
+                        }
+                    )
+                continue
+            values[field] = numeric
+
+        extra_numeric_fields = sorted(
+            set(fields) - set(expected_numeric_fields) - FORMULA_ID_FIELDS
+        )
+        for field in extra_numeric_fields:
+            numeric = _coerce_float(fields[field])
+            if numeric is not None:
+                values[field] = numeric
+
+        if i_value is None or j_value is None or k_value is None:
+            continue
+
+        records.append(
+            {
+                "record_index": record_index,
+                "status": status,
+                "valid": valid,
+                "i": i_value,
+                "j": j_value,
+                "k": k_value,
+                "values": values,
+            }
+        )
+
+    return records, errors, term_errors, len(raw_records)
 
 
 def _column_key(column: dict[str, int]) -> tuple[int, int]:
@@ -453,6 +640,196 @@ def _large_p_drops(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return drops
 
 
+def _formula_status_kind(status: Any) -> str:
+    if status == FORMULA_RECORDED_STATUS:
+        return "recorded"
+    if status == FORMULA_OUT_OF_BOUNDS_STATUS:
+        return "out_of_bounds"
+    if status == FORMULA_OUTSIDE_TARGET_REGION_STATUS:
+        return "outside_target_region"
+    if isinstance(status, str) and status.startswith("invalid_"):
+        return "invalid"
+    return "unknown"
+
+
+def _formula_record_status_problem(record: dict[str, Any]) -> str | None:
+    status_kind = _formula_status_kind(record.get("status"))
+    valid = record.get("valid")
+    if status_kind == "recorded":
+        return None if valid is True else "recorded_without_valid_flag"
+    if status_kind in {"out_of_bounds", "outside_target_region"}:
+        return None if valid is False else f"{status_kind}_with_valid_flag"
+    if status_kind == "invalid":
+        return "invalid_formula_status"
+    return "unknown_formula_status"
+
+
+def _formula_record_count_summary(
+    attrs: dict[str, Any],
+    raw_record_count: int,
+    parsed_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    declared_count = _coerce_int(attrs.get("record_count"))
+    declared_valid_count = _coerce_int(attrs.get("valid_count"))
+    declared_invalid_count = _coerce_int(attrs.get("invalid_count"))
+    declared_out_of_bounds_count = _coerce_int(attrs.get("out_of_bounds_count"))
+    declared_outside_target_region_count = _coerce_int(
+        attrs.get("outside_target_region_count")
+    )
+    parsed_count = len(parsed_records)
+    valid_count = sum(
+        1
+        for record in parsed_records
+        if record.get("valid") is True
+        and _formula_status_kind(record.get("status")) == "recorded"
+    )
+    out_of_bounds_count = sum(
+        1
+        for record in parsed_records
+        if _formula_status_kind(record.get("status")) == "out_of_bounds"
+    )
+    outside_target_region_count = sum(
+        1
+        for record in parsed_records
+        if _formula_status_kind(record.get("status")) == "outside_target_region"
+    )
+    invalid_count = sum(
+        1
+        for record in parsed_records
+        if _formula_status_kind(record.get("status")) in {"invalid", "unknown"}
+    )
+    return _diag(
+        request_count=_coerce_int(attrs.get("request_count")),
+        declared=declared_count,
+        raw_record_segments=raw_record_count,
+        parsed=parsed_count,
+        declared_matches_parsed=(
+            None if declared_count is None else declared_count == parsed_count
+        ),
+        valid_declared=declared_valid_count,
+        valid_observed=valid_count,
+        valid_matches_declared=(
+            None
+            if declared_valid_count is None
+            else declared_valid_count == valid_count
+        ),
+        invalid_declared=declared_invalid_count,
+        invalid_observed=invalid_count,
+        invalid_matches_declared=(
+            None
+            if declared_invalid_count is None
+            else declared_invalid_count == invalid_count
+        ),
+        out_of_bounds_declared=declared_out_of_bounds_count,
+        out_of_bounds_observed=out_of_bounds_count,
+        out_of_bounds_matches_declared=(
+            None
+            if declared_out_of_bounds_count is None
+            else declared_out_of_bounds_count == out_of_bounds_count
+        ),
+        outside_target_region_declared=declared_outside_target_region_count,
+        outside_target_region_observed=outside_target_region_count,
+        outside_target_region_matches_declared=(
+            None
+            if declared_outside_target_region_count is None
+            else declared_outside_target_region_count == outside_target_region_count
+        ),
+    )
+
+
+def _build_formula_records_by_column_level(
+    records: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        key = f"{record['i']},{record['j']},{record['k']}"
+        grouped.setdefault(key, []).append(record)
+    return grouped
+
+
+def _formula_supplied_fields(records: list[dict[str, Any]]) -> list[str]:
+    supplied: set[str] = set()
+    for record in records:
+        supplied.update(field for field in record["values"] if field in FORMULA_VALUE_FIELDS)
+    return sorted(supplied)
+
+
+def _probe_pressure_maps(
+    records: list[dict[str, Any]],
+) -> tuple[dict[tuple[int, int, int], float], dict[tuple[int, int, int], float]]:
+    static: dict[tuple[int, int, int], float] = {}
+    post: dict[tuple[int, int, int], float] = {}
+    for record in records:
+        p_value = record["values"].get("P")
+        if p_value is None:
+            continue
+        key = (record["i"], record["j"], record["k"])
+        if record["phase"] == "post_static_refresh":
+            static[key] = p_value
+        elif record["phase"] == "post_pressure_refresh":
+            post[key] = p_value
+    return static, post
+
+
+def _correlate_formula_observation(
+    formula_records: list[dict[str, Any]],
+    probe_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    static_p, post_p = _probe_pressure_maps(probe_records)
+    matched: list[dict[str, Any]] = []
+    mismatches: list[dict[str, Any]] = []
+    missing_probe_post: list[dict[str, Any]] = []
+    for record in formula_records:
+        formula_p = record["values"].get("perturbation_pressure_pa")
+        if formula_p is None:
+            continue
+        key = (record["i"], record["j"], record["k"])
+        if key not in post_p:
+            missing_probe_post.append(
+                {
+                    "i": record["i"],
+                    "j": record["j"],
+                    "k": record["k"],
+                    "formula_perturbation_pressure_pa": formula_p,
+                }
+            )
+            continue
+        probe_p = post_p[key]
+        diff = formula_p - probe_p
+        probe_delta = None
+        if key in static_p:
+            probe_delta = probe_p - static_p[key]
+        item = {
+            "i": record["i"],
+            "j": record["j"],
+            "k": record["k"],
+            "formula_perturbation_pressure_pa": formula_p,
+            "probe_post_pressure_refresh_p": probe_p,
+            "difference_pa": diff,
+            "probe_delta_p": probe_delta,
+            "matches_within_tolerance": abs(diff) <= PRESSURE_MATCH_TOLERANCE_PA,
+        }
+        matched.append(item)
+        if not item["matches_within_tolerance"]:
+            mismatches.append(item)
+    return _diag(
+        match_tolerance_pa=PRESSURE_MATCH_TOLERANCE_PA,
+        matched_records=matched,
+        pressure_mismatches=mismatches,
+        missing_post_pressure_probe_records=missing_probe_post,
+    )
+
+
+def _formula_claims_enabled(
+    probe_attrs: dict[str, Any],
+    formula_attrs: dict[str, Any],
+) -> bool:
+    return (
+        _coerce_bool(formula_attrs.get("enabled")) is True
+        or _coerce_bool(probe_attrs.get("formula_observation_enabled")) is True
+    )
+
+
 def _build_risk_flags(
     missing_attrs: list[str],
     parse_errors: list[str],
@@ -462,6 +839,7 @@ def _build_risk_flags(
     not_available: list[str],
     records: list[dict[str, Any]],
     observations: list[dict[str, Any]],
+    formula_terms_supplied: bool,
 ) -> list[dict[str, Any]]:
     flags: list[dict[str, Any]] = []
     if missing_attrs:
@@ -547,7 +925,20 @@ def _build_risk_flags(
         )
 
     unavailable_terms = [term for term in FORMULA_TERMS if term in set(not_available)]
-    if unavailable_terms:
+    if unavailable_terms and formula_terms_supplied:
+        flags.append(
+            _risk(
+                "probe_field_terms_unavailable",
+                "warning",
+                "NetCDF pressure-column probe fields still mark formula terms unavailable, but formula observation supplied internal terms separately.",
+                {
+                    "required_formula_terms": list(FORMULA_TERMS),
+                    "unavailable_probe_fields": unavailable_terms,
+                    "formula_observation_supplies_internal_terms": True,
+                },
+            )
+        )
+    elif unavailable_terms:
         flags.append(
             _risk(
                 "formula_terms_unavailable",
@@ -563,10 +954,128 @@ def _build_risk_flags(
     return flags
 
 
+def _build_formula_risk_flags(
+    *,
+    formula_present: bool,
+    formula_enabled_claims_true: bool,
+    formula_missing_attrs: list[str],
+    formula_parse_errors: list[str],
+    formula_term_errors: list[dict[str, Any]],
+    formula_record_count: dict[str, Any],
+    formula_records: list[dict[str, Any]],
+    formula_correlation: dict[str, Any],
+    not_available: list[str],
+) -> list[dict[str, Any]]:
+    flags: list[dict[str, Any]] = []
+    unavailable_terms = [term for term in FORMULA_TERMS if term in set(not_available)]
+    if formula_enabled_claims_true and unavailable_terms and (
+        not formula_present or formula_missing_attrs
+    ):
+        flags.append(
+            _risk(
+                "missing_formula_observation",
+                "error",
+                "Formula observation was claimed enabled while probe metadata still marks formula terms unavailable, but formula observation attrs are incomplete.",
+                {
+                    "formula_present": formula_present,
+                    "missing_attrs": formula_missing_attrs,
+                    "unavailable_probe_terms": unavailable_terms,
+                },
+            )
+        )
+
+    if formula_parse_errors:
+        flags.append(
+            _risk(
+                "malformed_formula_observation_values",
+                "error",
+                "Pressure formula observation records are malformed.",
+                {
+                    "errors": formula_parse_errors[:50],
+                    "error_count": len(formula_parse_errors),
+                },
+            )
+        )
+
+    mismatch_keys = (
+        "declared_matches_parsed",
+        "valid_matches_declared",
+        "invalid_matches_declared",
+        "out_of_bounds_matches_declared",
+        "outside_target_region_matches_declared",
+    )
+    if any(formula_record_count.get(key) is False for key in mismatch_keys):
+        flags.append(
+            _risk(
+                "formula_observation_count_mismatch",
+                "error",
+                "Pressure formula observation record counts are inconsistent.",
+                {"record_count": formula_record_count},
+            )
+        )
+
+    invalid_records = [
+        {
+            "i": record["i"],
+            "j": record["j"],
+            "k": record["k"],
+            "status": record.get("status"),
+            "valid": record.get("valid"),
+        }
+        for record in formula_records
+        if _formula_record_status_problem(record) is not None
+    ]
+    if invalid_records:
+        flags.append(
+            _risk(
+                "formula_observation_invalid_status",
+                "warning",
+                "Formula observation contains invalid or internally inconsistent statuses.",
+                {
+                    "count": len(invalid_records),
+                    "examples": invalid_records[:20],
+                },
+            )
+        )
+
+    if formula_term_errors:
+        flags.append(
+            _risk(
+                "formula_observation_nonfinite_or_invalid_terms",
+                "error",
+                "Formula observation contains missing or nonfinite formula terms.",
+                {
+                    "errors": formula_term_errors[:50],
+                    "error_count": len(formula_term_errors),
+                },
+            )
+        )
+
+    pressure_mismatches = formula_correlation.get("pressure_mismatches", [])
+    if pressure_mismatches:
+        flags.append(
+            _risk(
+                "formula_pressure_probe_mismatch",
+                "error",
+                "Formula observation perturbation pressure differs from post_pressure_refresh probe P for the same i,j,k.",
+                {
+                    "match_tolerance_pa": PRESSURE_MATCH_TOLERANCE_PA,
+                    "count": len(pressure_mismatches),
+                    "examples": pressure_mismatches[:20],
+                },
+            )
+        )
+
+    return flags
+
+
 def audit_pressure_column_runtime_probe(candidate: Path) -> dict[str, Any]:
     candidate = Path(candidate)
     with netCDF4.Dataset(candidate) as dataset:
         attrs, missing_attrs = _read_probe_attrs(dataset)
+        formula_attrs, formula_missing_attrs, formula_present_attrs = (
+            _read_formula_attrs(dataset)
+        )
 
     declared_columns, column_errors = _parse_columns(attrs.get("columns"))
     declared_levels, level_errors = _parse_levels(attrs.get("levels"))
@@ -600,6 +1109,24 @@ def audit_pressure_column_runtime_probe(candidate: Path) -> dict[str, Any]:
         declared_phases,
     )
 
+    formula_declared_fields = _csv_items(formula_attrs.get("fields"))
+    (
+        formula_records,
+        formula_value_errors,
+        formula_term_errors,
+        formula_raw_record_count,
+    ) = _parse_formula_values(formula_attrs.get("values"), formula_declared_fields)
+    formula_record_count = _formula_record_count_summary(
+        formula_attrs, formula_raw_record_count, formula_records
+    )
+    formula_records_by_column_level = _build_formula_records_by_column_level(
+        formula_records
+    )
+    formula_supplied_fields = _formula_supplied_fields(formula_records)
+    formula_correlation = _correlate_formula_observation(formula_records, records)
+    formula_present = bool(formula_present_attrs)
+    formula_enabled_claims_true = _formula_claims_enabled(attrs, formula_attrs)
+
     risk_flags = _build_risk_flags(
         missing_attrs,
         parse_errors,
@@ -609,6 +1136,20 @@ def audit_pressure_column_runtime_probe(candidate: Path) -> dict[str, Any]:
         not_available,
         records,
         observations,
+        bool(formula_supplied_fields),
+    )
+    risk_flags.extend(
+        _build_formula_risk_flags(
+            formula_present=formula_present,
+            formula_enabled_claims_true=formula_enabled_claims_true,
+            formula_missing_attrs=formula_missing_attrs,
+            formula_parse_errors=formula_value_errors,
+            formula_term_errors=formula_term_errors,
+            formula_record_count=formula_record_count,
+            formula_records=formula_records,
+            formula_correlation=formula_correlation,
+            not_available=not_available,
+        )
     )
 
     return {
@@ -639,11 +1180,33 @@ def audit_pressure_column_runtime_probe(candidate: Path) -> dict[str, Any]:
         "record_count": record_count,
         "records": _diag(parsed=records),
         "observations": _diag(columns=observations),
+        "formula_observation": _diag(
+            present=formula_present,
+            enabled_claims_true=formula_enabled_claims_true,
+            attrs=_diag(
+                version=formula_attrs.get("version"),
+                enabled=formula_attrs.get("enabled"),
+                evidence_only=formula_attrs.get("evidence_only"),
+                index_base=formula_attrs.get("index_base"),
+                present_attrs=formula_present_attrs,
+                missing_attrs=formula_missing_attrs,
+            ),
+            fields=_diag(
+                declared=formula_declared_fields,
+                supplied=formula_supplied_fields,
+            ),
+            record_count=formula_record_count,
+            records=_diag(parsed=formula_records),
+            records_by_column_level=_diag(items=formula_records_by_column_level),
+            correlation=formula_correlation,
+        ),
         "summary": _diag(
             column_count=len(columns),
             level_count=len(levels),
             phase_count=len(phases),
             parsed_record_count=len(records),
+            formula_observation_present=formula_present,
+            formula_record_count=len(formula_records),
             risk_flag_count=len(risk_flags),
             risk_codes=[flag["code"] for flag in risk_flags],
         ),
