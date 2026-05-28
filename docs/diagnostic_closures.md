@@ -1287,6 +1287,23 @@ borrow selected-field metadata, change thresholds, or prove that the strict
 nudging, any d02 resolution change below `2 km`, or any `00:20` validation
 progression.
 
+D83 is complete, passed focused validation, full validation, and the real D82
+source-attribution smoke, and was pushed at commit `d8b8453`
+(`Add selected-field wind source attribution audit`). This remains outside
+closure scope. The moving-nest raw d02 start comparison is raw-pose diagnostics
+only, not shifted-start persistence evidence and not a closure substitute. The
+strict `2025-07-26_00:10:00` gate still fails, so no closure, audit, or
+diagnostic report may be used to justify advancing to `00:20`.
+
+D84 `U`/`V` wind tendency core skeleton work is also outside diagnostic
+closures. It may add only the wind tendency core skeleton and directly related
+tests. It must not patch winds through a closure, handle `P` or `MU`, alter
+physics, introduce best-track nudging, lower d02 below `2 km`, or claim real
+gate improvement. Any wind tendency metadata, core report, source report, or
+skeleton report is diagnostic/accounting context with no gate credit. The only
+acceptable proof is a later real strict `2025-07-26_00:10:00` d02 gate pass
+from positive integrator metadata and passing metrics.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

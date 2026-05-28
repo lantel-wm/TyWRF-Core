@@ -20,6 +20,7 @@ add_library(tywrf_core STATIC
   src/dynamics/pressure_refresh_staging.cpp
   src/dynamics/state_stepper.cpp
   src/dynamics/tendency.cpp
+  src/dynamics/wind_tendency.cpp
   src/io/forcing_frames.cpp
   src/io/forcing_apply.cpp
   src/io/forcing_io.cpp
@@ -130,6 +131,10 @@ if(BUILD_TESTING)
   add_executable(tywrf_tendency_test tests/unit/tendency_test.cpp)
   target_link_libraries(tywrf_tendency_test PRIVATE TyWRF::Core)
   add_test(NAME tywrf_tendency_test COMMAND tywrf_tendency_test)
+
+  add_executable(tywrf_wind_tendency_test tests/unit/wind_tendency_test.cpp)
+  target_link_libraries(tywrf_wind_tendency_test PRIVATE TyWRF::Core)
+  add_test(NAME tywrf_wind_tendency_test COMMAND tywrf_wind_tendency_test)
 
   add_executable(tywrf_state_stepper_test tests/unit/state_stepper_test.cpp)
   target_link_libraries(tywrf_state_stepper_test PRIVATE TyWRF::Core)

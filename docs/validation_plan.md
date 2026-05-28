@@ -1508,6 +1508,25 @@ gate metadata, or be cited as proof that `00:10` passed. D83 must not work on
 `P`, `MU`, physics, best-track nudging, or d02 resolution, and it must not run
 or report `00:20` as the next validation gate.
 
+D83 is complete at commit `d8b8453`
+(`Add selected-field wind source attribution audit`). It passed focused
+validation, full validation, the real D82 source-attribution smoke, and was
+pushed. The D83 validation conclusion is that source-attribution and raw-pose
+diagnostics are useful failure-analysis context only: the moving-nest raw d02
+start comparison is raw-pose diagnostics, not shifted-start persistence
+evidence. It does not change gate status. The strict d02
+`2025-07-26_00:10:00` gate still fails, so the progressive sequence remains
+stopped at `00:10` and must not proceed to `00:20`.
+
+D84 validation scope is limited to a `U`/`V` wind tendency core skeleton and
+tests. D84 must not claim a real strict-gate improvement unless a real strict
+`2025-07-26_00:10:00` d02 gate report proves it. It must not work on `P`,
+`MU`, physics, best-track nudging, thresholds, oracle/reference-copy
+candidates, or any d02 resolution change below `2 km`. Wind-tendency metadata,
+core reports, source reports, and skeleton reports are not gate evidence; they
+must remain diagnostic/accounting context until the real strict `00:10` gate
+passes.
+
 Example:
 
 ```bash

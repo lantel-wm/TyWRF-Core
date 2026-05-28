@@ -1745,6 +1745,24 @@ alter thresholds, repair metadata, or serve as pass proof. D83 must not handle
 `P`, `MU`, physics, or best-track nudging, must not lower d02 below `2 km`, and
 must not advance validation to `00:20`.
 
+D83 is complete, passed focused validation, full validation, and the real D82
+source-attribution smoke, and was pushed at commit `d8b8453`
+(`Add selected-field wind source attribution audit`). Its compatibility result
+is diagnostic attribution only. The moving-nest raw d02 start comparison is
+classified as raw-pose diagnostics, not shifted-start persistence evidence and
+not a validation-gate result. The strict real d02 `2025-07-26_00:10:00` gate
+still fails, so validation remains stopped at `00:10` and must not advance to
+`00:20`.
+
+D84 may add only a `U`/`V` wind tendency core skeleton and directly related
+tests. This is scaffolding for wind-tendency accounting, not a declaration of
+real-gate improvement. D84 must not handle `P`, `MU`, physics, best-track
+nudging, oracle/reference-copy candidates, or any d02 resolution change below
+`2 km`. Any wind-tendency metadata, source/core report, or skeleton output is
+compatibility context only and is not gate evidence; only a later real strict
+`2025-07-26_00:10:00` gate run with positive integrator metadata and passing
+metrics can prove compatibility improvement.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
