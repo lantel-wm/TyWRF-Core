@@ -1430,6 +1430,27 @@ advance to `00:20`. The current first failure remains `U` normalized RMSE
 reconstruction remains limited by documented provider semantics and must not be
 reported as WRF rebalance equivalence.
 
+D79 is complete, passed focused and full validation, and was pushed at commit
+`3d49d9c` (`Add normal selected-field base-state producer`). The D79 validation
+milestone verifies the normal selected-field base-state producer wiring, but it
+does not change the progressive gate state. The real KROSA d02
+`2025-07-26_00:10:00` gate still fails; the first failed field is `U` with
+normalized RMSE `0.11787539215928292`. Validation must stop at `00:10` and
+must not run or report `00:20` as an advanced gate.
+
+D80 may update only normal pressure-refresh metadata eligibility names. The
+allowed migration is from helper/dry_run/staging blocker wording to gate-safe
+production/readiness/source-sync wording for the normal production path. This
+does not relax strict metadata rejection. Default strict-gate tooling must
+still reject diagnostic, oracle, helper, probe, adapter, staging, dry_run, and
+experimental artifacts before interpreting RMSE or TC diagnostics.
+
+The D80 metadata refresh is not a field validation pass. Reports must continue
+to expose the unresolved `U`, `V`, `MU`, and `P` RMSE failures and the failed
+TC center diagnostic. Metadata eligibility fixes cannot hide those failures,
+cannot convert helper or diagnostic artifacts into candidates, and cannot allow
+progression beyond the failed `2025-07-26_00:10:00` endpoint.
+
 Example:
 
 ```bash

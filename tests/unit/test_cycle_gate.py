@@ -225,6 +225,46 @@ def test_cycle_gate_rejects_related_artifact_metadata_tokens(
     assert {field.status for field in report.cycles[0].fields} == {"passed"}
 
 
+def test_cycle_gate_allows_pressure_refresh_production_readiness_metadata(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_CANDIDATE_KIND": SELECTED_FIELD_INTEGRATOR_KIND,
+            "TYWRF_PRESSURE_REFRESH_OPT_IN": "true",
+            "TYWRF_PRESSURE_REFRESH_APPLIED": "true",
+            "TYWRF_PRESSURE_REFRESH_SOURCE_SYNC_OK": "true",
+            "TYWRF_PRESSURE_REFRESH_PRODUCTION_SOURCE": (
+                "krosa_moving_nest_pressure_refresh"
+            ),
+            "TYWRF_BASE_STATE_SOURCE_SYNC_READINESS_CHECK": "true",
+            "TYWRF_BASE_STATE_SOURCE_SYNC_APPLIED": "false",
+            "TYWRF_SOURCE_SYNC_PLANNED_PB_POINT_COUNT": 25,
+            "TYWRF_PRESSURE_COMPUTE_READINESS_CHECK": "true",
+            "TYWRF_PRESSURE_COMPUTE_READINESS_CHECK_CALLED": "true",
+            "TYWRF_PRESSURE_COMPUTE_READINESS_CHECK_OK": "true",
+            "TYWRF_PRESSURE_REFRESH_PLANNED_P_POINT_COUNT": 25,
+            "TYWRF_PRESSURE_READINESS_INVALID_P_POINT_COUNT": 0,
+            "TYWRF_PRESSURE_COMPUTE_READINESS_REPORT_TARGET_COLUMN_COUNT": 25,
+            "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS": (
+                ":pressure_refresh_readiness("
+                "base_state_source_sync_readiness_check=true,"
+                "source_sync_planned_pb_points=25,"
+                "readiness_invalid_p_points=0)"
+            ),
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "passed"
+    assert metadata.status == "passed"
+
+
 def test_cycle_gate_rejects_selected_field_diagnostic_adapter_ready_counts(
     tmp_path: Path,
 ) -> None:

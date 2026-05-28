@@ -1667,6 +1667,23 @@ proves otherwise. Any `PHB` reconstruction in this normal-path base-state
 producer remains limited by the documented provider semantics and must not be
 described as WRF rebalance equivalence.
 
+D79 is complete, passed focused and full validation, and was pushed at commit
+`3d49d9c` (`Add normal selected-field base-state producer`). That commit records
+the normal selected-field base-state producer as candidate-path compatibility
+work, not as proof that the field gate passed. The real KROSA d02
+`2025-07-26_00:10:00` gate still fails, with first failed field `U` normalized
+RMSE `0.11787539215928292`; validation must not advance to `00:20`.
+
+D80 may refresh only the normal pressure-refresh production metadata naming:
+legacy helper/dry_run/staging blocker labels may move to gate-safe
+production/readiness/source-sync names when they describe the same normal
+candidate path. This is a metadata eligibility clarification only. It must not
+relax the strict metadata guard and must not allow diagnostic, oracle, helper,
+probe, adapter, staging, dry_run, or experimental artifacts to pass as
+WRF-compatible integrator output. The metadata repair must keep the real
+numerical failures visible: failed `U`, `V`, `MU`, `P` RMSE and the failed TC
+center diagnostic remain blockers until a real strict `00:10` gate passes.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

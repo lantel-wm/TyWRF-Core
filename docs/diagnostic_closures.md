@@ -1214,6 +1214,25 @@ remains `U` normalized RMSE `0.117875`, and validation must not advance to
 limited by documented provider semantics and must not be described as WRF
 rebalance equivalence.
 
+D79 is complete, passed focused and full validation, and was pushed at commit
+`3d49d9c` (`Add normal selected-field base-state producer`). That verification
+does not make D79 a diagnostic closure and does not close the real field gate.
+The KROSA d02 `2025-07-26_00:10:00` gate still fails, with first failed field
+`U` normalized RMSE `0.11787539215928292`; validation and closure work must not
+advance to `00:20`.
+
+D80 may rename only normal pressure-refresh metadata eligibility from
+helper/dry_run/staging blocker wording to gate-safe production/readiness/
+source-sync wording. A closure must not use that naming repair to bypass the
+strict metadata guard. Diagnostic, oracle, helper, probe, adapter, staging,
+dry_run, and experimental artifacts remain excluded from normal gate
+eligibility, even if their metadata resembles production readiness wording.
+
+The D80 metadata repair is not a pressure, wind, mass, RMSE, or TC-center
+closure. It cannot patch `U`, `V`, `MU`, or `P`, cannot hide their RMSE
+failures, cannot repair the failed TC center diagnostic, and cannot promote any
+diagnostic artifact into a strict `00:10` pass.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

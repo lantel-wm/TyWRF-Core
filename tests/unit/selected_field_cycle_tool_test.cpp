@@ -619,8 +619,36 @@ void assert_selected_field_timeline_attrs(
   assert(timeline_field_value(events, "output_write_preparation", "times") == kTenMinuteEnd);
   assert(timeline_u64_field(events, "output_write_preparation", "variable_count") > 0);
   if (pressure_refresh) {
+    if (!pressure_column_probe) {
+      assert(events.find("helper") == std::string::npos);
+      assert(events.find("dry_run") == std::string::npos);
+      assert(events.find("staging") == std::string::npos);
+      assert(events.find("experimental") == std::string::npos);
+    }
     assert(timeline_field_value(events, "pressure_refresh_readiness", "opt_in") == "true");
     assert(timeline_field_value(events, "pressure_refresh_readiness", "ready") == "true");
+    assert(
+        timeline_field_value(
+            events, "pressure_refresh_readiness", "base_state_source_sync_readiness_check") ==
+        "true");
+    assert(
+        timeline_u64_field(
+            events, "pressure_refresh_readiness", "source_sync_planned_pb_points") > 0);
+    assert(
+        timeline_u64_field(
+            events, "pressure_refresh_readiness", "source_sync_planned_mub_points") > 0);
+    assert(
+        timeline_u64_field(
+            events, "pressure_refresh_readiness", "source_sync_planned_phb_points") > 0);
+    assert(
+        timeline_u64_field(
+            events, "pressure_refresh_readiness", "production_refresh_planned_p_points") > 0);
+    assert(
+        timeline_u64_field(events, "pressure_refresh_readiness", "readiness_invalid_p_points") ==
+        0);
+    assert(
+        timeline_u64_field(events, "pressure_refresh_readiness", "readiness_skipped_p_points") ==
+        0);
     assert(timeline_field_value(events, "pressure_refresh_apply", "opt_in") == "true");
     assert(timeline_field_value(events, "pressure_refresh_apply", "applied") == "true");
     assert(
@@ -670,41 +698,47 @@ void assert_pressure_refresh_readiness_attrs(const int file_id) {
       "true");
   assert(read_text_attr(file_id, "TYWRF_PROVIDER_BASE_STATE_RECONSTRUCT_OK") == "true");
   assert(read_text_attr(file_id, "TYWRF_BASE_STATE_SYNC_CONTRACT_OK") == "true");
-  assert(read_text_attr(file_id, "TYWRF_BASE_STATE_SYNC_DRY_RUN") == "true");
-  assert(read_text_attr(file_id, "TYWRF_BASE_STATE_SYNC_APPLIED") == "false");
-  assert(read_double_attr(file_id, "TYWRF_WOULD_SYNC_PB_POINT_COUNT") > 0.0);
-  assert(read_double_attr(file_id, "TYWRF_WOULD_SYNC_MUB_POINT_COUNT") > 0.0);
-  assert(read_double_attr(file_id, "TYWRF_WOULD_SYNC_PHB_POINT_COUNT") > 0.0);
-  assert(read_double_attr(file_id, "TYWRF_SYNC_OVERLAP_WRITE_COUNT") == 0.0);
-  assert(read_double_attr(file_id, "TYWRF_SYNC_HALO_WRITE_COUNT") == 0.0);
-  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_DRY_RUN_COMPUTE_CALLED") == "false");
-  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN") == "true");
-  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_CALLED") == "true");
-  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_OK") == "true");
+  assert(read_text_attr(file_id, "TYWRF_BASE_STATE_SOURCE_SYNC_READINESS_CHECK") == "true");
+  assert(read_text_attr(file_id, "TYWRF_BASE_STATE_SOURCE_SYNC_APPLIED") == "false");
+  assert(read_double_attr(file_id, "TYWRF_SOURCE_SYNC_PLANNED_PB_POINT_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_SOURCE_SYNC_PLANNED_MUB_POINT_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_SOURCE_SYNC_PLANNED_PHB_POINT_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_SOURCE_SYNC_OVERLAP_WRITE_COUNT") == 0.0);
+  assert(read_double_attr(file_id, "TYWRF_SOURCE_SYNC_HALO_WRITE_COUNT") == 0.0);
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_READINESS_COMPUTE_CALLED") == "false");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_CHECK") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_CHECK_CALLED") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_CHECK_OK") == "true");
   const auto would_refresh_p_points =
-      read_double_attr(file_id, "TYWRF_WOULD_REFRESH_P_POINT_COUNT");
+      read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_PLANNED_P_POINT_COUNT");
   const auto dry_run_refreshed_points =
-      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_REFRESHED_POINT_COUNT");
+      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_REPORT_REFRESHED_POINT_COUNT");
   assert(would_refresh_p_points > 0.0);
   assert(dry_run_refreshed_points == would_refresh_p_points);
-  assert(read_double_attr(file_id, "TYWRF_DRY_RUN_INVALID_P_POINT_COUNT") == 0.0);
-  assert(read_double_attr(file_id, "TYWRF_DRY_RUN_SKIPPED_P_POINT_COUNT") == 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_READINESS_INVALID_P_POINT_COUNT") == 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_READINESS_SKIPPED_P_POINT_COUNT") == 0.0);
   assert(
-      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_TARGET_COLUMN_COUNT") >
+      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_REPORT_TARGET_COLUMN_COUNT") >
       0.0);
   assert(
-      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_INVALID_POINT_COUNT") ==
+      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_REPORT_INVALID_POINT_COUNT") ==
       0.0);
   assert(
-      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_SKIPPED_POINT_COUNT") ==
+      read_double_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_REPORT_SKIPPED_POINT_COUNT") ==
       0.0);
   assert(
-      read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_TOUCHED_OVERLAP_CELLS") ==
+      read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_REPORT_TOUCHED_OVERLAP_CELLS") ==
       "false");
   assert(
-      read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_TOUCHED_HALO_CELLS") ==
+      read_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_READINESS_REPORT_TOUCHED_HALO_CELLS") ==
       "false");
-  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_DRY_RUN_APPLIED") == "false");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_READINESS_APPLIED") == "false");
+  assert(!has_text_attr(file_id, "TYWRF_BASE_STATE_SYNC_DRY_RUN"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN"));
+  assert(!has_text_attr(file_id, "TYWRF_DRY_RUN_INVALID_P_POINT_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_DRY_RUN_SKIPPED_P_POINT_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_COMPUTE_DRY_RUN_REPORT_TARGET_COLUMN_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_DRY_RUN_APPLIED"));
   assert(
       read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_READINESS_PROVIDER_TERRAIN_SOURCE") ==
       "moved_candidate_HGT");
@@ -872,10 +906,13 @@ void assert_successful_candidate(
     assert(
         read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS") ==
         (experimental_pressure_refresh ? "experimental_apply_test_only" : "applied_to_candidate"));
-    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY") ==
-           (experimental_pressure_refresh ? "true" : "false"));
+    if (experimental_pressure_refresh) {
+      assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY") == "true");
+    } else {
+      assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_EXPERIMENTAL_APPLY"));
+    }
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_PROVIDER_OK") == "true");
-    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_STAGING_OK") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_SOURCE_SYNC_OK") == "true");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_COMPUTE_CALLED") == "true");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TERRAIN_OVERRIDE_USED") == "true");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TERRAIN_SOURCE") ==
@@ -883,6 +920,11 @@ void assert_successful_candidate(
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TERRAIN_PROVENANCE") ==
            "override:moved_candidate_HGT");
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_METADATA_SOURCE") == pressure_refresh_metadata_source.string());
+    assert(
+        read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_PRODUCTION_SOURCE") ==
+        "krosa_moving_nest_pressure_refresh");
+    assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_STAGING_OK"));
+    assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_HELPER_NAME"));
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS") > 0.0);
     assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS") > 0.0);
@@ -1311,30 +1353,31 @@ void assert_pressure_refresh_readiness_json(const std::string& log) {
   assert(json_bool_field(log, "provider_terrain_uses_moved_candidate_hgt"));
   assert(json_bool_field(log, "provider_base_state_reconstruct_ok"));
   assert(json_bool_field(log, "base_state_sync_contract_ok"));
-  assert(json_bool_field(log, "base_state_sync_dry_run"));
-  assert(!json_bool_field(log, "base_state_sync_applied"));
-  assert(json_number_field(log, "would_sync_pb_point_count") > 0.0);
-  assert(json_number_field(log, "would_sync_mub_point_count") > 0.0);
-  assert(json_number_field(log, "would_sync_phb_point_count") > 0.0);
-  assert(json_number_field(log, "sync_overlap_write_count") == 0.0);
-  assert(json_number_field(log, "sync_halo_write_count") == 0.0);
-  assert(!json_bool_field(log, "pressure_refresh_dry_run_compute_called"));
-  assert(json_bool_field(log, "pressure_compute_dry_run"));
-  assert(json_bool_field(log, "pressure_compute_dry_run_called"));
-  assert(json_bool_field(log, "pressure_compute_dry_run_ok"));
-  const auto would_refresh_p_points = json_number_field(log, "would_refresh_p_point_count");
+  assert(json_bool_field(log, "base_state_source_sync_readiness_check"));
+  assert(!json_bool_field(log, "base_state_source_sync_applied"));
+  assert(json_number_field(log, "source_sync_planned_pb_point_count") > 0.0);
+  assert(json_number_field(log, "source_sync_planned_mub_point_count") > 0.0);
+  assert(json_number_field(log, "source_sync_planned_phb_point_count") > 0.0);
+  assert(json_number_field(log, "source_sync_overlap_write_count") == 0.0);
+  assert(json_number_field(log, "source_sync_halo_write_count") == 0.0);
+  assert(!json_bool_field(log, "pressure_refresh_readiness_compute_called"));
+  assert(json_bool_field(log, "pressure_compute_readiness_check"));
+  assert(json_bool_field(log, "pressure_compute_readiness_check_called"));
+  assert(json_bool_field(log, "pressure_compute_readiness_check_ok"));
+  const auto would_refresh_p_points =
+      json_number_field(log, "pressure_refresh_planned_p_point_count");
   assert(would_refresh_p_points > 0.0);
-  assert(json_number_field(log, "dry_run_invalid_p_point_count") == 0.0);
-  assert(json_number_field(log, "dry_run_skipped_p_point_count") == 0.0);
-  assert(json_number_field(log, "pressure_compute_dry_run_report_target_column_count") > 0.0);
+  assert(json_number_field(log, "pressure_readiness_invalid_p_point_count") == 0.0);
+  assert(json_number_field(log, "pressure_readiness_skipped_p_point_count") == 0.0);
+  assert(json_number_field(log, "pressure_compute_readiness_report_target_column_count") > 0.0);
   assert(
-      json_number_field(log, "pressure_compute_dry_run_report_refreshed_point_count") ==
+      json_number_field(log, "pressure_compute_readiness_report_refreshed_point_count") ==
       would_refresh_p_points);
-  assert(json_number_field(log, "pressure_compute_dry_run_report_invalid_point_count") == 0.0);
-  assert(json_number_field(log, "pressure_compute_dry_run_report_skipped_point_count") == 0.0);
-  assert(!json_bool_field(log, "pressure_compute_dry_run_report_touched_overlap_cells"));
-  assert(!json_bool_field(log, "pressure_compute_dry_run_report_touched_halo_cells"));
-  assert(!json_bool_field(log, "pressure_refresh_dry_run_applied"));
+  assert(json_number_field(log, "pressure_compute_readiness_report_invalid_point_count") == 0.0);
+  assert(json_number_field(log, "pressure_compute_readiness_report_skipped_point_count") == 0.0);
+  assert(!json_bool_field(log, "pressure_compute_readiness_report_touched_overlap_cells"));
+  assert(!json_bool_field(log, "pressure_compute_readiness_report_touched_halo_cells"));
+  assert(!json_bool_field(log, "pressure_refresh_readiness_applied"));
   assert(
       log.find("\"pressure_refresh_readiness_provider_terrain_source\": "
                "\"moved_candidate_HGT\"") != std::string::npos);
@@ -1365,9 +1408,9 @@ void assert_normal_pressure_refresh_apply(
   assert(log.find("\"integrator_output\": true") != std::string::npos);
   assert(log.find("\"experimental_pressure_refresh_apply\": true") ==
          std::string::npos);
+  assert(log.find("\"pressure_refresh_experimental_apply\"") == std::string::npos);
   assert(log.find("\"pressure_refresh_applied\": true") != std::string::npos);
-  assert(log.find("\"pressure_refresh_experimental_apply\": false") !=
-         std::string::npos);
+  assert(log.find("\"pressure_refresh_source_sync_ok\": true") != std::string::npos);
   assert(log.find("\"pressure_refresh_integration_status\": \"applied_to_candidate\"") !=
          std::string::npos);
   assert_pressure_refresh_readiness_json(log);
