@@ -1495,20 +1495,33 @@ base-state exchange diagnostic helper/regression slice. It remains
 diagnostic-only: it does not connect to the production selected-field path and
 does not make the strict d02 `2025-07-26_00:10:00` gate pass.
 
-D69 compatibility work is limited to a provider/staging API and tests that
-recompute `PB`, `T_INIT`, and staged provider `ALB` from already
-exposed-interpolated `MUB` for newly exposed d02 cells. This API is not a
-production selected-field numerical hook, not a candidate writer, and not gate
-evidence. It must not regenerate `MUB` from `HGT`, rebuild or synchronize
-`PHB`, write provider `T_INIT` into `State::t`, or write `ALB` into `State`.
-`ALB` remains an external staging value for downstream pressure-refresh
-consumers only.
+D69 is now complete, fully validated, pushed, and synchronized. Commit
+`e32ccc9` (`Add exposed MUB base-state recompute provider`) records a
+provider/test-only API that recomputes `PB`, `T_INIT`, and staged provider
+`ALB` from already exposed-interpolated `MUB` for newly exposed d02 cells. The
+D69 API is still not connected to the production selected-field path, is not a
+candidate writer, and is not gate evidence. It must not regenerate `MUB` from
+`HGT`, rebuild or synchronize `PHB`, write provider `T_INIT` into `State::t`,
+or write `ALB` into `State`. `ALB` remains an external staging value for
+downstream pressure-refresh consumers only. The strict d02
+`2025-07-26_00:10:00` gate still fails.
 
-D69 must not use reference-end truth, oracle/reference-copy candidates,
-diagnostic/probe/helper outputs, or restart substitutes as compatibility
-evidence. It must not advance validation to `00:20`, reduce d02 below `2 km`,
-or introduce best-track nudging. Hook or diagnostic connection of this
-recompute API is deferred to D70 or later.
+D70 compatibility scope is diagnostic adapter/reporting only. It may connect
+the D68 exposed base-state exchange helper and the D69 exposed-`MUB`
+recompute API into a diagnostic adapter report or a dry-run/staging report. It
+must not write a candidate file, must not connect the normal
+`selected_field_cycle` pressure-refresh gate path, and must not change
+production selected-field numerics. Any D70 report must remain explicitly
+diagnostic-only with `diagnostic_only = true`, `gate_candidate = false`, and
+`integrator_output = false`.
+
+D71 or later may consider an opt-in `selected_field_cycle` diagnostic
+connection for this exposed-base-state policy, but only after a metadata guard
+is added that prevents diagnostic artifacts from being accepted as normal gate
+candidates. D70 and later compatibility work must not use reference-end truth,
+oracle/reference-copy candidates, diagnostic/probe/helper outputs, or restart
+substitutes as compatibility evidence. It must not advance validation to
+`00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
 
 ## Physics Bridge Compatibility Notes
 

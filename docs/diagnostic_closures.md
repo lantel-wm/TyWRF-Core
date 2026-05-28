@@ -1032,18 +1032,35 @@ closure authority and outside production selected-field numerics. D68 helper,
 probe, and diagnostic reports cannot be converted into a normal candidate or a
 strict d02 `00:10` gate pass.
 
-D69 may add only a provider/staging recompute API and tests for
-`PB`/`T_INIT`/`ALB` derived from already exposed-interpolated `MUB`. A closure
-must not use that API to patch a candidate, hide missing production wiring, or
-borrow positive selected-field metadata. The D69 API must not regenerate `MUB`
-from `HGT`, rebuild or synchronize `PHB`, write `T_INIT` into `State::t`, or
-write `ALB` into `State`; `ALB` remains staging-only, not `State` ownership.
+D69 is complete, fully validated, pushed, and synchronized at commit
+`e32ccc9` (`Add exposed MUB base-state recompute provider`). It adds only a
+provider/staging recompute API and tests for `PB`/`T_INIT`/`ALB` derived from
+already exposed-interpolated `MUB`. A closure must not use that API to patch a
+candidate, hide missing production wiring, or borrow positive selected-field
+metadata. The D69 API must not regenerate `MUB` from `HGT`, rebuild or
+synchronize `PHB`, write `T_INIT` into `State::t`, or write `ALB` into
+`State`; `ALB` remains staging-only, not `State` ownership. The strict d02
+`00:10` gate remains failed.
 
-Reference-end truth, oracle/reference-copy candidates, restart substitutes,
-and diagnostic/probe/helper outputs remain forbidden as closure or gate
-evidence. D69 must not advance validation to `00:20`, reduce d02 below `2 km`,
-or introduce best-track nudging. Hook or diagnostic connection for the
-recompute API belongs to D70 or later.
+D70 may only compose the D68 helper and D69 recompute API into a diagnostic
+adapter/report or dry-run/staging report. That adapter is not a closure
+permission, not production selected-field numerics, not the normal
+`selected_field_cycle` pressure-refresh gate path, and not a candidate writer.
+Its report metadata must stay diagnostic-only and non-gate:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
+
+D71 or later may consider an opt-in `selected_field_cycle` diagnostic
+connection only after a metadata guard exists to keep diagnostic adapter output
+out of the default strict gate. Reference-end truth, oracle/reference-copy
+candidates, restart substitutes, and diagnostic/probe/helper/dry-run/staging
+outputs remain forbidden as closure or gate evidence. D70 must not advance
+validation to `00:20`, reduce d02 below `2 km`, or introduce best-track
+nudging.
 
 ## Hard Prohibitions
 

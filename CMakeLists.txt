@@ -26,6 +26,7 @@ add_library(tywrf_core STATIC
   src/io/netcdf_schema.cpp
   src/io/pressure_refresh_io.cpp
   src/io/wrf_state_io.cpp
+  src/nest/base_state_exchange_adapter.cpp
   src/nest/base_state_exchange.cpp
   src/nest/nest_interface.cpp
   src/nest/parent_child_interpolation.cpp
@@ -155,6 +156,14 @@ if(BUILD_TESTING)
   add_test(
     NAME tywrf_base_state_exchange_test
     COMMAND tywrf_base_state_exchange_test)
+
+  add_executable(tywrf_base_state_exchange_adapter_test
+    tests/unit/base_state_exchange_adapter_test.cpp)
+  target_link_libraries(
+    tywrf_base_state_exchange_adapter_test PRIVATE TyWRF::Core)
+  add_test(
+    NAME tywrf_base_state_exchange_adapter_test
+    COMMAND tywrf_base_state_exchange_adapter_test)
 
   add_executable(tywrf_parent_child_interpolation_test
     tests/unit/parent_child_interpolation_test.cpp)
