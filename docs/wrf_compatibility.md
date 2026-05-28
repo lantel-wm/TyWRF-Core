@@ -1288,6 +1288,49 @@ generate candidate files from oracle data, convert audit/probe/hidden-seam
 outputs into gate evidence, lower d02 below `2 km`, or introduce best-track
 nudging.
 
+## Round D62 Pressure Formula Observation Direction
+
+D61 local commit `ab68c51` (`Add runtime pressure probes and timeline audit`)
+preserves the same compatibility state after local full validation: CMake build
+passed, CTest passed `29/29`, pytest passed `183/183`, and `git diff --check`
+passed. This commit is local only at D62 start. Push to `origin/main` is
+blocked by GitHub SSH/network timeouts on both normal SSH port `22` and
+SSH-over-443; `origin/main` remains at D60 commit `7903cbf`. Do not report D61
+as pushed until a later successful push is verified.
+
+The D61 real KROSA smoke output is
+`build/validation/r61_pressure_normal/wrfout_d02_2025-07-26_00:10:00`. Its
+runtime timeline metadata contains 12 ordered events, with
+`pressure_column_probe` inserted between `pressure_refresh_apply` and
+`cycle_end`. The pressure-column probe observes columns `(160,49)`,
+`(160,50)`, `(160,51)`, `(161,49)`, and `(161,50)` at levels `0..4`, phases
+`post_static_refresh` and `post_pressure_refresh`, for a record count of `50`.
+The probe still marks `ALB`, `C3F`, `C4F`, `C3H`, `C4H`, `P_TOP`, and
+`theta_m` as unavailable in the candidate NetCDF. D61 telemetry does not change
+accepted numerical fields relative to D60: `U`, `V`, `T`, `PH`, `MU`, `P`,
+`QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT` all have maximum absolute difference
+`0.0`.
+
+The strict d02 `2025-07-26_00:10:00` gate still fails for D61. The first
+failing field remains `U` with normalized RMSE `0.117875`; related failures
+include `V = 0.134244`, `MU = 0.133382`, `P = 6.334952`, and storm-center
+error `43.482716 km`. Validation must not advance to `00:20`.
+
+D62 compatibility work should remain diagnostic-only:
+
+- add pressure-core formula observation for runtime POD values such as `ALB`,
+  `C3F`, `C4F`, `C3H`, `C4H`, `P_TOP`, `theta`, and related pressure-refresh
+  intermediates at requested columns/levels;
+- add a Python pressure-column runtime probe audit that parses the D61/D62
+  NetCDF attributes, structures before/after deltas, and flags strong negative
+  post-refresh perturbation pressure and missing formula terms.
+
+D62 observation may expose internal terms that were unavailable in D61, but it
+must not patch candidate fields, tune formulas from reference-end truth,
+generate oracle candidates, treat audit/probe/hidden-seam output as gate
+evidence, advance to `00:20`, lower d02 below `2 km`, or introduce best-track
+nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

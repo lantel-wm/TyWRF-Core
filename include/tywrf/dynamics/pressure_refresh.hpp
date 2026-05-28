@@ -31,6 +31,65 @@ struct VerticalCoefficientView {
   std::int32_t count = 0;
 };
 
+enum class PressureRefreshObservationStatus : std::uint8_t {
+  not_recorded,
+  recorded,
+  request_out_of_bounds,
+  request_outside_target_region,
+  invalid_mu_total,
+  invalid_pressure_levels,
+  invalid_log_ratio,
+  invalid_delta_phi,
+  invalid_alb,
+  invalid_pb,
+  invalid_theta,
+  invalid_alpha,
+  invalid_pressure_base,
+  invalid_total_pressure,
+};
+
+struct PressureRefreshObservationRequest {
+  std::int32_t i = 0;
+  std::int32_t j = 0;
+  std::int32_t k = 0;
+};
+
+struct PressureRefreshFormulaObservation {
+  std::int32_t i = 0;
+  std::int32_t j = 0;
+  std::int32_t k = 0;
+  PressureRefreshObservationStatus status =
+      PressureRefreshObservationStatus::not_recorded;
+  std::uint8_t valid = 0;
+  std::uint8_t reserved0 = 0;
+  std::uint8_t reserved1 = 0;
+  std::uint8_t reserved2 = 0;
+  double mu_total = 0.0;
+  double pfu = 0.0;
+  double pfd = 0.0;
+  double phm = 0.0;
+  double log_ratio = 0.0;
+  double phi_lower = 0.0;
+  double phi_upper = 0.0;
+  double delta_phi = 0.0;
+  double alb = 0.0;
+  double pb = 0.0;
+  double theta = 0.0;
+  double alpha_total = 0.0;
+  double alpha_perturbation = 0.0;
+  double alpha_from_wrf_branch = 0.0;
+  double pressure_base = 0.0;
+  double total_pressure = 0.0;
+  double perturbation_pressure_pa = 0.0;
+};
+
+struct PressureRefreshObservationView {
+  const PressureRefreshObservationRequest* requests = nullptr;
+  std::int32_t request_count = 0;
+  PressureRefreshFormulaObservation* records = nullptr;
+  std::int32_t record_capacity = 0;
+};
+
 struct KrosaPressureRefreshOptions {
   PressureRefreshFormula formula =
       PressureRefreshFormula::krosa_hypsometric_opt2_use_theta_m;
@@ -43,6 +102,7 @@ struct KrosaPressureRefreshOptions {
   float cp_over_cv = 1004.5F / (1004.5F - 287.0F);
   float min_total_pressure_pa = 100.0F;
   float min_log_pressure_ratio = 1.0e-6F;
+  PressureRefreshObservationView observation{};
 };
 
 struct PressureRefreshInputs {
@@ -77,6 +137,13 @@ struct PressureRefreshReport {
   bool used_use_theta_m = false;
   bool used_qvapor = false;
   bool used_wrf_vertical_coefficients = false;
+  std::uint64_t observation_request_count = 0;
+  std::uint64_t observation_record_count = 0;
+  std::uint64_t observation_dropped_count = 0;
+  std::uint64_t observation_valid_count = 0;
+  std::uint64_t observation_invalid_count = 0;
+  std::uint64_t observation_out_of_bounds_count = 0;
+  std::uint64_t observation_outside_target_region_count = 0;
 
   [[nodiscard]] constexpr bool ok() const noexcept {
     return result.ok();

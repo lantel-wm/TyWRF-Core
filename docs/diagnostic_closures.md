@@ -839,6 +839,39 @@ Round D61 keeps the D60 telemetry results outside closure scope:
   diagnostic/probe/hidden-seam outputs into gate evidence, reduce d02 below
   `2 km`, or introduce best-track nudging.
 
+Round D62 keeps the D61 runtime probe and timeline audit outside closure scope:
+
+- D61 local commit `ab68c51`
+  (`Add runtime pressure probes and timeline audit`) passed local full code
+  validation (`cmake --build`, CTest `29/29`, pytest `183/183`, and
+  `git diff --check`), but it is not pushed. GitHub SSH port `22` and
+  SSH-over-443 push attempts timed out, so `origin/main` remains at D60 commit
+  `7903cbf`. A closure document or report must not imply D61 is synchronized to
+  origin until push succeeds.
+- The D61 real KROSA smoke generated
+  `build/validation/r61_pressure_normal/wrfout_d02_2025-07-26_00:10:00` with
+  12 runtime timeline events. `pressure_column_probe` is ordered between
+  `pressure_refresh_apply` and `cycle_end`. The probe covers five columns
+  `(160,49)`, `(160,50)`, `(160,51)`, `(161,49)`, and `(161,50)`, five levels
+  `0..4`, two phases `post_static_refresh` and `post_pressure_refresh`, and
+  `50` records. It observes the mismatch location but does not close pressure
+  or validate the integrator.
+- D61 and D60 candidates are numerically identical for `U`, `V`, `T`, `PH`,
+  `MU`, `P`, `QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT`, with max absolute
+  difference `0.0`. Telemetry therefore must not be described as a field
+  repair.
+- The strict `00:10` gate still fails: first failing field `U` normalized RMSE
+  `0.117875`, with `V = 0.134244`, `MU = 0.133382`, `P = 6.334952`, and
+  storm-center error `43.482716 km`. A closure must not relabel this as
+  accepted or advance validation to `00:20`.
+- D62 may add pressure-core formula observation for runtime POD terms
+  (`ALB`, `C3F`, `C4F`, `C3H`, `C4H`, `P_TOP`, `theta`, and related
+  pressure-refresh intermediates) and a Python pressure-column runtime probe
+  audit. Both are diagnostic-only. They cannot create closure candidates,
+  patch `P`, tune pressure from reference-end truth, promote probe/audit/
+  hidden-seam output to gate evidence, reduce d02 below `2 km`, or introduce
+  best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

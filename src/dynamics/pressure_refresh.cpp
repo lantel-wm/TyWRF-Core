@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace tywrf::dynamics {
 namespace {
@@ -113,6 +114,22 @@ template <typename LhsReal, typename RhsReal>
   return coefficients.values != nullptr && coefficients.count >= required_count;
 }
 
+[[nodiscard]] constexpr bool observation_requested(
+    const PressureRefreshObservationView observation) noexcept {
+  return observation.request_count > 0;
+}
+
+[[nodiscard]] constexpr std::int32_t observation_record_limit(
+    const PressureRefreshObservationView observation) noexcept {
+  if (!observation_requested(observation) || observation.records == nullptr ||
+      observation.record_capacity <= 0) {
+    return 0;
+  }
+  return observation.request_count < observation.record_capacity
+             ? observation.request_count
+             : observation.record_capacity;
+}
+
 [[nodiscard]] nest::NestResult validate_options(
     const KrosaPressureRefreshOptions& options) noexcept {
   switch (options.formula) {
@@ -160,6 +177,21 @@ template <typename LhsReal, typename RhsReal>
     return result(
         nest::NestStatus::invalid_contract,
         "pressure refresh constants must be finite and positive");
+  }
+
+  const auto observation = options.observation;
+  if (observation.request_count < 0 || observation.record_capacity < 0) {
+    return result(
+        nest::NestStatus::invalid_contract,
+        "pressure refresh observation counts must be non-negative");
+  }
+
+  if (observation_requested(observation) &&
+      (observation.requests == nullptr || observation.records == nullptr ||
+       observation.record_capacity <= 0)) {
+    return result(
+        nest::NestStatus::invalid_contract,
+        "pressure refresh observation requires request and record buffers");
   }
 
   return ok_result();
@@ -240,6 +272,15 @@ template <typename LhsReal, typename RhsReal>
          j >= window.new_j_begin && j < window.new_j_begin + window.extent_j;
 }
 
+[[nodiscard]] constexpr bool in_refresh_target_region(
+    const nest::RemapWindow& window,
+    const PressureRefreshRegion region,
+    const std::int32_t i,
+    const std::int32_t j) noexcept {
+  return region == PressureRefreshRegion::full_active_columns ||
+         !in_new_overlap_window(window, i, j);
+}
+
 template <typename Real>
 [[nodiscard]] float mass_value(
     const FieldView3D<Real>& field,
@@ -272,13 +313,61 @@ template <typename Real>
   return field(field.halo.i_lower + i, field.halo.j_lower + j);
 }
 
-[[nodiscard]] bool compute_krosa_pressure(
+[[nodiscard]] PressureRefreshFormulaObservation empty_observation(
+    const std::int32_t i,
+    const std::int32_t j,
+    const std::int32_t k) noexcept {
+  const auto missing = std::numeric_limits<double>::quiet_NaN();
+  PressureRefreshFormulaObservation observation{};
+  observation.i = i;
+  observation.j = j;
+  observation.k = k;
+  observation.status = PressureRefreshObservationStatus::not_recorded;
+  observation.valid = 0;
+  observation.mu_total = missing;
+  observation.pfu = missing;
+  observation.pfd = missing;
+  observation.phm = missing;
+  observation.log_ratio = missing;
+  observation.phi_lower = missing;
+  observation.phi_upper = missing;
+  observation.delta_phi = missing;
+  observation.alb = missing;
+  observation.pb = missing;
+  observation.theta = missing;
+  observation.alpha_total = missing;
+  observation.alpha_perturbation = missing;
+  observation.alpha_from_wrf_branch = missing;
+  observation.pressure_base = missing;
+  observation.total_pressure = missing;
+  observation.perturbation_pressure_pa = missing;
+  return observation;
+}
+
+void finish_observation(
+    PressureRefreshFormulaObservation* observation,
+    const PressureRefreshObservationStatus status) noexcept {
+  if (observation == nullptr) {
+    return;
+  }
+  observation->status = status;
+  observation->valid =
+      status == PressureRefreshObservationStatus::recorded ? 1U : 0U;
+}
+
+[[nodiscard]] PressureRefreshObservationStatus compute_krosa_pressure(
     const PressureRefreshInputs& inputs,
     const KrosaPressureRefreshOptions& options,
     const std::int32_t i,
     const std::int32_t j,
     const std::int32_t k,
-    float& perturbation_pressure_pa) noexcept {
+    float& perturbation_pressure_pa,
+    PressureRefreshFormulaObservation* observation = nullptr) noexcept {
+  PressureRefreshFormulaObservation terms{};
+  if (observation != nullptr) {
+    terms = empty_observation(i, j, k);
+  }
+
   const auto mu_total =
       static_cast<double>(surface_value(inputs.mu, i, j)) +
       static_cast<double>(surface_value(inputs.mub, i, j));
@@ -295,12 +384,33 @@ template <typename Real>
       static_cast<double>(inputs.c4h.values[k]) +
       static_cast<double>(inputs.p_top_pa);
 
+  if (observation != nullptr) {
+    terms.mu_total = mu_total;
+    terms.pfu = pfu;
+    terms.pfd = pfd;
+    terms.phm = phm;
+  }
+
+  if (!std::isfinite(mu_total) || mu_total <= 0.0) {
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_mu_total);
+    return PressureRefreshObservationStatus::invalid_mu_total;
+  }
+
   if (!std::isfinite(mu_total) || mu_total <= 0.0 || !std::isfinite(pfu) ||
       !std::isfinite(pfd) || !std::isfinite(phm) ||
       pfu <= static_cast<double>(options.min_total_pressure_pa) ||
       pfd <= static_cast<double>(options.min_total_pressure_pa) ||
       phm <= static_cast<double>(options.min_total_pressure_pa) || pfd <= pfu) {
-    return false;
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_pressure_levels);
+    return PressureRefreshObservationStatus::invalid_pressure_levels;
   }
 
   const auto log_ratio = std::log(pfd / pfu);
@@ -317,41 +427,203 @@ template <typename Real>
       static_cast<double>(options.base_potential_temperature_k) +
       static_cast<double>(mass_value(inputs.t, i, j, k));
 
+  if (observation != nullptr) {
+    terms.log_ratio = log_ratio;
+    terms.phi_lower = phi_lower;
+    terms.phi_upper = phi_upper;
+    terms.delta_phi = delta_phi;
+    terms.alb = alb;
+    terms.pb = pb;
+    terms.theta = theta;
+  }
+
   if (!std::isfinite(log_ratio) ||
-      log_ratio <= static_cast<double>(options.min_log_pressure_ratio) ||
-      !std::isfinite(delta_phi) || delta_phi <= 0.0 ||
-      !std::isfinite(alb) || !std::isfinite(pb) ||
-      pb <= static_cast<double>(options.min_total_pressure_pa) ||
-      !std::isfinite(theta) || theta <= 0.0) {
-    return false;
+      log_ratio <= static_cast<double>(options.min_log_pressure_ratio)) {
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_log_ratio);
+    return PressureRefreshObservationStatus::invalid_log_ratio;
+  }
+
+  if (!std::isfinite(delta_phi) || delta_phi <= 0.0) {
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_delta_phi);
+    return PressureRefreshObservationStatus::invalid_delta_phi;
+  }
+
+  if (!std::isfinite(alb)) {
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_alb);
+    return PressureRefreshObservationStatus::invalid_alb;
+  }
+
+  if (!std::isfinite(pb) ||
+      pb <= static_cast<double>(options.min_total_pressure_pa)) {
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_pb);
+    return PressureRefreshObservationStatus::invalid_pb;
+  }
+
+  if (!std::isfinite(theta) || theta <= 0.0) {
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_theta);
+    return PressureRefreshObservationStatus::invalid_theta;
   }
 
   const auto alpha_total = delta_phi / (phm * log_ratio);
   const auto alpha_perturbation = alpha_total - alb;
   const auto alpha_from_wrf_branch = alpha_perturbation + alb;
+  if (observation != nullptr) {
+    terms.alpha_total = alpha_total;
+    terms.alpha_perturbation = alpha_perturbation;
+    terms.alpha_from_wrf_branch = alpha_from_wrf_branch;
+  }
   if (!std::isfinite(alpha_from_wrf_branch) || alpha_from_wrf_branch <= 0.0) {
-    return false;
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_alpha);
+    return PressureRefreshObservationStatus::invalid_alpha;
   }
 
   const auto pressure_base =
       static_cast<double>(options.dry_air_gas_constant) * theta /
       (static_cast<double>(options.reference_pressure_pa) * alpha_from_wrf_branch);
+  if (observation != nullptr) {
+    terms.pressure_base = pressure_base;
+  }
   if (!std::isfinite(pressure_base) || pressure_base <= 0.0) {
-    return false;
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_pressure_base);
+    return PressureRefreshObservationStatus::invalid_pressure_base;
   }
 
   const auto total_pressure =
       static_cast<double>(options.reference_pressure_pa) *
       std::pow(pressure_base, static_cast<double>(options.cp_over_cv));
   const auto perturbation = total_pressure - pb;
+  if (observation != nullptr) {
+    terms.total_pressure = total_pressure;
+    terms.perturbation_pressure_pa = perturbation;
+  }
   if (!std::isfinite(total_pressure) ||
       total_pressure <= static_cast<double>(options.min_total_pressure_pa) ||
       !std::isfinite(perturbation)) {
-    return false;
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_total_pressure);
+    return PressureRefreshObservationStatus::invalid_total_pressure;
   }
 
   perturbation_pressure_pa = static_cast<float>(perturbation);
-  return std::isfinite(perturbation_pressure_pa);
+  if (!std::isfinite(perturbation_pressure_pa)) {
+    if (observation != nullptr) {
+      *observation = terms;
+    }
+    finish_observation(
+        observation, PressureRefreshObservationStatus::invalid_total_pressure);
+    return PressureRefreshObservationStatus::invalid_total_pressure;
+  }
+
+  if (observation != nullptr) {
+    *observation = terms;
+  }
+  finish_observation(observation, PressureRefreshObservationStatus::recorded);
+  return PressureRefreshObservationStatus::recorded;
+}
+
+[[nodiscard]] bool observation_is_pending_for_point(
+    const PressureRefreshObservationView observation,
+    const std::int32_t record_limit,
+    const std::int32_t i,
+    const std::int32_t j,
+    const std::int32_t k) noexcept {
+  for (std::int32_t n = 0; n < record_limit; ++n) {
+    const auto& record = observation.records[n];
+    if (record.status == PressureRefreshObservationStatus::not_recorded &&
+        record.i == i && record.j == j && record.k == k) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void publish_observation_for_point(
+    const PressureRefreshObservationView observation,
+    const std::int32_t record_limit,
+    const PressureRefreshFormulaObservation& computed,
+    PressureRefreshReport& report) noexcept {
+  for (std::int32_t n = 0; n < record_limit; ++n) {
+    auto& record = observation.records[n];
+    if (record.status == PressureRefreshObservationStatus::not_recorded &&
+        record.i == computed.i && record.j == computed.j &&
+        record.k == computed.k) {
+      record = computed;
+      if (record.valid != 0U) {
+        ++report.observation_valid_count;
+      } else {
+        ++report.observation_invalid_count;
+      }
+    }
+  }
+}
+
+void initialize_observations(
+    const nest::RemapWindow& mass_window,
+    const PressureRefreshInputs& inputs,
+    const KrosaPressureRefreshOptions& options,
+    PressureRefreshReport& report) noexcept {
+  const auto observation = options.observation;
+  if (!observation_requested(observation)) {
+    return;
+  }
+
+  report.observation_request_count =
+      static_cast<std::uint64_t>(observation.request_count);
+  const auto record_limit = observation_record_limit(observation);
+  report.observation_record_count = static_cast<std::uint64_t>(record_limit);
+  report.observation_dropped_count = static_cast<std::uint64_t>(
+      observation.request_count - record_limit);
+
+  const auto nx = active_nx(inputs.p);
+  const auto ny = active_ny(inputs.p);
+  const auto nz = active_nz(inputs.p);
+
+  for (std::int32_t n = 0; n < record_limit; ++n) {
+    const auto request = observation.requests[n];
+    auto record = empty_observation(request.i, request.j, request.k);
+    if (request.i < 0 || request.i >= nx || request.j < 0 || request.j >= ny ||
+        request.k < 0 || request.k >= nz) {
+      record.status = PressureRefreshObservationStatus::request_out_of_bounds;
+      ++report.observation_out_of_bounds_count;
+    } else if (!in_refresh_target_region(
+                   mass_window, options.region, request.i, request.j)) {
+      record.status =
+          PressureRefreshObservationStatus::request_outside_target_region;
+      ++report.observation_outside_target_region_count;
+    }
+    observation.records[n] = record;
+  }
 }
 
 }  // namespace
@@ -382,12 +654,14 @@ PressureRefreshReport refresh_krosa_moving_nest_pressure(
   const auto p_i0 = inputs.p.halo.i_lower;
   const auto p_j0 = inputs.p.halo.j_lower;
   const auto p_k0 = inputs.p.halo.k_lower;
+  const auto observation = options.observation;
+  const auto observation_limit = observation_record_limit(observation);
+  initialize_observations(mass_window, inputs, options, report);
 
   for (std::int32_t j = 0; j < ny; ++j) {
     for (std::int32_t i = 0; i < nx; ++i) {
       const bool in_overlap = in_new_overlap_window(mass_window, i, j);
-      if (options.region == PressureRefreshRegion::exposed_mass_cells &&
-          in_overlap) {
+      if (!in_refresh_target_region(mass_window, options.region, i, j)) {
         continue;
       }
 
@@ -395,7 +669,17 @@ PressureRefreshReport refresh_krosa_moving_nest_pressure(
       bool refreshed_column = false;
       for (std::int32_t k = 0; k < nz; ++k) {
         float refreshed_p = 0.0F;
-        if (!compute_krosa_pressure(inputs, options, i, j, k, refreshed_p)) {
+        PressureRefreshFormulaObservation observed{};
+        const bool observe_point = observation_is_pending_for_point(
+            observation, observation_limit, i, j, k);
+        const auto status = compute_krosa_pressure(
+            inputs, options, i, j, k, refreshed_p,
+            observe_point ? &observed : nullptr);
+        if (observe_point) {
+          publish_observation_for_point(
+              observation, observation_limit, observed, report);
+        }
+        if (status != PressureRefreshObservationStatus::recorded) {
           ++report.invalid_point_count;
           ++report.skipped_point_count;
           continue;

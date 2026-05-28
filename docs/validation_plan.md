@@ -1063,6 +1063,47 @@ from reference-end truth, generate oracle candidates, promote
 audit/probe/hidden-seam outputs to gate evidence, advance to `00:20`, reduce
 d02 below `2 km`, or add best-track nudging.
 
+D62 starts from local commit `ab68c51`
+(`Add runtime pressure probes and timeline audit`). That commit passed local
+full validation (`cmake --build`, CTest `29/29`, pytest `183/183`, and
+`git diff --check`), but it has not been pushed: both GitHub SSH port `22` and
+SSH-over-443 push attempts timed out. `origin/main` therefore remains at
+`7903cbf`, and D61 must not be described as remote-synchronized until push is
+verified.
+
+The D61 real KROSA smoke output is
+`build/validation/r61_pressure_normal/wrfout_d02_2025-07-26_00:10:00`. Runtime
+timeline parsing reports `parsed_event_count = 12`; the
+`pressure_column_probe` event appears after `pressure_refresh_apply` and before
+`cycle_end`, with `expected_order_match = true`, event-count consistency true,
+event-name consistency true, and runtime count parity mismatch count `0`. The
+probe covers columns `(160,49)`, `(160,50)`, `(160,51)`, `(161,49)`, and
+`(161,50)`, levels `0..4`, phases `post_static_refresh` and
+`post_pressure_refresh`, and `50` records. The D61 candidate remains
+numerically identical to the D60 candidate for `U`, `V`, `T`, `PH`, `MU`, `P`,
+`QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT`, with max absolute difference `0.0`.
+
+The D61 strict gate report
+`build/validation/r61_pressure_normal_gate.json` still fails at `00:10`. The
+first failing field is `U` with normalized RMSE `0.117875`; related failures
+are `V = 0.134244`, `MU = 0.133382`, `P = 6.334952`, and storm-center error
+`43.482716 km`. This is the controlling validation status. Do not run or report
+`00:20` progression until this endpoint passes through the normal strict gate.
+
+D62 validation diagnostics should remain diagnostic-only:
+
+- pressure-core formula observation should expose runtime POD terms such as
+  `ALB`, `C3F`, `C4F`, `C3H`, `C4H`, `P_TOP`, `theta`, and pressure-refresh
+  intermediates at selected columns/levels;
+- a Python pressure-column runtime probe audit should parse the NetCDF probe
+  attributes, report before/after pressure deltas, and flag missing formula
+  terms or strong negative post-refresh `P`.
+
+Neither D62 diagnostic can generate candidates, patch fields, tune formulas
+from reference-end truth, promote probe/audit/hidden-seam output to gate
+evidence, advance validation to `00:20`, reduce d02 below `2 km`, or add
+best-track nudging.
+
 Example:
 
 ```bash
