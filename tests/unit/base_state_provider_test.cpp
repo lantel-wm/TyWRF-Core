@@ -1,5 +1,7 @@
 #include "tywrf/dynamics/base_state_provider.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -8,9 +10,12 @@
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace {
+
+constexpr float kSentinel = -9'999.0F;
 
 tywrf::Grid make_grid() {
   return tywrf::Grid({4, 3, 2, 3, tywrf::uniform_halo_3d(1)});
@@ -95,6 +100,124 @@ std::int32_t active_nx(const tywrf::FieldView2D<Real>& view) {
 template <typename Real>
 std::int32_t active_ny(const tywrf::FieldView2D<Real>& view) {
   return view.ny - view.halo.j_lower - view.halo.j_upper;
+}
+
+template <typename Storage>
+std::vector<float> snapshot(const Storage& storage) {
+  return std::vector<float>(storage.data(), storage.data() + storage.size());
+}
+
+template <typename Storage>
+void fill_storage(Storage& storage, const float value) {
+  std::fill(storage.data(), storage.data() + storage.size(), value);
+}
+
+template <typename Storage>
+void assert_storage_unchanged(
+    const Storage& storage,
+    const std::vector<float>& before,
+    const std::string_view label) {
+  if (before.size() != storage.size() ||
+      !std::equal(before.begin(), before.end(), storage.data())) {
+    std::cerr << label << " changed unexpectedly\n";
+    assert(false);
+  }
+}
+
+tywrf::nest::RemapWindow make_mass_overlap_window(
+    const std::int32_t i_begin,
+    const std::int32_t j_begin,
+    const std::int32_t extent_i,
+    const std::int32_t extent_j) {
+  return {
+      tywrf::nest::HorizontalStagger::mass,
+      0,
+      0,
+      i_begin,
+      j_begin,
+      extent_i,
+      extent_j,
+      0,
+      0};
+}
+
+bool horizontally_exposed(
+    const tywrf::nest::RemapWindow& overlap,
+    const std::int32_t active_i,
+    const std::int32_t active_j) {
+  const bool inside_overlap_i =
+      active_i >= overlap.new_i_begin &&
+      active_i < overlap.new_i_begin + overlap.extent_i;
+  const bool inside_overlap_j =
+      active_j >= overlap.new_j_begin &&
+      active_j < overlap.new_j_begin + overlap.extent_j;
+  return !(inside_overlap_i && inside_overlap_j);
+}
+
+void fill_interpolated_mub(tywrf::FieldStorage2D<float>& mub) {
+  fill_storage(mub, kSentinel);
+  const auto layout = mub.layout();
+  auto view = mub.view();
+  for (std::int32_t j = layout.j_begin(); j < layout.j_end(); ++j) {
+    for (std::int32_t i = layout.i_begin(); i < layout.i_end(); ++i) {
+      view(i, j) =
+          85'000.0F + 100.0F * static_cast<float>(i - layout.i_begin()) +
+          25.0F * static_cast<float>(j - layout.j_begin());
+    }
+  }
+}
+
+float expected_t_init_from_pb(
+    const double pb,
+    const tywrf::dynamics::KrosaMassBaseStateReconstructionOptions options =
+        {}) {
+  const auto p00 = static_cast<double>(options.sea_level_base_pressure_pa);
+  const auto troposphere_temperature =
+      static_cast<double>(options.sea_level_base_temperature_k) +
+      static_cast<double>(options.base_lapse_k) * std::log(pb / p00);
+  const auto base_temperature =
+      troposphere_temperature >
+              static_cast<double>(options.isothermal_temperature_k)
+          ? troposphere_temperature
+          : static_cast<double>(options.isothermal_temperature_k);
+  return static_cast<float>(
+      base_temperature *
+          std::pow(
+              p00 / pb,
+              static_cast<double>(options.dry_air_gas_constant) /
+                  static_cast<double>(options.specific_heat_cp)) -
+      static_cast<double>(options.base_potential_temperature_k));
+}
+
+float expected_alb_from_pb_t_init(
+    const double pb,
+    const double t_init,
+    const tywrf::dynamics::KrosaMassBaseStateReconstructionOptions options =
+        {}) {
+  const auto p0 = static_cast<double>(options.reference_pressure_pa);
+  return static_cast<float>(
+      (static_cast<double>(options.dry_air_gas_constant) / p0) *
+      (t_init + static_cast<double>(options.base_potential_temperature_k)) *
+      std::pow(pb / p0, static_cast<double>(options.cvpm)));
+}
+
+void assert_exposed_recompute_flags(
+    const tywrf::dynamics::KrosaExposedBaseStateRecomputeReport& report) {
+  assert(
+      std::string_view(report.source) ==
+      "exposed_mub_base_state_recompute_provider");
+  assert(
+      std::string_view(report.disposition) ==
+      "provider_buffer_only_no_gate_no_selected_field_numerics");
+  assert(report.diagnostic_only);
+  assert(!report.gate_candidate);
+  assert(!report.integrator_output);
+  assert(!report.selected_field_numerics_enabled);
+  assert(!report.calls_pressure_refresh_compute);
+  assert(!report.reads_hgt);
+  assert(!report.touched_phb);
+  assert(!report.wrote_state_t);
+  assert(!report.wrote_state_alb);
 }
 
 void assert_report_flags(const tywrf::dynamics::KrosaBaseStateProviderReport& report) {
@@ -364,6 +487,239 @@ void test_invalid_grid_shape_is_rejected() {
   assert(report.result.status == tywrf::nest::NestStatus::invalid_configuration);
 }
 
+void test_exposed_mub_recompute_api_contract_is_cuda_ready() {
+  static_assert(std::is_standard_layout_v<
+                tywrf::dynamics::KrosaExposedBaseStateRecomputeInputs>);
+  static_assert(std::is_trivially_copyable_v<
+                tywrf::dynamics::KrosaExposedBaseStateRecomputeInputs>);
+  static_assert(std::is_standard_layout_v<
+                tywrf::dynamics::KrosaExposedBaseStateRecomputeOutputs>);
+  static_assert(std::is_trivially_copyable_v<
+                tywrf::dynamics::KrosaExposedBaseStateRecomputeOutputs>);
+  static_assert(std::is_standard_layout_v<
+                tywrf::dynamics::KrosaExposedBaseStateRecomputeReport>);
+  static_assert(std::is_trivially_copyable_v<
+                tywrf::dynamics::KrosaExposedBaseStateRecomputeReport>);
+}
+
+void test_exposed_mub_recompute_writes_only_exposed_provider_buffers() {
+  const auto grid = make_grid();
+  constexpr float p_top = 5'000.0F;
+  const std::array<float, 2> c3h{0.72F, 0.28F};
+  const std::array<float, 2> c4h{750.0F, 125.0F};
+
+  tywrf::FieldStorage2D<float> mub(grid.surface_layout());
+  tywrf::FieldStorage3D<float> pb(grid.mass_layout());
+  tywrf::FieldStorage3D<float> t_init(grid.mass_layout());
+  tywrf::FieldStorage3D<float> alb(grid.mass_layout());
+  tywrf::FieldStorage3D<float> phb(grid.w_layout());
+  tywrf::State<float> state(grid);
+  fill_interpolated_mub(mub);
+  fill_storage(pb, kSentinel);
+  fill_storage(t_init, kSentinel);
+  fill_storage(alb, kSentinel);
+  fill_storage(phb, 12'345.0F);
+  fill_storage(state.t, 54'321.0F);
+  assert(t_init.data() != state.t.data());
+
+  const auto mub_before = snapshot(mub);
+  const auto phb_before = snapshot(phb);
+  const auto state_t_before = snapshot(state.t);
+  const auto overlap = make_mass_overlap_window(1, 1, 2, 1);
+
+  const auto report =
+      tywrf::dynamics::recompute_exposed_base_state_from_mub(
+          overlap,
+          {static_cast<const tywrf::FieldStorage2D<float>&>(mub).view(),
+           {c3h.data(), static_cast<std::int32_t>(c3h.size())},
+           {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+           p_top},
+          {pb.view(), t_init.view(), alb.view()});
+
+  assert(report.ok());
+  assert_exposed_recompute_flags(report);
+  assert(report.read_interpolated_mub);
+  assert(report.wrote_pb);
+  assert(report.wrote_t_init);
+  assert(report.wrote_alb);
+  assert(report.active_nx == 4);
+  assert(report.active_ny == 3);
+  assert(report.active_nz == 2);
+  assert(report.exposed_region_count == 4);
+  assert(report.exposed_mass_cell_count == 10);
+  assert(report.recomputed_point_count == 20);
+  assert(report.pb_recomputed_point_count == 20);
+  assert(report.t_init_recomputed_point_count == 20);
+  assert(report.alb_recomputed_point_count == 20);
+
+  assert_storage_unchanged(mub, mub_before, "MUB input");
+  assert_storage_unchanged(phb, phb_before, "PHB");
+  assert_storage_unchanged(state.t, state_t_before, "State::t");
+
+  const auto mass_layout = pb.layout();
+  const auto surface_layout = mub.layout();
+  const auto pb_view = pb.view();
+  const auto t_view = t_init.view();
+  const auto alb_view = alb.view();
+  const auto mub_view = mub.view();
+  bool saw_provider_t_init_write = false;
+  for (std::int32_t j = 0; j < mass_layout.ny; ++j) {
+    for (std::int32_t k = 0; k < mass_layout.nz; ++k) {
+      for (std::int32_t i = 0; i < mass_layout.nx; ++i) {
+        const bool active =
+            i >= mass_layout.i_begin() && i < mass_layout.i_end() &&
+            j >= mass_layout.j_begin() && j < mass_layout.j_end() &&
+            k >= mass_layout.k_begin() && k < mass_layout.k_end();
+        const auto active_i = i - mass_layout.i_begin();
+        const auto active_j = j - mass_layout.j_begin();
+        const auto active_k = k - mass_layout.k_begin();
+        const bool exposed =
+            active && horizontally_exposed(overlap, active_i, active_j);
+
+        if (!exposed) {
+          assert(pb_view(i, j, k) == kSentinel);
+          assert(t_view(i, j, k) == kSentinel);
+          assert(alb_view(i, j, k) == kSentinel);
+          continue;
+        }
+
+        const auto mub_i = surface_layout.i_begin() + active_i;
+        const auto mub_j = surface_layout.j_begin() + active_j;
+        const auto expected_pb =
+            static_cast<double>(c3h[static_cast<std::size_t>(active_k)]) *
+                static_cast<double>(mub_view(mub_i, mub_j)) +
+            static_cast<double>(c4h[static_cast<std::size_t>(active_k)]) +
+            static_cast<double>(p_top);
+        const auto expected_t = expected_t_init_from_pb(expected_pb);
+        const auto expected_alb =
+            expected_alb_from_pb_t_init(expected_pb, expected_t);
+        assert(std::abs(static_cast<double>(pb_view(i, j, k)) - expected_pb) <
+               1.0e-2);
+        assert(std::abs(t_view(i, j, k) - expected_t) < 1.0e-5F);
+        assert(std::abs(alb_view(i, j, k) - expected_alb) < 1.0e-7F);
+        saw_provider_t_init_write = true;
+      }
+    }
+  }
+  assert(saw_provider_t_init_write);
+}
+
+void test_exposed_mub_recompute_no_exposed_no_writes() {
+  const auto grid = make_grid();
+  constexpr float p_top = 5'000.0F;
+  const std::array<float, 2> c3h{0.72F, 0.28F};
+  const std::array<float, 2> c4h{750.0F, 125.0F};
+
+  tywrf::FieldStorage2D<float> mub(grid.surface_layout());
+  tywrf::FieldStorage3D<float> pb(grid.mass_layout());
+  tywrf::FieldStorage3D<float> t_init(grid.mass_layout());
+  tywrf::FieldStorage3D<float> alb(grid.mass_layout());
+  fill_interpolated_mub(mub);
+  fill_storage(pb, kSentinel);
+  fill_storage(t_init, kSentinel);
+  fill_storage(alb, kSentinel);
+  const auto pb_before = snapshot(pb);
+  const auto t_init_before = snapshot(t_init);
+  const auto alb_before = snapshot(alb);
+
+  const auto report =
+      tywrf::dynamics::recompute_exposed_base_state_from_mub(
+          make_mass_overlap_window(0, 0, 4, 3),
+          {static_cast<const tywrf::FieldStorage2D<float>&>(mub).view(),
+           {c3h.data(), static_cast<std::int32_t>(c3h.size())},
+           {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+           p_top},
+          {pb.view(), t_init.view(), alb.view()});
+
+  assert(report.ok());
+  assert_exposed_recompute_flags(report);
+  assert(!report.read_interpolated_mub);
+  assert(!report.wrote_pb);
+  assert(!report.wrote_t_init);
+  assert(!report.wrote_alb);
+  assert(report.exposed_region_count == 0);
+  assert(report.exposed_mass_cell_count == 0);
+  assert(report.recomputed_point_count == 0);
+  assert_storage_unchanged(pb, pb_before, "PB");
+  assert_storage_unchanged(t_init, t_init_before, "T_INIT");
+  assert_storage_unchanged(alb, alb_before, "ALB");
+}
+
+void test_exposed_mub_recompute_invalid_shape_or_window_does_not_write() {
+  const auto grid = make_grid();
+  constexpr float p_top = 5'000.0F;
+  const std::array<float, 2> c3h{0.72F, 0.28F};
+  const std::array<float, 2> c4h{750.0F, 125.0F};
+
+  {
+    tywrf::FieldStorage2D<float> mub(grid.surface_layout());
+    tywrf::FieldStorage3D<float> pb(grid.mass_layout());
+    tywrf::FieldStorage3D<float> t_init(grid.mass_layout());
+    tywrf::FieldStorage3D<float> alb(grid.mass_layout());
+    fill_interpolated_mub(mub);
+    fill_storage(pb, kSentinel);
+    fill_storage(t_init, kSentinel);
+    fill_storage(alb, kSentinel);
+    const auto pb_before = snapshot(pb);
+    const auto t_init_before = snapshot(t_init);
+    const auto alb_before = snapshot(alb);
+
+    const auto report =
+        tywrf::dynamics::recompute_exposed_base_state_from_mub(
+            make_mass_overlap_window(3, 0, 2, 3),
+            {static_cast<const tywrf::FieldStorage2D<float>&>(mub).view(),
+             {c3h.data(), static_cast<std::int32_t>(c3h.size())},
+             {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+             p_top},
+            {pb.view(), t_init.view(), alb.view()});
+
+    assert(!report.ok());
+    assert_exposed_recompute_flags(report);
+    assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+    assert(!report.wrote_pb);
+    assert(!report.wrote_t_init);
+    assert(!report.wrote_alb);
+    assert_storage_unchanged(pb, pb_before, "PB invalid window");
+    assert_storage_unchanged(t_init, t_init_before, "T_INIT invalid window");
+    assert_storage_unchanged(alb, alb_before, "ALB invalid window");
+  }
+
+  {
+    tywrf::FieldStorage2D<float> mub(grid.surface_layout());
+    tywrf::FieldStorage3D<float> pb(grid.mass_layout());
+    tywrf::FieldStorage3D<float> t_init(
+        tywrf::ActiveShape3D{5, 3, 2},
+        tywrf::uniform_halo_3d(1));
+    tywrf::FieldStorage3D<float> alb(grid.mass_layout());
+    fill_interpolated_mub(mub);
+    fill_storage(pb, kSentinel);
+    fill_storage(t_init, kSentinel);
+    fill_storage(alb, kSentinel);
+    const auto pb_before = snapshot(pb);
+    const auto t_init_before = snapshot(t_init);
+    const auto alb_before = snapshot(alb);
+
+    const auto report =
+        tywrf::dynamics::recompute_exposed_base_state_from_mub(
+            make_mass_overlap_window(1, 1, 2, 1),
+            {static_cast<const tywrf::FieldStorage2D<float>&>(mub).view(),
+             {c3h.data(), static_cast<std::int32_t>(c3h.size())},
+             {c4h.data(), static_cast<std::int32_t>(c4h.size())},
+             p_top},
+            {pb.view(), t_init.view(), alb.view()});
+
+    assert(!report.ok());
+    assert_exposed_recompute_flags(report);
+    assert(report.result.status == tywrf::nest::NestStatus::invalid_contract);
+    assert(!report.wrote_pb);
+    assert(!report.wrote_t_init);
+    assert(!report.wrote_alb);
+    assert_storage_unchanged(pb, pb_before, "PB invalid shape");
+    assert_storage_unchanged(t_init, t_init_before, "T_INIT invalid shape");
+    assert_storage_unchanged(alb, alb_before, "ALB invalid shape");
+  }
+}
+
 void smoke_real_krosa_file_if_configured(
     const char* env_name,
     const tywrf::Grid& grid) {
@@ -414,6 +770,10 @@ int main() {
     test_bad_coefficient_count_is_rejected_before_allocation();
     test_missing_p_top_source_is_rejected();
     test_invalid_grid_shape_is_rejected();
+    test_exposed_mub_recompute_api_contract_is_cuda_ready();
+    test_exposed_mub_recompute_writes_only_exposed_provider_buffers();
+    test_exposed_mub_recompute_no_exposed_no_writes();
+    test_exposed_mub_recompute_invalid_shape_or_window_does_not_write();
     test_real_krosa_smoke_if_configured();
   } catch (const std::exception& error) {
     std::cerr << "base-state provider test failed: " << error.what() << '\n';

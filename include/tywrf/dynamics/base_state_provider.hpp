@@ -66,6 +66,58 @@ struct KrosaBaseStateProviderReport {
   }
 };
 
+struct KrosaExposedBaseStateRecomputeInputs {
+  FieldView2D<const float> mub;
+  BaseStateVerticalCoefficientView c3h;
+  BaseStateVerticalCoefficientView c4h;
+  float p_top_pa = 0.0F;
+};
+
+struct KrosaExposedBaseStateRecomputeOutputs {
+  FieldView3D<float> pb;
+  FieldView3D<float> t_init;
+  FieldView3D<float> alb;
+};
+
+struct KrosaExposedBaseStateRecomputeReport {
+  nest::NestResult result{nest::NestStatus::ok, "ok"};
+  const char* source = "exposed_mub_base_state_recompute_provider";
+  const char* disposition =
+      "provider_buffer_only_no_gate_no_selected_field_numerics";
+  bool diagnostic_only = true;
+  bool gate_candidate = false;
+  bool integrator_output = false;
+  bool selected_field_numerics_enabled = false;
+  bool calls_pressure_refresh_compute = false;
+  bool read_interpolated_mub = false;
+  bool reads_hgt = false;
+  bool touched_phb = false;
+  bool wrote_pb = false;
+  bool wrote_t_init = false;
+  bool wrote_alb = false;
+  bool wrote_state_t = false;
+  bool wrote_state_alb = false;
+
+  std::int32_t active_nx = 0;
+  std::int32_t active_ny = 0;
+  std::int32_t active_nz = 0;
+  std::int32_t c3h_count = 0;
+  std::int32_t c4h_count = 0;
+  std::uint32_t exposed_region_count = 0;
+  std::uint64_t exposed_mass_cell_count = 0;
+  std::uint64_t recomputed_point_count = 0;
+  std::uint64_t pb_recomputed_point_count = 0;
+  std::uint64_t t_init_recomputed_point_count = 0;
+  std::uint64_t alb_recomputed_point_count = 0;
+  std::uint64_t invalid_column_count = 0;
+  std::uint64_t invalid_point_count = 0;
+  std::uint64_t unsupported_stratosphere_point_count = 0;
+
+  [[nodiscard]] constexpr bool ok() const noexcept {
+    return result.ok();
+  }
+};
+
 class KrosaBaseStateProvider {
  public:
   KrosaBaseStateProvider() = default;
@@ -101,5 +153,17 @@ class KrosaBaseStateProvider {
   FieldStorage3D<float> alb_;
   FieldStorage3D<float> phb_;
 };
+
+// Recomputes provider-owned PB/T_INIT/ALB only for child mass cells exposed by
+// a moving-nest remap overlap window. The input MUB is assumed to be the
+// already exposed-interpolated child-shaped MUB. This helper does not derive
+// MUB from HGT, does not rebuild or synchronize PHB, does not touch State::t,
+// does not write State ALB, and is not a gate/selected-field production path.
+[[nodiscard]] KrosaExposedBaseStateRecomputeReport
+recompute_exposed_base_state_from_mub(
+    const nest::RemapWindow& overlap_window,
+    const KrosaExposedBaseStateRecomputeInputs& inputs,
+    const KrosaExposedBaseStateRecomputeOutputs& outputs,
+    KrosaMassBaseStateReconstructionOptions options = {}) noexcept;
 
 }  // namespace tywrf::dynamics

@@ -1021,9 +1021,29 @@ base fields, hide missing parent-fill work, or convert a diagnostic artifact
 into a candidate. D68 must not use reference-end truth, generate oracle
 candidates, promote diagnostic/probe/helper output to gate evidence, advance
 validation to `00:20`, reduce d02 below `2 km`, or introduce best-track
-nudging. Only D69 or later should consider migrating `state_remap`/parent-fill
+nudging. Only D70 or later should consider migrating `state_remap`/parent-fill
 semantics into a WRF-style exposed base-state policy, and that migration must
-remain outside diagnostic-closure shortcuts.
+remain outside diagnostic-closure shortcuts. D69 narrows this boundary to
+provider/staging API work only.
+
+D68 is now complete, fully validated, pushed, and synchronized at commit
+`c8a83a2` (`Add exposed base-state exchange diagnostics`). It remains outside
+closure authority and outside production selected-field numerics. D68 helper,
+probe, and diagnostic reports cannot be converted into a normal candidate or a
+strict d02 `00:10` gate pass.
+
+D69 may add only a provider/staging recompute API and tests for
+`PB`/`T_INIT`/`ALB` derived from already exposed-interpolated `MUB`. A closure
+must not use that API to patch a candidate, hide missing production wiring, or
+borrow positive selected-field metadata. The D69 API must not regenerate `MUB`
+from `HGT`, rebuild or synchronize `PHB`, write `T_INIT` into `State::t`, or
+write `ALB` into `State`; `ALB` remains staging-only, not `State` ownership.
+
+Reference-end truth, oracle/reference-copy candidates, restart substitutes,
+and diagnostic/probe/helper outputs remain forbidden as closure or gate
+evidence. D69 must not advance validation to `00:20`, reduce d02 below `2 km`,
+or introduce best-track nudging. Hook or diagnostic connection for the
+recompute API belongs to D70 or later.
 
 ## Hard Prohibitions
 

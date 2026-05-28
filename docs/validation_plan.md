@@ -1248,9 +1248,29 @@ not be connected to the production selected-field numerical path, must not be
 treated as evidence for a gate pass, and must not produce reference-end truth
 or oracle candidates. The strict d02 `2025-07-26_00:10:00` gate remains failed;
 validation must not advance to `00:20`, must not reduce d02 below `2 km`, and
-must not add best-track nudging. D69 or later may consider migrating
-`state_remap`/parent-fill semantics into a WRF-style exposed base-state policy;
-D68 should keep the migration as documented future work only.
+must not add best-track nudging. D70 or later may consider hook or diagnostic
+wiring for WRF-style exposed base-state policy; D68 keeps the migration as
+documented future work only.
+
+D68 is now complete and synchronized. Commit `c8a83a2`
+(`Add exposed base-state exchange diagnostics`) has completed full validation
+and has been pushed to `origin/main`, leaving `main` and `origin/main`
+synchronized. This is still diagnostic/helper validation only. It does not
+connect to the production selected-field path and does not change the strict
+d02 `2025-07-26_00:10:00` gate result, which remains failed.
+
+D69 validation scope is provider/staging API coverage only. It may add tests
+for recomputing `PB`, `T_INIT`, and staged provider `ALB` from already
+exposed-interpolated `MUB`, but it must not route that recompute result into
+the production selected-field path, write a gate candidate, or report a gate
+pass. The recompute API must not regenerate `MUB` from `HGT`, rebuild or sync
+`PHB`, write `T_INIT` into `State::t`, or write `ALB` into `State`.
+
+Diagnostic, oracle, probe, and helper outputs remain excluded from strict-gate
+evidence. D69 must not use reference-end truth or oracle candidates, must not
+advance to `00:20`, must not lower d02 below `2 km`, and must not introduce
+best-track nudging. Hook or diagnostic connection of the D69 API is deferred to
+D70 or later.
 
 Example:
 

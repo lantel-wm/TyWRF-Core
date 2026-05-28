@@ -1486,9 +1486,29 @@ not selected-field numerical production and not gate evidence. D68 must not
 wire the helper into the production selected-field numerical path, generate
 reference-end or oracle candidates, treat diagnostic/probe/helper output as a
 gate pass, advance validation to `00:20`, reduce d02 below `2 km`, or
-introduce best-track nudging. D69 or later may consider migrating
-`state_remap`/parent-fill semantics into a WRF-style exposed base-state policy
-after this diagnostic boundary is reviewed.
+introduce best-track nudging. D70 or later may consider hook or diagnostic
+wiring for WRF-style exposed base-state policy after this boundary is reviewed.
+
+D68 is now complete, fully validated, pushed, and synchronized. Commit
+`c8a83a2` (`Add exposed base-state exchange diagnostics`) records the exposed
+base-state exchange diagnostic helper/regression slice. It remains
+diagnostic-only: it does not connect to the production selected-field path and
+does not make the strict d02 `2025-07-26_00:10:00` gate pass.
+
+D69 compatibility work is limited to a provider/staging API and tests that
+recompute `PB`, `T_INIT`, and staged provider `ALB` from already
+exposed-interpolated `MUB` for newly exposed d02 cells. This API is not a
+production selected-field numerical hook, not a candidate writer, and not gate
+evidence. It must not regenerate `MUB` from `HGT`, rebuild or synchronize
+`PHB`, write provider `T_INIT` into `State::t`, or write `ALB` into `State`.
+`ALB` remains an external staging value for downstream pressure-refresh
+consumers only.
+
+D69 must not use reference-end truth, oracle/reference-copy candidates,
+diagnostic/probe/helper outputs, or restart substitutes as compatibility
+evidence. It must not advance validation to `00:20`, reduce d02 below `2 km`,
+or introduce best-track nudging. Hook or diagnostic connection of this
+recompute API is deferred to D70 or later.
 
 ## Physics Bridge Compatibility Notes
 
