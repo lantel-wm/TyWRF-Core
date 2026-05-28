@@ -1100,6 +1100,31 @@ products, diagnostic/probe/helper outputs, adapter telemetry, or restart
 substitutes to close failed metrics. It must not advance validation to
 `00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
 
+D72 is complete, fully validated, pushed, and synchronized at commit `616c6c9`
+(`Add diagnostic adapter selected-field report path`). Its
+`--diagnostic-base-state-adapter-report` path is an opt-in diagnostic
+smoke/report path for selected-field adapter staging only. A closure must not
+use this path to patch candidate fields, supply pressure-refresh production,
+borrow selected-field positive metadata, or relabel adapter output as normal
+integrator output.
+
+The D72 adapter report and any related artifact must remain:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
+
+D73 may audit only that boundary: adapter/helper/staging metadata should stay
+visible, report-only, and non-gate. Strict gate rejection must happen before
+RMSE or TC diagnostics are interpreted. Therefore an adapter, helper, staging,
+dry-run, probe, diagnostic, oracle, or reference-copy artifact remains rejected
+even if its field RMSE, storm-center, MSLP, or Vmax diagnostics would otherwise
+meet thresholds. Such diagnostics can inform future producer work, but they
+cannot become closure evidence, cannot satisfy the strict `00:10` gate, and
+cannot justify advancing validation to `00:20`.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

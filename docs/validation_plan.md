@@ -1320,6 +1320,30 @@ pass, cannot satisfy `00:10`, and cannot permit validation to advance to
 diagnostic/probe/helper artifacts, adapter telemetry, or restart substitutes as
 gate evidence; d02 remains `2 km`, and best-track nudging remains out of scope.
 
+D72 is now complete, fully validated, pushed, and synchronized at commit
+`616c6c9` (`Add diagnostic adapter selected-field report path`). The new
+`--diagnostic-base-state-adapter-report` path is opt-in diagnostic reporting
+only. It may expose adapter staging/audit state for the selected-field
+exposed-base-state work, but it is not a pressure-refresh producer, not normal
+integrator output, and not a strict-gate candidate. Its report and any artifact
+metadata must remain:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
+
+D73 diagnostic smoke/audit work may verify that this opt-in path reports the
+expected adapter/helper/staging metadata and that strict-gate rejection remains
+active. The rejection is metadata-first: default strict-gate tooling must reject
+adapter, helper, staging, dry-run, probe, diagnostic, oracle, and
+reference-copy roles/kinds before interpreting RMSE fields or TC diagnostics.
+Passing-looking field RMSE, storm-center, MSLP, or Vmax numbers from one of
+those artifacts must still be reported as non-gate diagnostic evidence, not as
+a `2025-07-26_00:10:00` validation pass. The strict `00:10` gate still fails,
+so validation must not proceed to `00:20`.
+
 Example:
 
 ```bash

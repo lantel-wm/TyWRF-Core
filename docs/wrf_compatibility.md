@@ -1563,6 +1563,31 @@ reference-copy products, diagnostic/probe/helper output, adapter reports, or
 restart substitutes as compatibility evidence; it must not advance validation
 to `00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
 
+D72 is now complete, verified, pushed, and synchronized at commit `616c6c9`
+(`Add diagnostic adapter selected-field report path`). It adds the opt-in
+selected-field diagnostic adapter report path behind
+`--diagnostic-base-state-adapter-report`. This is staging/report-only wiring
+for the exposed base-state adapter: it must not write or relabel a production
+`selected_field_cycle` candidate, must not connect the normal pressure-refresh
+candidate path, and must not change selected-field gate eligibility.
+
+Any D72 adapter report or artifact remains non-gate compatibility context:
+
+```text
+diagnostic_only = true
+gate_candidate = false
+integrator_output = false
+```
+
+D73 compatibility work is limited to diagnostic smoke/audit boundaries for that
+opt-in adapter path. The strict d02 gate must reject adapter, helper, staging,
+dry-run, probe, diagnostic, oracle, and reference-copy roles/kinds before
+interpreting field RMSE or TC diagnostics. Even if an adapter-side report shows
+passing field thresholds, storm-center, MSLP, or Vmax values, the artifact is
+still not a gate candidate and cannot count as the strict
+`2025-07-26_00:10:00` pass. The current strict gate remains failed, so
+validation must stop at `00:10` and must not advance to `00:20`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
