@@ -1871,6 +1871,34 @@ subcycling metadata as a validation pass; the strict
 `MU`, `PB`, or `PHB`, must not invoke pressure refresh, physics, or best-track
 nudging, and must not change d02 resolution below `2 km`.
 
+D89 is complete, verified, and pushed at commit `d7e54e9`
+(`Add wind advecting velocity mode`). It added
+`--wind-tendency-advecting-velocity refreshed|frozen` for selected-field
+`self_advection`; the default remains `refreshed`, preserving the D87/D88
+behavior.
+
+The real KROSA d02 `00:10` A/B results are compatibility evidence for a failed
+gate, not a pass. With refreshed advecting velocity and `N=75`,
+`candidate_metadata` passed, but the gate failed with `U` normalized RMSE
+`0.13578703428452885` and `V` normalized RMSE
+`0.15517830284022266`. With frozen advecting velocity and `N=75`,
+`candidate_metadata` also passed, but the gate failed with `U` normalized RMSE
+`0.13553969712614714` and `V` normalized RMSE
+`0.15933552812814994`. The frozen SLP gate failed storm-center distance at
+`43.4827156063485 km`; minimum SLP error `0.36407470703125 hPa` passed, and
+Vmax10m error `0.7686817572680305 m s-1` passed. Frozen advecting velocity is
+therefore not a fix; the next wind compatibility step is cross-component A/B.
+
+D90 may only define default-off/default-preserving selected-field `U`/`V`
+`self_advection` A/B for `same_component|cross_component`. The default
+`same_component` behavior must preserve D89. Any `cross_component` mode must
+stay non-oracle and selected-field-only: no reference-end truth, no
+oracle/reference-copy source, no `P`, `MU`, `PB`, or `PHB` handling, no
+pressure refresh, no physics, no best-track nudging, and no d02 resolution
+change below `2 km`. `candidate_metadata` passing remains only gate
+eligibility; the strict `00:10` gate is still failed and validation must not
+advance to `00:20`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

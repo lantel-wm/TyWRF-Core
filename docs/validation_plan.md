@@ -1638,6 +1638,31 @@ reference-end/oracle sources, must not handle `P`, `MU`, `PB`, or `PHB`, must
 not invoke pressure refresh, physics, or best-track nudging, and must not lower
 d02 below `2 km`.
 
+D89 is complete, verified, and pushed at commit `d7e54e9`
+(`Add wind advecting velocity mode`). It adds the validation option
+`--wind-tendency-advecting-velocity refreshed|frozen`; the default
+`refreshed` mode preserves the D87/D88 selected-field `self_advection`
+behavior.
+
+The D89 real KROSA d02 `00:10` A/B run keeps the strict gate failed. Refreshed
+`N=75` passed `candidate_metadata`, then failed the gate with `U` normalized
+RMSE `0.13578703428452885` and `V` normalized RMSE
+`0.15517830284022266`. Frozen `N=75` also passed `candidate_metadata`, then
+failed the gate with `U` normalized RMSE `0.13553969712614714` and `V`
+normalized RMSE `0.15933552812814994`. For the frozen SLP gate, storm-center
+error `43.4827156063485 km` failed; minimum SLP error
+`0.36407470703125 hPa` passed; Vmax10m error
+`0.7686817572680305 m s-1` passed. Frozen advecting velocity is not a fix.
+
+D90 validation scope is only default-off/default-preserving selected-field
+`U`/`V` `self_advection` A/B for `same_component|cross_component`. The default
+`same_component` mode must preserve D89. A `cross_component` experiment may be
+gate-eligible only through normal positive candidate metadata, and that
+metadata still cannot be reported as validation success. No D90 result may use
+reference-end/oracle sources, handle `P`, `MU`, `PB`, or `PHB`, invoke pressure
+refresh, physics, or best-track nudging, lower d02 below `2 km`, or advance the
+progressive sequence to `00:20`.
+
 Example:
 
 ```bash

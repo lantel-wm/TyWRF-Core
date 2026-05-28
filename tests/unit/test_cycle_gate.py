@@ -32,6 +32,16 @@ WIND_TENDENCY_SUBCYCLING_ATTRS = {
 WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR = (
     "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE"
 )
+WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR = (
+    "TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS"
+)
+WIND_TENDENCY_ADVECTING_COLLOCATION_ATTR = (
+    "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION"
+)
+
+
+def _wind_tendency_advecting_collocation(advecting_components: str) -> str:
+    return "average" if advecting_components == "cross_component" else "same_grid"
 
 
 def _production_attrs(overrides: dict[str, object] | None = None) -> dict[str, object]:
@@ -43,6 +53,7 @@ def _production_attrs(overrides: dict[str, object] | None = None) -> dict[str, o
 def _wind_tendency_evidence_attrs(
     overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    overrides = overrides or {}
     attrs = {
         "TYWRF_WIND_TENDENCY_OPT_IN": "true",
         "TYWRF_WIND_TENDENCY_APPLIED": "true",
@@ -52,9 +63,16 @@ def _wind_tendency_evidence_attrs(
         "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "false",
         "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY": "false",
         WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR: "refreshed",
+        WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR: "same_component",
         **WIND_TENDENCY_SUBCYCLING_ATTRS,
     }
-    attrs.update(overrides or {})
+    attrs.update(overrides)
+    if WIND_TENDENCY_ADVECTING_COLLOCATION_ATTR not in overrides:
+        attrs[WIND_TENDENCY_ADVECTING_COLLOCATION_ATTR] = (
+            _wind_tendency_advecting_collocation(
+                str(attrs[WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR])
+            )
+        )
     return attrs
 
 
@@ -490,15 +508,18 @@ def test_cycle_gate_rejects_wind_tendency_non_evidence_even_when_validation_gate
 
 
 @pytest.mark.parametrize("advecting_velocity_mode", ("refreshed", "frozen"))
+@pytest.mark.parametrize("advecting_components", ("same_component", "cross_component"))
 def test_cycle_gate_allows_wind_tendency_evidence_metadata(
     tmp_path: Path,
     advecting_velocity_mode: str,
+    advecting_components: str,
 ) -> None:
     reference_dir, candidate_dir = _write_pair(
         tmp_path,
         attrs=_wind_tendency_evidence_attrs(
             {
                 WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR: advecting_velocity_mode,
+                WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR: advecting_components,
             }
         ),
     )
@@ -513,9 +534,11 @@ def test_cycle_gate_allows_wind_tendency_evidence_metadata(
 
 
 @pytest.mark.parametrize("advecting_velocity_mode", ("refreshed", "frozen"))
+@pytest.mark.parametrize("advecting_components", ("same_component", "cross_component"))
 def test_cycle_gate_self_advection_subcycling_metadata_enters_normal_field_gate(
     tmp_path: Path,
     advecting_velocity_mode: str,
+    advecting_components: str,
 ) -> None:
     reference_dir, candidate_dir = _write_pair(
         tmp_path,
@@ -523,6 +546,7 @@ def test_cycle_gate_self_advection_subcycling_metadata_enters_normal_field_gate(
         attrs=_wind_tendency_evidence_attrs(
             {
                 WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR: advecting_velocity_mode,
+                WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR: advecting_components,
             }
         ),
     )
@@ -538,6 +562,13 @@ def test_cycle_gate_self_advection_subcycling_metadata_enters_normal_field_gate(
         assert (
             dataset.getncattr(WIND_TENDENCY_ADVECTING_VELOCITY_MODE_ATTR)
             == advecting_velocity_mode
+        )
+        assert (
+            dataset.getncattr(WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR)
+            == advecting_components
+        )
+        assert dataset.getncattr(WIND_TENDENCY_ADVECTING_COLLOCATION_ATTR) == (
+            _wind_tendency_advecting_collocation(advecting_components)
         )
 
     assert report.status == "failed"

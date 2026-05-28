@@ -116,6 +116,11 @@ enum class WindTendencyAdvectingVelocityMode {
   frozen,
 };
 
+enum class WindTendencyAdvectingComponents {
+  same_component,
+  cross_component,
+};
+
 struct Options {
   std::filesystem::path d01_start_state_path;
   std::filesystem::path d02_start_state_path;
@@ -138,8 +143,11 @@ struct Options {
   WindTendencySourceKind wind_tendency_source = WindTendencySourceKind::none;
   WindTendencyAdvectingVelocityMode wind_tendency_advecting_velocity_mode =
       WindTendencyAdvectingVelocityMode::refreshed;
+  WindTendencyAdvectingComponents wind_tendency_advecting_components =
+      WindTendencyAdvectingComponents::same_component;
   std::size_t wind_tendency_substeps = kDefaultWindTendencySubsteps;
   bool has_wind_tendency_advecting_velocity_mode = false;
+  bool has_wind_tendency_advecting_components = false;
   bool has_wind_tendency_substeps = false;
   bool pretty = false;
   std::vector<std::string> variables;
@@ -205,6 +213,8 @@ struct WindTendencyOptInReport {
   WindTendencySourceKind source_kind = WindTendencySourceKind::none;
   WindTendencyAdvectingVelocityMode advecting_velocity_mode =
       WindTendencyAdvectingVelocityMode::refreshed;
+  WindTendencyAdvectingComponents advecting_components =
+      WindTendencyAdvectingComponents::same_component;
   tywrf::dynamics::WindTendencyReport kernel;
   std::size_t substep_count = kDefaultWindTendencySubsteps;
   double dt_seconds = kWindTendencySubstepSeconds;
@@ -340,6 +350,28 @@ struct DiagnosticAdapterProviderSource {
   return "refreshed";
 }
 
+[[nodiscard]] std::string_view wind_tendency_advecting_components_name(
+    const WindTendencyAdvectingComponents components) noexcept {
+  switch (components) {
+    case WindTendencyAdvectingComponents::same_component:
+      return "same_component";
+    case WindTendencyAdvectingComponents::cross_component:
+      return "cross_component";
+  }
+  return "same_component";
+}
+
+[[nodiscard]] std::string_view wind_tendency_advecting_collocation_name(
+    const WindTendencyAdvectingComponents components) noexcept {
+  switch (components) {
+    case WindTendencyAdvectingComponents::same_component:
+      return "same_grid";
+    case WindTendencyAdvectingComponents::cross_component:
+      return "average";
+  }
+  return "same_grid";
+}
+
 [[nodiscard]] constexpr bool wind_tendency_zero_or_identity_only(
     const WindTendencySourceKind kind) noexcept {
   return kind == WindTendencySourceKind::zero || kind == WindTendencySourceKind::identity;
@@ -396,6 +428,30 @@ struct DiagnosticAdapterProviderSource {
     return WindTendencyAdvectingVelocityMode::frozen;
   }
   throw std::invalid_argument(std::string(option) + " expects one of: refreshed, frozen");
+}
+
+[[nodiscard]] WindTendencyAdvectingComponents parse_wind_tendency_advecting_components(
+    const std::string& value,
+    const std::string_view option) {
+  auto trimmed = value;
+  trimmed.erase(
+      trimmed.begin(),
+      std::find_if(trimmed.begin(), trimmed.end(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }));
+  trimmed.erase(
+      std::find_if(trimmed.rbegin(), trimmed.rend(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }).base(),
+      trimmed.end());
+  if (trimmed == "same_component") {
+    return WindTendencyAdvectingComponents::same_component;
+  }
+  if (trimmed == "cross_component") {
+    return WindTendencyAdvectingComponents::cross_component;
+  }
+  throw std::invalid_argument(
+      std::string(option) + " expects one of: same_component, cross_component");
 }
 
 [[nodiscard]] std::string_view wind_tendency_status_name(
@@ -634,6 +690,10 @@ Options:
   --wind-tendency-advecting-velocity MODE
                                   self_advection-only advecting velocity update policy.
                                   MODE is refreshed or frozen; default refreshed.
+  --wind-tendency-advecting-components MODE
+                                  self_advection-only advecting component collocation policy.
+                                  MODE is same_component or cross_component; default
+                                  same_component.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
@@ -897,6 +957,16 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
               arg.substr(std::string("--wind-tendency-advecting-velocity=").size()),
               "--wind-tendency-advecting-velocity");
       options.has_wind_tendency_advecting_velocity_mode = true;
+    } else if (arg == "--wind-tendency-advecting-components") {
+      options.wind_tendency_advecting_components =
+          parse_wind_tendency_advecting_components(require_value(arg), arg);
+      options.has_wind_tendency_advecting_components = true;
+    } else if (arg.rfind("--wind-tendency-advecting-components=", 0) == 0) {
+      options.wind_tendency_advecting_components =
+          parse_wind_tendency_advecting_components(
+              arg.substr(std::string("--wind-tendency-advecting-components=").size()),
+              "--wind-tendency-advecting-components");
+      options.has_wind_tendency_advecting_components = true;
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
     } else if (arg == "--diagnostic-base-state-adapter-report") {
@@ -953,6 +1023,12 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       options.wind_tendency_source != WindTendencySourceKind::self_advection) {
     throw std::invalid_argument(
         "--wind-tendency-advecting-velocity is only valid with "
+        "--wind-tendency-source self_advection");
+  }
+  if (options.has_wind_tendency_advecting_components &&
+      options.wind_tendency_source != WindTendencySourceKind::self_advection) {
+    throw std::invalid_argument(
+        "--wind-tendency-advecting-components is only valid with "
         "--wind-tendency-source self_advection");
   }
   if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
@@ -1279,6 +1355,149 @@ void fill_halo_staging_from_active_clamped(
 }
 
 template <typename Real>
+void fill_u_grid_from_v_grid_2x2_clamp_average(
+    const tywrf::FieldView3D<const Real> source_v,
+    tywrf::FieldStorage3D<Real>& destination_u) {
+  const auto destination = destination_u.view();
+  const auto source_i_begin = source_v.halo.i_lower;
+  const auto source_i_end = source_v.nx - source_v.halo.i_upper;
+  const auto source_j_begin = source_v.halo.j_lower;
+  const auto source_j_end = source_v.ny - source_v.halo.j_upper;
+  const auto source_k_begin = source_v.halo.k_lower;
+  const auto source_k_end = source_v.nz - source_v.halo.k_upper;
+  for (std::int32_t j = 0; j < destination.ny; ++j) {
+    const auto destination_active_j = j - destination.halo.j_lower;
+    const auto source_j0 = std::clamp(
+        destination_active_j + source_j_begin,
+        source_j_begin,
+        source_j_end - 1);
+    const auto source_j1 = std::clamp(
+        destination_active_j + 1 + source_j_begin,
+        source_j_begin,
+        source_j_end - 1);
+    for (std::int32_t k = 0; k < destination.nz; ++k) {
+      const auto source_k = std::clamp(
+          k - destination.halo.k_lower + source_k_begin,
+          source_k_begin,
+          source_k_end - 1);
+      for (std::int32_t i = 0; i < destination.nx; ++i) {
+        const auto destination_active_i = i - destination.halo.i_lower;
+        const auto source_i0 = std::clamp(
+            destination_active_i - 1 + source_i_begin,
+            source_i_begin,
+            source_i_end - 1);
+        const auto source_i1 = std::clamp(
+            destination_active_i + source_i_begin,
+            source_i_begin,
+            source_i_end - 1);
+        destination(i, j, k) =
+            static_cast<Real>(0.25) *
+            (source_v(source_i0, source_j0, source_k) +
+             source_v(source_i1, source_j0, source_k) +
+             source_v(source_i0, source_j1, source_k) +
+             source_v(source_i1, source_j1, source_k));
+      }
+    }
+  }
+}
+
+template <typename Real>
+void fill_v_grid_from_u_grid_2x2_clamp_average(
+    const tywrf::FieldView3D<const Real> source_u,
+    tywrf::FieldStorage3D<Real>& destination_v) {
+  const auto destination = destination_v.view();
+  const auto source_i_begin = source_u.halo.i_lower;
+  const auto source_i_end = source_u.nx - source_u.halo.i_upper;
+  const auto source_j_begin = source_u.halo.j_lower;
+  const auto source_j_end = source_u.ny - source_u.halo.j_upper;
+  const auto source_k_begin = source_u.halo.k_lower;
+  const auto source_k_end = source_u.nz - source_u.halo.k_upper;
+  for (std::int32_t j = 0; j < destination.ny; ++j) {
+    const auto destination_active_j = j - destination.halo.j_lower;
+    const auto source_j0 = std::clamp(
+        destination_active_j - 1 + source_j_begin,
+        source_j_begin,
+        source_j_end - 1);
+    const auto source_j1 = std::clamp(
+        destination_active_j + source_j_begin,
+        source_j_begin,
+        source_j_end - 1);
+    for (std::int32_t k = 0; k < destination.nz; ++k) {
+      const auto source_k = std::clamp(
+          k - destination.halo.k_lower + source_k_begin,
+          source_k_begin,
+          source_k_end - 1);
+      for (std::int32_t i = 0; i < destination.nx; ++i) {
+        const auto destination_active_i = i - destination.halo.i_lower;
+        const auto source_i0 = std::clamp(
+            destination_active_i + source_i_begin,
+            source_i_begin,
+            source_i_end - 1);
+        const auto source_i1 = std::clamp(
+            destination_active_i + 1 + source_i_begin,
+            source_i_begin,
+            source_i_end - 1);
+        destination(i, j, k) =
+            static_cast<Real>(0.25) *
+            (source_u(source_i0, source_j0, source_k) +
+             source_u(source_i1, source_j0, source_k) +
+             source_u(source_i0, source_j1, source_k) +
+             source_u(source_i1, source_j1, source_k));
+      }
+    }
+  }
+}
+
+template <typename Real>
+void fill_same_component_wind_tendency_advectors(
+    const tywrf::FieldView3D<const Real> source_u,
+    const tywrf::FieldView3D<const Real> source_v,
+    tywrf::FieldStorage3D<Real>& u_advect_x,
+    tywrf::FieldStorage3D<Real>& u_advect_y,
+    tywrf::FieldStorage3D<Real>& v_advect_x,
+    tywrf::FieldStorage3D<Real>& v_advect_y) {
+  fill_halo_staging_from_active_clamped(source_u, u_advect_x);
+  fill_halo_staging_from_active_clamped(source_u, u_advect_y);
+  fill_halo_staging_from_active_clamped(source_v, v_advect_x);
+  fill_halo_staging_from_active_clamped(source_v, v_advect_y);
+}
+
+template <typename Real>
+void fill_cross_component_wind_tendency_advectors(
+    const tywrf::FieldView3D<const Real> source_u,
+    const tywrf::FieldView3D<const Real> source_v,
+    tywrf::FieldStorage3D<Real>& u_advect_x,
+    tywrf::FieldStorage3D<Real>& u_advect_y,
+    tywrf::FieldStorage3D<Real>& v_advect_x,
+    tywrf::FieldStorage3D<Real>& v_advect_y) {
+  fill_halo_staging_from_active_clamped(source_u, u_advect_x);
+  fill_u_grid_from_v_grid_2x2_clamp_average(source_v, u_advect_y);
+  fill_v_grid_from_u_grid_2x2_clamp_average(source_u, v_advect_x);
+  fill_halo_staging_from_active_clamped(source_v, v_advect_y);
+}
+
+template <typename Real>
+void fill_wind_tendency_advectors(
+    const WindTendencyAdvectingComponents components,
+    const tywrf::FieldView3D<const Real> source_u,
+    const tywrf::FieldView3D<const Real> source_v,
+    tywrf::FieldStorage3D<Real>& u_advect_x,
+    tywrf::FieldStorage3D<Real>& u_advect_y,
+    tywrf::FieldStorage3D<Real>& v_advect_x,
+    tywrf::FieldStorage3D<Real>& v_advect_y) {
+  switch (components) {
+    case WindTendencyAdvectingComponents::same_component:
+      fill_same_component_wind_tendency_advectors(
+          source_u, source_v, u_advect_x, u_advect_y, v_advect_x, v_advect_y);
+      return;
+    case WindTendencyAdvectingComponents::cross_component:
+      fill_cross_component_wind_tendency_advectors(
+          source_u, source_v, u_advect_x, u_advect_y, v_advect_x, v_advect_y);
+      return;
+  }
+}
+
+template <typename Real>
 void fill_storage_constant(
     tywrf::FieldStorage3D<Real>& destination,
     const Real value) {
@@ -1342,10 +1561,14 @@ void apply_selected_field_wind_tendency(
   } else {
     fill_halo_staging_from_active_clamped(candidate_source.u.view(), u_source);
     fill_halo_staging_from_active_clamped(candidate_source.v.view(), v_source);
-    fill_halo_staging_from_active_clamped(candidate_source.u.view(), u_advect_x);
-    fill_halo_staging_from_active_clamped(candidate_source.u.view(), u_advect_y);
-    fill_halo_staging_from_active_clamped(candidate_source.v.view(), v_advect_x);
-    fill_halo_staging_from_active_clamped(candidate_source.v.view(), v_advect_y);
+    fill_wind_tendency_advectors(
+        options.wind_tendency_advecting_components,
+        candidate_source.u.view(),
+        candidate_source.v.view(),
+        u_advect_x,
+        u_advect_y,
+        v_advect_x,
+        v_advect_y);
   }
 
   const auto u_before = candidate.u;
@@ -1377,6 +1600,7 @@ void apply_selected_field_wind_tendency(
       options.wind_tendency_advecting_velocity_mode ==
       WindTendencyAdvectingVelocityMode::refreshed;
   wind_report.advecting_velocity_mode = options.wind_tendency_advecting_velocity_mode;
+  wind_report.advecting_components = options.wind_tendency_advecting_components;
   for (std::size_t substep = 0; substep < wind_report.substep_count; ++substep) {
     const auto kernel_report = tywrf::dynamics::apply_horizontal_wind_tendency(
         tywrf::dynamics::WindTendencyViews<float>{
@@ -1412,10 +1636,14 @@ void apply_selected_field_wind_tendency(
       fill_halo_staging_from_active_clamped(u_target_const.view(), u_source);
       fill_halo_staging_from_active_clamped(v_target_const.view(), v_source);
       if (refresh_advecting_velocity) {
-        fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_x);
-        fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_y);
-        fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_x);
-        fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_y);
+        fill_wind_tendency_advectors(
+            options.wind_tendency_advecting_components,
+            u_target_const.view(),
+            v_target_const.view(),
+            u_advect_x,
+            u_advect_y,
+            v_advect_x,
+            v_advect_y);
       }
     }
   }
@@ -1446,6 +1674,14 @@ void apply_selected_field_wind_tendency(
         "advecting_velocity_mode",
         std::string(wind_tendency_advecting_velocity_mode_name(
             wind_report.advecting_velocity_mode))));
+    timeline_fields.push_back(timeline_field(
+        "advecting_components",
+        std::string(wind_tendency_advecting_components_name(
+            wind_report.advecting_components))));
+    timeline_fields.push_back(timeline_field(
+        "advecting_collocation",
+        std::string(wind_tendency_advecting_collocation_name(
+            wind_report.advecting_components))));
     timeline_fields.push_back(
         timeline_field("substep_count", static_cast<std::uint64_t>(wind_report.substep_count)));
     timeline_fields.push_back(timeline_field(
@@ -4457,6 +4693,14 @@ void write_wind_tendency_attrs(
         file,
         "TYWRF_WIND_TENDENCY_ADVECTING_VELOCITY_MODE",
         wind_tendency_advecting_velocity_mode_name(wind.advecting_velocity_mode));
+    write_text_attr(
+        file,
+        "TYWRF_WIND_TENDENCY_ADVECTING_COMPONENTS",
+        wind_tendency_advecting_components_name(wind.advecting_components));
+    write_text_attr(
+        file,
+        "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION",
+        wind_tendency_advecting_collocation_name(wind.advecting_components));
     write_int_attr(
         file,
         "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT",
@@ -5318,6 +5562,18 @@ void write_wind_tendency_json(
         stream,
         "wind_tendency_advecting_velocity_mode",
         wind_tendency_advecting_velocity_mode_name(wind.advecting_velocity_mode),
+        true,
+        pretty);
+    write_json_string(
+        stream,
+        "wind_tendency_advecting_components",
+        wind_tendency_advecting_components_name(wind.advecting_components),
+        true,
+        pretty);
+    write_json_string(
+        stream,
+        "wind_tendency_advecting_collocation",
+        wind_tendency_advecting_collocation_name(wind.advecting_components),
         true,
         pretty);
     write_json_number(

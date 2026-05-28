@@ -1410,6 +1410,31 @@ allowed. D89 must not use reference-end/oracle sources, must not handle `P`,
 `MU`, `PB`, or `PHB`, must not invoke pressure refresh, physics, or best-track
 nudging, and must not lower d02 below `2 km`.
 
+D89 is complete, verified, and pushed at commit `d7e54e9`
+(`Add wind advecting velocity mode`). The new
+`--wind-tendency-advecting-velocity refreshed|frozen` option is selected-field
+wind-tendency plumbing, not a diagnostic closure. Its default `refreshed` mode
+preserves D87/D88 behavior.
+
+The D89 real KROSA `00:10` results remain failed-gate evidence. Refreshed
+`N=75` passed `candidate_metadata`, then failed with `U` normalized RMSE
+`0.13578703428452885` and `V` normalized RMSE
+`0.15517830284022266`. Frozen `N=75` passed `candidate_metadata`, then failed
+with `U` normalized RMSE `0.13553969712614714` and `V` normalized RMSE
+`0.15933552812814994`. The frozen SLP gate failed storm-center distance at
+`43.4827156063485 km`; minimum SLP error `0.36407470703125 hPa` and Vmax10m
+error `0.7686817572680305 m s-1` passed. A closure must not treat frozen
+advecting velocity as a fix, relabel metadata as a pass, or patch the remaining
+wind/center failures.
+
+D90 remains outside diagnostic closures as well. It may only document or stage
+default-off/default-preserving selected-field `U`/`V` `self_advection` A/B for
+`same_component|cross_component`, with default `same_component` preserving D89.
+`cross_component` must not borrow closure metadata, reference-end truth, oracle
+sources, or reference-copy data. It must not touch `P`, `MU`, `PB`, or `PHB`,
+invoke pressure refresh, physics, or best-track nudging, lower d02 below
+`2 km`, or justify any `00:20` validation progress.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
