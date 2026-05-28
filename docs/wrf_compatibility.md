@@ -1726,6 +1726,25 @@ reported as an accepted `00:10` field pass. The only evidence that D82 improved
 compatibility is a later real strict `2025-07-26_00:10:00` d02 gate report with
 positive integrator metadata and improved field metrics.
 
+D82 is complete, passed focused validation, full validation, and the real
+`00:10` gate smoke, and was pushed at commit `0a192d4`
+(`Use WRF-style staggered interpolation coordinates`). The real
+`2025-07-26_00:10:00` d02 run now passes candidate metadata, and the
+staggered-coordinate change gives finite `U`/`V` improvement, but the strict
+field gate still fails numerically. The first failed field remains `U` with
+normalized RMSE `0.11359509344276145`; `V` normalized RMSE is
+`0.12937874064226143`. `P` normalized RMSE is slightly worse at
+`6.354144377000247`, so compatibility notes must keep `P` regression risk
+visible rather than describing D82 as a pass.
+
+D83 documentation and audit scope is limited to `U`/`V` source/time-level
+attribution at the failed `00:10` endpoint. Any D83 output is diagnostic-only
+and must carry `gate_evidence=false`. It may explain which source and time
+level contributed to `U`/`V` differences, but it must not write a candidate,
+alter thresholds, repair metadata, or serve as pass proof. D83 must not handle
+`P`, `MU`, physics, or best-track nudging, must not lower d02 below `2 km`, and
+must not advance validation to `00:20`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

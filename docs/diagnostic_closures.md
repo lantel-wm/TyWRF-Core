@@ -1268,6 +1268,25 @@ field or make a candidate gate-eligible. They remain diagnostic context until a
 real strict `2025-07-26_00:10:00` d02 gate run with positive integrator
 metadata proves improved field metrics.
 
+D82 is complete, passed focused validation, full validation, and the real
+`00:10` gate smoke, and was pushed at commit `0a192d4`
+(`Use WRF-style staggered interpolation coordinates`). That commit is
+parent-child interpolation compatibility work, not a diagnostic closure. The
+real `00:10` run passes candidate metadata and shows finite `U`/`V`
+improvement, but the strict gate still fails: first failed field `U` normalized
+RMSE `0.11359509344276145`, `V` normalized RMSE
+`0.12937874064226143`, and `P` normalized RMSE slightly worse at
+`6.354144377000247`. A closure must not hide the `P` risk or reinterpret the
+wind improvement as a gate pass.
+
+D83 `U`/`V` source/time-level attribution is also outside diagnostic closures.
+It may produce only diagnostic-only audit output with `gate_evidence=false`.
+It cannot write candidate files or fields, patch winds, refresh or repair `P`,
+borrow selected-field metadata, change thresholds, or prove that the strict
+`00:10` gate passed. D83 must not handle `P`, `MU`, physics, best-track
+nudging, any d02 resolution change below `2 km`, or any `00:20` validation
+progression.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

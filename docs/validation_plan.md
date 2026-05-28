@@ -1490,6 +1490,24 @@ evidence. Validation status can change only after a real strict d02
 metrics that prove improvement. Until that output exists, the field gate is
 failed and validation must not advance to `00:20`.
 
+D82 is complete at commit `0a192d4`
+(`Use WRF-style staggered interpolation coordinates`). It passed focused
+validation, full validation, the real `00:10` gate smoke, and was pushed. The
+real `2025-07-26_00:10:00` d02 gate smoke confirms candidate metadata passes,
+and `U`/`V` improved finitely after WRF-style staggered interpolation
+coordinates, but the strict gate still fails. The first failed field is `U`
+with normalized RMSE `0.11359509344276145`; `V` normalized RMSE is
+`0.12937874064226143`; `P` normalized RMSE is slightly worse at
+`6.354144377000247`. That `P` change is a regression risk to keep visible, not
+a reason to adjust thresholds or broaden the next worker scope.
+
+D83 may only audit `U`/`V` source/time-level attribution for the failed
+`2025-07-26_00:10:00` endpoint. Its report must be diagnostic-only and
+`gate_evidence=false`; it cannot write a candidate, update thresholds, alter
+gate metadata, or be cited as proof that `00:10` passed. D83 must not work on
+`P`, `MU`, physics, best-track nudging, or d02 resolution, and it must not run
+or report `00:20` as the next validation gate.
+
 Example:
 
 ```bash
