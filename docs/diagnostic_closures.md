@@ -655,6 +655,34 @@ Round D55 keeps the D54 audit conclusions outside closure scope:
   candidate, tune a formula using reference-end truth, or convert hidden-seam
   output into gate evidence.
 
+Round D56 keeps the integrated D55 outcome outside closure scope:
+
+- D55 commit `cc39cdb` passed code validation (`cmake --build`, CTest `29/29`,
+  pytest `141/141`), but that is not a scientific validation pass. The strict
+  d02 `2025-07-26_00:10:00` gate remains failed and validation must not advance
+  to `00:20`.
+- The pressure formula/source audit remains diagnostic-only. The refreshed
+  target-region perturbation-pressure error is still the dominant `P` issue:
+  global `P` normalized RMSE `6.334952`, target-region `10.335362`,
+  non-target `0.338162`, target error fraction `0.998219`, and target bias
+  about `-805 Pa`.
+- Full-pressure normalized RMSE can appear small because the full-pressure
+  reference scale is much larger, but raw RMSE is nearly unchanged. A closure
+  must not replace the strict perturbation-pressure `P` gate with a
+  full-pressure metric.
+- Candidate `P` is not close to start `P`; a closure must not relabel that as
+  persistence or use it to justify a pressure patch.
+- The selected-field state audit remains diagnostic-only. The first failing
+  variable is `U`, with selected-field normalized RMSE values `U = 0.117875`,
+  `V = 0.134244`, and `MU = 0.133382`. Target-region fractions below `0.5`
+  and candidate fields not close to start fields point to a broader
+  selected-field/dynamics gap, not an isolated exposed-cell interpolation hole.
+- D56 may add a vertical/source-level target-region pressure audit and a
+  selected-field evolution audit against WRF reference evolution from the start
+  state. These audits may observe and attribute errors only; they must not
+  generate closure candidates, patch fields, tune formulas from reference-end
+  truth, or convert diagnostic/probe/hidden-seam output into gate evidence.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

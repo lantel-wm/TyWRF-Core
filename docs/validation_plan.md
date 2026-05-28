@@ -826,6 +826,40 @@ candidate fields, copy reference values into a candidate, tune candidate
 generation from reference-end truth, or mark hidden-seam output as gate
 evidence.
 
+Round D56 starts from integrated D55 commit `cc39cdb`, where full validation of
+the codebase passed (`cmake --build`, CTest `29/29`, pytest `141/141`) but the
+scientific validation state did not advance. The `2025-07-26_00:10:00` strict
+d02 gate remains failed, and no `00:20` validation may be attempted until the
+strict `00:10` gate passes.
+
+The D55 pressure formula/source audit is diagnostic-only. It attributes the
+strict `P` failure to refreshed target-region perturbation pressure: global
+`P` normalized RMSE `6.334952`, target-region `P` normalized RMSE `10.335362`,
+non-target `P` normalized RMSE `0.338162`, target error fraction `0.998219`,
+and target bias about `-805 Pa`. Full-pressure normalized RMSE is not a
+replacement metric for the strict `P` gate: its larger pressure scale can make
+normalized error look small while raw RMSE remains nearly unchanged. Candidate
+`P` is also not close to start `P`, so persistence cannot explain the audit.
+
+The D55 selected-field state audit is likewise observation-only. The first
+failing strict variable remains `U`; `U`, `V`, and `MU` normalized RMSE remain
+`0.117875`, `0.134244`, and `0.133382`. Target-region error fractions below
+`0.5`, plus candidate fields that are not close to the start state, indicate a
+broader selected-field/dynamics evolution gap instead of an isolated
+exposed-cell interpolation error.
+
+D56 validation diagnostics should add two non-producing reports:
+
+- a vertical/source-level target-region pressure audit that keeps
+  perturbation-pressure `P` as the strict gate field;
+- a selected-field evolution audit that compares candidate evolution with WRF
+  reference evolution from the same `2025-07-26_00:00:00` start state.
+
+Both reports are observation-only. They may compute diagnostic differences,
+regional attribution, and source-level summaries, but they must not generate or
+patch candidates, cannot count as gate passes, and cannot describe audit/probe/
+hidden-seam output as strict-gate evidence.
+
 Example:
 
 ```bash

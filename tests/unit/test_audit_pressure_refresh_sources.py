@@ -1,14 +1,22 @@
 import json
+import math
+import os
 from pathlib import Path
+import subprocess
 
 import netCDF4
+import numpy as np
 
 from tools.audit_pressure_refresh_sources import (
+    PressureDiagnosticRequest,
     SourceEntry,
     audit_pressure_refresh_sources,
     main as audit_main,
     report_to_json,
 )
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_vector(dataset: netCDF4.Dataset, name: str, length: int) -> None:
@@ -85,6 +93,59 @@ def _write_source(
                 ("Time", "bottom_top_stag", "south_north", west_east_dim),
             )
             phb[0, :, :, :] = 100.0
+
+
+def _ensure_dim(dataset: netCDF4.Dataset, name: str, size: int) -> None:
+    if name not in dataset.dimensions:
+        dataset.createDimension(name, size)
+
+
+def _write_wrfout(
+    path: Path,
+    variables: dict[str, np.ndarray],
+    *,
+    attrs: dict[str, object] | None = None,
+) -> None:
+    with netCDF4.Dataset(path, "w") as dataset:
+        dataset.createDimension("Time", None)
+        for key, value in (attrs or {}).items():
+            dataset.setncattr(key, value)
+        for name, raw_values in variables.items():
+            values = np.asarray(raw_values, dtype=np.float64)
+            if values.ndim == 3:
+                dims = ("Time", "bottom_top", "south_north", "west_east")
+                _ensure_dim(dataset, "bottom_top", values.shape[0])
+                _ensure_dim(dataset, "south_north", values.shape[1])
+                _ensure_dim(dataset, "west_east", values.shape[2])
+            elif values.ndim == 2:
+                dims = ("Time", "south_north", "west_east")
+                _ensure_dim(dataset, "south_north", values.shape[0])
+                _ensure_dim(dataset, "west_east", values.shape[1])
+            else:
+                dims = tuple(f"{name}_dim_{axis}" for axis in range(values.ndim))
+                for dim_name, size in zip(dims, values.shape, strict=True):
+                    _ensure_dim(dataset, dim_name, size)
+            variable = dataset.createVariable(name, "f8", dims)
+            if dims and dims[0] == "Time":
+                variable[0, ...] = values
+            else:
+                variable[:] = values
+
+
+def _pressure_attrs() -> dict[str, object]:
+    return {
+        "TYWRF_DIAGNOSTIC_ONLY": "false",
+        "TYWRF_GATE_CANDIDATE": "true",
+        "TYWRF_INTEGRATOR_OUTPUT": "true",
+        "TYWRF_VALIDATION_GATE_ONLY": "false",
+        "TYWRF_CANDIDATE_KIND": "pressure_refresh_candidate",
+        "TYWRF_FROM_PARENT_START": "10,20",
+        "TYWRF_TO_PARENT_START": "11,20",
+        "TYWRF_PARENT_GRID_RATIO": 1,
+        "TYWRF_PRESSURE_REFRESH_APPLIED": "true",
+        "TYWRF_PRESSURE_REFRESH_INTEGRATION_STATUS": "applied_to_candidate",
+        "TYWRF_PRESSURE_REFRESH_TARGET_COLUMN_COUNT": 2,
+    }
 
 
 def _entry(name: str, domain: str, path: Path, **overrides: object) -> SourceEntry:
@@ -432,6 +493,159 @@ def test_later_restart_direct_alb_does_not_clear_d02_start_time_blocker(
     assert entries["d02_later_restart"]["direct_phb_present"] is True
     assert entries["d02_later_restart"]["direct_phb_shape_valid"] is True
     assert entries["d02_later_restart"]["suitable_for_start_time_truth"] is False
+
+
+def test_pressure_diagnostics_missing_optional_source_reports_not_requested(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "wrfinput_d01"
+    reference = tmp_path / "reference_end.nc"
+    candidate = tmp_path / "candidate.nc"
+    _write_source(source)
+    reference_p = np.full((2, 2, 4), 100.0)
+    candidate_p = reference_p.copy()
+    candidate_p[:, :, 3] += 2.0
+    _write_wrfout(reference, {"P": reference_p})
+    _write_wrfout(candidate, {"P": candidate_p}, attrs=_pressure_attrs())
+
+    payload = json.loads(
+        report_to_json(
+            audit_pressure_refresh_sources(
+                [_entry("d01_wrfinput", "d01", source)],
+                pressure_diagnostic=PressureDiagnosticRequest(
+                    reference_end_path=str(reference),
+                    candidate_path=str(candidate),
+                ),
+            )
+        )
+    )
+
+    diagnostics = payload["pressure_diagnostics"]
+    assert diagnostics["status"] == "computed"
+    assert diagnostics["candidate_model_pass"] == "not_applicable"
+    assert diagnostics["evolution_from_source_start"]["status"] == "not_requested"
+    assert diagnostics["evolution_from_source_start"]["diagnostic_only"] is True
+    assert diagnostics["evolution_from_source_start"]["source_start"] is None
+    assert diagnostics["target_region_p"]["aggregate"]["valid_count"] == 4
+    assert diagnostics["target_region_p"]["per_vertical_level"][0]["valid_count"] == 2
+
+
+def test_pressure_diagnostics_ranks_worst_vertical_levels(tmp_path: Path) -> None:
+    source = tmp_path / "wrfinput_d01"
+    reference = tmp_path / "reference_end.nc"
+    candidate = tmp_path / "candidate.nc"
+    start = tmp_path / "source_start.nc"
+    _write_source(source)
+    reference_p = np.full((3, 2, 4), 100.0)
+    candidate_p = reference_p.copy()
+    candidate_p[0, :, 3] += 1.0
+    candidate_p[1, :, 3] += 5.0
+    candidate_p[2, :, 3] -= 9.0
+    source_p = reference_p - 10.0
+    _write_wrfout(reference, {"P": reference_p})
+    _write_wrfout(candidate, {"P": candidate_p}, attrs=_pressure_attrs())
+    _write_wrfout(start, {"P": source_p})
+
+    payload = json.loads(
+        report_to_json(
+            audit_pressure_refresh_sources(
+                [_entry("d01_wrfinput", "d01", source)],
+                pressure_diagnostic=PressureDiagnosticRequest(
+                    reference_end_path=str(reference),
+                    candidate_path=str(candidate),
+                    source_start_path=str(start),
+                    worst_level_count=2,
+                ),
+            )
+        )
+    )
+
+    target_p = payload["pressure_diagnostics"]["target_region_p"]
+    assert [level["level_index"] for level in target_p["worst_levels_by_rmse"]] == [
+        2,
+        1,
+    ]
+    assert [
+        level["level_index"] for level in target_p["worst_levels_by_bias_magnitude"]
+    ] == [2, 1]
+    levels = target_p["per_vertical_level"]
+    assert math.isclose(levels[2]["rmse"], 9.0)
+    assert math.isclose(levels[2]["mean_bias"], -9.0)
+    assert math.isclose(levels[2]["mean_bias_magnitude"], 9.0)
+
+    evolution = payload["pressure_diagnostics"]["evolution_from_source_start"]
+    assert evolution["status"] == "available"
+    assert evolution["candidate_model_pass"] == "not_applicable"
+    assert math.isclose(
+        evolution["reference_end_vs_source_start"]["mean_bias"],
+        10.0,
+    )
+    assert len(evolution["per_vertical_level"]) == 3
+
+
+def test_pressure_diagnostics_disposition_is_diagnostic_only(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "wrfinput_d01"
+    reference = tmp_path / "reference_end.nc"
+    candidate = tmp_path / "candidate.nc"
+    _write_source(source)
+    p = np.full((1, 2, 4), 100.0)
+    _write_wrfout(reference, {"P": p})
+    _write_wrfout(candidate, {"P": p}, attrs=_pressure_attrs())
+
+    payload = json.loads(
+        report_to_json(
+            audit_pressure_refresh_sources(
+                [_entry("d01_wrfinput", "d01", source)],
+                pressure_diagnostic=PressureDiagnosticRequest(
+                    reference_end_path=str(reference),
+                    candidate_path=str(candidate),
+                ),
+            )
+        )
+    )
+
+    assert payload["diagnostic_only"] is True
+    assert payload["candidate_model_pass"] == "not_applicable"
+    assert payload["summary"]["diagnostic_only"] is True
+    assert payload["summary"]["candidate_model_pass"] == "not_applicable"
+    assert payload["summary"]["pressure_diagnostics_status"] == "computed"
+    assert payload["pressure_diagnostics"]["diagnostic_only"] is True
+    assert payload["pressure_diagnostics"]["candidate_model_pass"] == "not_applicable"
+    assert (
+        payload["pressure_diagnostics"]["metadata"]["disposition"][
+            "candidate_model_pass"
+        ]
+        == "not_applicable"
+    )
+
+
+def test_direct_script_help_invocation_uses_project_import_path() -> None:
+    environment = {
+        **os.environ,
+        "UV_CACHE_DIR": ".uv-cache",
+        "UV_PYTHON_INSTALL_DIR": ".uv-python",
+    }
+
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "tools/audit_pressure_refresh_sources.py",
+            "--help",
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert "--manifest" in completed.stdout
+    assert "ModuleNotFoundError" not in completed.stderr
 
 
 def test_main_reads_manifest_and_writes_json(tmp_path: Path) -> None:

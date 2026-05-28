@@ -1023,6 +1023,43 @@ artifact into a gate candidate. The hidden pressure-refresh seam remains
 diagnostic-only, non-gate, and non-integrator output, and audit tools remain
 observation-only rather than candidate producers.
 
+## Round D56 Diagnostic Continuation
+
+D55 integration commit `cc39cdb` preserves the same compatibility state after
+full validation: CMake build passed, CTest passed `29/29`, and pytest passed
+`141/141`. The integrated outcome is still a failed strict `00:10` gate, not a
+compatibility pass.
+
+The pressure formula/source audit remains diagnostic-only. The refreshed
+target-region perturbation pressure dominates the `P` failure: global `P`
+normalized RMSE is `6.334952`, target-region `P` normalized RMSE is
+`10.335362`, non-target `P` normalized RMSE is `0.338162`, target error
+fraction is `0.998219`, and target bias is about `-805 Pa`. Full-pressure
+normalized RMSE may look small because full pressure has a much larger
+reference scale, but the raw RMSE is nearly unchanged, so full pressure cannot
+replace strict perturbation-pressure `P` gate evidence. The candidate `P` is
+not close to start `P`, so the failure is not a simple persistence baseline.
+
+The selected-field state audit also remains diagnostic-only. The strict gate's
+first failed variable is still `U`; the selected-field failures remain `U`
+normalized RMSE `0.117875`, `V` `0.134244`, and `MU` `0.133382`. Target-region
+error fractions below `0.5`, together with candidate fields that are not close
+to the start state, point to a broader selected-field and dynamics gap rather
+than an isolated exposed-cell interpolation problem.
+
+D56 compatibility work should continue with observation-only diagnostics:
+
+- a vertical/source-level target-region pressure audit for the refreshed `P`
+  source terms, levels, constants, and target mask;
+- a selected-field evolution audit comparing candidate evolution against WRF
+  reference evolution from the shared start state.
+
+These audits may attribute errors but must not generate candidates, patch
+candidate fields, tune formula output from reference-end truth, or promote
+diagnostic/probe/hidden-seam artifacts into gate evidence. The validation
+sequence remains stopped at `2025-07-26_00:10:00`; no `00:20` progression is
+compatible until the strict `00:10` gate passes.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

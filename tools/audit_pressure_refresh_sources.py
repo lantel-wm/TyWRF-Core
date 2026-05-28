@@ -6,10 +6,25 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, dataclass
 import json
+import math
 from pathlib import Path
+import sys
 from typing import Any, Iterable
 
 import netCDF4
+import numpy as np
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.audit_pressure_refresh_candidate import (
+    _candidate_metadata,
+    _infer_target_region,
+    _metrics_to_dict,
+    _read_variable_data,
+    _region_mask_for_data,
+    error_metrics,
+)
 
 
 REQUIRED_NAMES = ("P_TOP", "C3F", "C4F", "C3H", "C4H", "ALB")
@@ -81,8 +96,21 @@ class SourceAuditEntry:
 @dataclass(frozen=True)
 class PressureRefreshSourceAudit:
     status: str
+    diagnostic_only: bool
+    candidate_model_pass: str
     summary: dict[str, Any]
     entries: list[SourceAuditEntry]
+    pressure_diagnostics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PressureDiagnosticRequest:
+    reference_end_path: str
+    candidate_path: str
+    source_start_path: str | None = None
+    time_index: int = -1
+    source_time_index: int = -1
+    worst_level_count: int = 5
 
 
 def _as_bool(value: Any) -> bool:
@@ -465,8 +493,379 @@ def audit_source_entry(entry: SourceEntry) -> SourceAuditEntry:
     )
 
 
-def audit_pressure_refresh_sources(entries: Iterable[SourceEntry]) -> PressureRefreshSourceAudit:
+def _finite_bias_mean(
+    reference: np.ndarray,
+    candidate: np.ndarray,
+    *,
+    selection_mask: np.ndarray,
+) -> float | None:
+    ref_values = np.ma.asarray(reference, dtype=np.float64)
+    cand_values = np.ma.asarray(candidate, dtype=np.float64)
+    ref_mask = np.ma.getmaskarray(np.ma.masked_invalid(ref_values))
+    cand_mask = np.ma.getmaskarray(np.ma.masked_invalid(cand_values))
+    selected = np.asarray(selection_mask, dtype=bool)
+    if selected.shape != ref_values.shape:
+        selected = np.broadcast_to(selected, ref_values.shape)
+    diff = np.asarray(cand_values.filled(np.nan) - ref_values.filled(np.nan))
+    finite = np.isfinite(diff) & ~ref_mask & ~cand_mask & selected
+    if not np.any(finite):
+        return None
+    return float(np.mean(diff[finite]))
+
+
+def _metrics_with_bias(
+    reference: np.ndarray,
+    candidate: np.ndarray,
+    *,
+    selection_mask: np.ndarray,
+) -> dict[str, Any]:
+    metrics = error_metrics(reference, candidate, selection_mask=selection_mask)
+    mean_bias = _finite_bias_mean(
+        reference,
+        candidate,
+        selection_mask=selection_mask,
+    )
+    return {
+        **_metrics_to_dict(metrics),
+        "mean_bias": mean_bias,
+        "mean_bias_magnitude": None if mean_bias is None else abs(mean_bias),
+    }
+
+
+def _read_pressure(dataset: netCDF4.Dataset, *, time_index: int) -> np.ndarray:
+    if "P" not in dataset.variables:
+        raise ValueError("P is missing")
+    values = np.asarray(
+        _read_variable_data(dataset, "P", time_index=time_index),
+        dtype=np.float64,
+    )
+    if values.ndim < 3:
+        raise ValueError(f"P has shape {values.shape}; expected at least 3 dimensions")
+    return values
+
+
+def _level_slice(data: np.ndarray, level_index: int) -> np.ndarray:
+    return np.take(data, level_index, axis=-3)
+
+
+def _finite_sort_key(value: Any) -> tuple[int, float]:
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return (0, -float(value))
+    return (1, 0.0)
+
+
+def _worst_levels(
+    levels: list[dict[str, Any]],
+    metric_name: str,
+    *,
+    count: int,
+    absolute: bool = False,
+) -> list[dict[str, Any]]:
+    def key(level: dict[str, Any]) -> tuple[int, float]:
+        value = level.get(metric_name)
+        if absolute and isinstance(value, (int, float)):
+            value = abs(float(value))
+        return _finite_sort_key(value)
+
+    return [
+        {
+            "level_index": level["level_index"],
+            metric_name: level.get(metric_name),
+            "rmse": level.get("rmse"),
+            "normalized_rmse": level.get("normalized_rmse"),
+            "mean_bias": level.get("mean_bias"),
+            "mean_bias_magnitude": level.get("mean_bias_magnitude"),
+            "max_abs_error": level.get("max_abs_error"),
+            "valid_count": level.get("valid_count"),
+        }
+        for level in sorted(levels, key=key)[: max(0, count)]
+    ]
+
+
+def _per_vertical_target_metrics(
+    reference_p: np.ndarray,
+    candidate_p: np.ndarray,
+    mask_2d: np.ndarray,
+) -> list[dict[str, Any]]:
+    levels = []
+    vertical_count = int(reference_p.shape[-3])
+    for level_index in range(vertical_count):
+        reference_level = _level_slice(reference_p, level_index)
+        candidate_level = _level_slice(candidate_p, level_index)
+        level_metrics = _metrics_with_bias(
+            reference_level,
+            candidate_level,
+            selection_mask=mask_2d,
+        )
+        levels.append({"level_index": level_index, **level_metrics})
+    return levels
+
+
+def _evolution_ratio(
+    candidate_metrics: dict[str, Any],
+    reference_metrics: dict[str, Any],
+) -> float | None:
+    candidate_rmse = candidate_metrics.get("rmse")
+    reference_rmse = reference_metrics.get("rmse")
+    if not isinstance(candidate_rmse, (int, float)) or not isinstance(
+        reference_rmse,
+        (int, float),
+    ):
+        return None
+    if not math.isfinite(float(candidate_rmse)) or not math.isfinite(
+        float(reference_rmse)
+    ):
+        return None
+    if float(reference_rmse) == 0.0:
+        return 0.0 if float(candidate_rmse) == 0.0 else math.inf
+    return float(candidate_rmse) / float(reference_rmse)
+
+
+def _target_p_evolution_summary(
+    source_start_p: np.ndarray,
+    reference_p: np.ndarray,
+    candidate_p: np.ndarray,
+    target_mask: np.ndarray,
+) -> dict[str, Any]:
+    if source_start_p.shape != reference_p.shape:
+        return {
+            "status": "shape_mismatch",
+            "diagnostic_only": True,
+            "candidate_model_pass": "not_applicable",
+            "source_start_shape": tuple(int(value) for value in source_start_p.shape),
+            "reference_shape": tuple(int(value) for value in reference_p.shape),
+            "message": "source/start P shape differs from reference-end P shape",
+        }
+
+    expanded_mask = _region_mask_for_data(reference_p, target_mask)
+    candidate_vs_source = _metrics_with_bias(
+        source_start_p,
+        candidate_p,
+        selection_mask=expanded_mask,
+    )
+    reference_vs_source = _metrics_with_bias(
+        source_start_p,
+        reference_p,
+        selection_mask=expanded_mask,
+    )
+    per_level = []
+    for level_index in range(int(reference_p.shape[-3])):
+        source_level = _level_slice(source_start_p, level_index)
+        reference_level = _level_slice(reference_p, level_index)
+        candidate_level = _level_slice(candidate_p, level_index)
+        candidate_level_metrics = _metrics_with_bias(
+            source_level,
+            candidate_level,
+            selection_mask=target_mask,
+        )
+        reference_level_metrics = _metrics_with_bias(
+            source_level,
+            reference_level,
+            selection_mask=target_mask,
+        )
+        per_level.append(
+            {
+                "level_index": level_index,
+                "candidate_vs_source_start": candidate_level_metrics,
+                "reference_end_vs_source_start": reference_level_metrics,
+                "candidate_evolution_rmse_fraction_of_reference": _evolution_ratio(
+                    candidate_level_metrics,
+                    reference_level_metrics,
+                ),
+            }
+        )
+
+    return {
+        "status": "available",
+        "diagnostic_only": True,
+        "candidate_model_pass": "not_applicable",
+        "candidate_vs_source_start": candidate_vs_source,
+        "reference_end_vs_source_start": reference_vs_source,
+        "candidate_evolution_rmse_fraction_of_reference": _evolution_ratio(
+            candidate_vs_source,
+            reference_vs_source,
+        ),
+        "per_vertical_level": per_level,
+        "message": (
+            "source/start P is used only for diagnostic evolution comparison; "
+            "candidate values are never generated from reference-end truth"
+        ),
+    }
+
+
+def _pressure_diagnostics_not_requested() -> dict[str, Any]:
+    return {
+        "status": "not_requested",
+        "diagnostic_only": True,
+        "candidate_model_pass": "not_applicable",
+        "message": "reference-end and candidate files were not provided",
+    }
+
+
+def audit_target_region_pressure_diagnostics(
+    request: PressureDiagnosticRequest,
+) -> dict[str, Any]:
+    try:
+        with netCDF4.Dataset(request.reference_end_path) as reference_end, netCDF4.Dataset(
+            request.candidate_path
+        ) as candidate:
+            metadata = _candidate_metadata(candidate)
+            reference_p = _read_pressure(reference_end, time_index=request.time_index)
+            candidate_p = _read_pressure(candidate, time_index=request.time_index)
+            if reference_p.shape != candidate_p.shape:
+                return {
+                    "status": "shape_mismatch",
+                    "diagnostic_only": True,
+                    "candidate_model_pass": "not_applicable",
+                    "reference_end": request.reference_end_path,
+                    "candidate": request.candidate_path,
+                    "reference_shape": tuple(int(value) for value in reference_p.shape),
+                    "candidate_shape": tuple(int(value) for value in candidate_p.shape),
+                    "metadata": metadata,
+                    "message": "candidate P shape differs from reference-end P shape",
+                }
+
+            horizontal_shape = (int(reference_p.shape[-2]), int(reference_p.shape[-1]))
+            region = _infer_target_region(candidate, horizontal_shape)
+            public_region = {key: value for key, value in region.items() if key != "mask"}
+            mask_2d = region.get("mask")
+            if (
+                region.get("status") not in {"available", "available_count_mismatch"}
+                or not isinstance(mask_2d, np.ndarray)
+            ):
+                return {
+                    "status": "not_available",
+                    "diagnostic_only": True,
+                    "candidate_model_pass": "not_applicable",
+                    "reference_end": request.reference_end_path,
+                    "candidate": request.candidate_path,
+                    "metadata": metadata,
+                    "region": public_region,
+                    "message": region.get(
+                        "message",
+                        "target region cannot be inferred from candidate metadata",
+                    ),
+                }
+
+            target_mask = _region_mask_for_data(reference_p, mask_2d)
+            aggregate = _metrics_with_bias(
+                reference_p,
+                candidate_p,
+                selection_mask=target_mask,
+            )
+            levels = _per_vertical_target_metrics(reference_p, candidate_p, mask_2d)
+
+            if request.source_start_path is None:
+                evolution = {
+                    "status": "not_requested",
+                    "diagnostic_only": True,
+                    "source_start": None,
+                    "candidate_model_pass": "not_applicable",
+                    "message": "source/start file was not provided",
+                }
+            else:
+                with netCDF4.Dataset(request.source_start_path) as source_start:
+                    source_start_p = _read_pressure(
+                        source_start,
+                        time_index=request.source_time_index,
+                    )
+                evolution = {
+                    "source_start": request.source_start_path,
+                    **_target_p_evolution_summary(
+                        source_start_p,
+                        reference_p,
+                        candidate_p,
+                        mask_2d,
+                    ),
+                    "diagnostic_only": True,
+                    "candidate_model_pass": "not_applicable",
+                }
+
+    except (OSError, RuntimeError, ValueError, IndexError) as exc:
+        return {
+            "status": "error",
+            "diagnostic_only": True,
+            "candidate_model_pass": "not_applicable",
+            "reference_end": request.reference_end_path,
+            "candidate": request.candidate_path,
+            "source_start": request.source_start_path,
+            "message": str(exc),
+        }
+
+    return {
+        "status": "computed",
+        "diagnostic_only": True,
+        "candidate_model_pass": "not_applicable",
+        "reference_end": request.reference_end_path,
+        "candidate": request.candidate_path,
+        "source_start": request.source_start_path,
+        "time_index": request.time_index,
+        "source_time_index": request.source_time_index,
+        "metadata": metadata,
+        "region": public_region,
+        "target_region_p": {
+            "aggregate": aggregate,
+            "per_vertical_level": levels,
+            "worst_levels_by_rmse": _worst_levels(
+                levels,
+                "rmse",
+                count=request.worst_level_count,
+            ),
+            "worst_levels_by_bias_magnitude": _worst_levels(
+                levels,
+                "mean_bias_magnitude",
+                count=request.worst_level_count,
+            ),
+        },
+        "evolution_from_source_start": evolution,
+        "message": (
+            "diagnostic-only target-region P source audit; reference-end comparisons "
+            "localize errors and never produce gate passes"
+        ),
+    }
+
+
+def _pressure_diagnostic_request_from_manifest(
+    manifest: dict[str, Any],
+) -> PressureDiagnosticRequest | None:
+    raw = manifest.get("pressure_diagnostics")
+    if raw is None:
+        raw = manifest.get("target_region_pressure_diagnostics")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("pressure_diagnostics must be an object when provided")
+
+    reference = raw.get("reference_end", raw.get("reference_end_path"))
+    candidate = raw.get("candidate", raw.get("candidate_path"))
+    if reference is None or candidate is None:
+        raise ValueError(
+            "pressure_diagnostics requires reference_end and candidate paths"
+        )
+    source_start = raw.get(
+        "source_start",
+        raw.get("source_start_path", raw.get("candidate_start", raw.get("start_path"))),
+    )
+    return PressureDiagnosticRequest(
+        reference_end_path=str(reference),
+        candidate_path=str(candidate),
+        source_start_path=None if source_start is None else str(source_start),
+        time_index=int(raw.get("time_index", -1)),
+        source_time_index=int(raw.get("source_time_index", raw.get("start_time_index", -1))),
+        worst_level_count=int(raw.get("worst_level_count", 5)),
+    )
+
+
+def audit_pressure_refresh_sources(
+    entries: Iterable[SourceEntry],
+    pressure_diagnostic: PressureDiagnosticRequest | None = None,
+) -> PressureRefreshSourceAudit:
     audited_entries = [audit_source_entry(entry) for entry in entries]
+    pressure_diagnostics = (
+        _pressure_diagnostics_not_requested()
+        if pressure_diagnostic is None
+        else audit_target_region_pressure_diagnostics(pressure_diagnostic)
+    )
     counts = {
         "ok_count": sum(entry.status == "ok" for entry in audited_entries),
         "missing_count": sum(entry.status == "missing" for entry in audited_entries),
@@ -530,9 +929,14 @@ def audit_pressure_refresh_sources(entries: Iterable[SourceEntry]) -> PressureRe
     )
     return PressureRefreshSourceAudit(
         status="failed" if failed else "ok",
+        diagnostic_only=True,
+        candidate_model_pass="not_applicable",
         summary={
             "entry_count": len(audited_entries),
             **counts,
+            "diagnostic_only": True,
+            "candidate_model_pass": "not_applicable",
+            "pressure_diagnostics_status": pressure_diagnostics["status"],
             "d02_alb_blocker": bool(d02_alb_blockers),
             "d02_alb_blocker_entries": d02_alb_blockers,
             "base_state_reconstruction_required_inputs": list(
@@ -582,16 +986,72 @@ def audit_pressure_refresh_sources(entries: Iterable[SourceEntry]) -> PressureRe
             else None,
         },
         entries=audited_entries,
+        pressure_diagnostics=pressure_diagnostics,
     )
 
 
 def report_to_json(report: PressureRefreshSourceAudit, *, pretty: bool = False) -> str:
-    return json.dumps(asdict(report), indent=2 if pretty else None)
+    return json.dumps(
+        _strict_json_value(report),
+        indent=2 if pretty else None,
+        allow_nan=False,
+    )
+
+
+def _strict_json_value(value: Any) -> Any:
+    if hasattr(value, "__dataclass_fields__") and not isinstance(value, type):
+        return _strict_json_value(asdict(value))
+    if isinstance(value, dict):
+        return {key: _strict_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_strict_json_value(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, np.ndarray):
+        return _strict_json_value(value.tolist())
+    if isinstance(value, np.generic):
+        return _strict_json_value(value.item())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True, help="JSON manifest to audit")
+    parser.add_argument(
+        "--reference-end",
+        type=Path,
+        help="Optional WRF reference-end wrfout file for target-region P diagnostics",
+    )
+    parser.add_argument(
+        "--candidate",
+        type=Path,
+        help="Optional TyWRF candidate wrfout file for target-region P diagnostics",
+    )
+    parser.add_argument(
+        "--source-start",
+        type=Path,
+        help="Optional pressure metadata/source/start file for evolution diagnostics",
+    )
+    parser.add_argument(
+        "--time-index",
+        type=int,
+        default=None,
+        help="Time index for reference-end and candidate P diagnostics",
+    )
+    parser.add_argument(
+        "--source-time-index",
+        type=int,
+        default=None,
+        help="Time index for optional source/start P diagnostics",
+    )
+    parser.add_argument(
+        "--worst-level-count",
+        type=int,
+        default=None,
+        help="Number of worst vertical levels to include in diagnostic rankings",
+    )
     parser.add_argument("--output", type=Path, help="Write audit JSON to this path")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
     return parser
@@ -602,7 +1062,70 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-        report = audit_pressure_refresh_sources(entries_from_manifest(manifest))
+        pressure_diagnostic = _pressure_diagnostic_request_from_manifest(manifest)
+        if args.reference_end is not None or args.candidate is not None:
+            if args.reference_end is None or args.candidate is None:
+                raise ValueError("--reference-end and --candidate must be provided together")
+            pressure_diagnostic = PressureDiagnosticRequest(
+                reference_end_path=str(args.reference_end),
+                candidate_path=str(args.candidate),
+                source_start_path=(
+                    None if args.source_start is None else str(args.source_start)
+                ),
+                time_index=(
+                    args.time_index
+                    if args.time_index is not None
+                    else (
+                        pressure_diagnostic.time_index
+                        if pressure_diagnostic is not None
+                        else -1
+                    )
+                ),
+                source_time_index=(
+                    args.source_time_index
+                    if args.source_time_index is not None
+                    else (
+                        pressure_diagnostic.source_time_index
+                        if pressure_diagnostic is not None
+                        else -1
+                    )
+                ),
+                worst_level_count=(
+                    args.worst_level_count
+                    if args.worst_level_count is not None
+                    else (
+                        pressure_diagnostic.worst_level_count
+                        if pressure_diagnostic is not None
+                        else 5
+                    )
+                ),
+            )
+        elif pressure_diagnostic is not None:
+            if args.time_index is not None:
+                pressure_diagnostic = PressureDiagnosticRequest(
+                    **{
+                        **asdict(pressure_diagnostic),
+                        "time_index": args.time_index,
+                    }
+                )
+            if args.source_time_index is not None:
+                pressure_diagnostic = PressureDiagnosticRequest(
+                    **{
+                        **asdict(pressure_diagnostic),
+                        "source_time_index": args.source_time_index,
+                    }
+                )
+            if args.worst_level_count is not None:
+                pressure_diagnostic = PressureDiagnosticRequest(
+                    **{
+                        **asdict(pressure_diagnostic),
+                        "worst_level_count": args.worst_level_count,
+                    }
+                )
+        report = audit_pressure_refresh_sources(
+            entries_from_manifest(manifest),
+            pressure_diagnostic=pressure_diagnostic,
+        )
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         parser.error(str(exc))
 
