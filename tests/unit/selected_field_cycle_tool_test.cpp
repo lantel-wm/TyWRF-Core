@@ -515,32 +515,39 @@ void assert_contains_in_order(
 void assert_selected_field_timeline_attrs(
     const int file_id,
     const bool pressure_refresh,
-    const bool experimental_pressure_refresh) {
-  constexpr std::string_view expected_names =
-      "cycle_start,move_from_to_parent_start,overlap_remap,exchange_plan_build,"
-      "parent_interpolation,selected_field_change_summary,static_refresh,"
-      "pressure_refresh_readiness,pressure_refresh_apply,cycle_end,"
-      "output_write_preparation";
+    const bool experimental_pressure_refresh,
+    const bool pressure_column_probe = false) {
+  const std::string expected_names =
+      std::string(
+          "cycle_start,move_from_to_parent_start,overlap_remap,exchange_plan_build,"
+          "parent_interpolation,selected_field_change_summary,static_refresh,"
+          "pressure_refresh_readiness,pressure_refresh_apply,") +
+      (pressure_column_probe ? "pressure_column_probe," : "") +
+      "cycle_end,output_write_preparation";
   assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_VERSION") == "runtime_v0");
   assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY") == "true");
-  assert(read_int_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT") == 11);
+  assert(
+      read_int_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT") ==
+      (pressure_column_probe ? 12 : 11));
   assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES") == expected_names);
   const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
-  assert_contains_in_order(
-      events,
-      {
-          ":cycle_start(",
-          ":move_from_to_parent_start(",
-          ":overlap_remap(",
-          ":exchange_plan_build(",
-          ":parent_interpolation(",
-          ":selected_field_change_summary(",
-          ":static_refresh(",
-          ":pressure_refresh_readiness(",
-          ":pressure_refresh_apply(",
-          ":cycle_end(",
-          ":output_write_preparation(",
-      });
+  std::vector<std::string_view> expected_order = {
+      ":cycle_start(",
+      ":move_from_to_parent_start(",
+      ":overlap_remap(",
+      ":exchange_plan_build(",
+      ":parent_interpolation(",
+      ":selected_field_change_summary(",
+      ":static_refresh(",
+      ":pressure_refresh_readiness(",
+      ":pressure_refresh_apply(",
+  };
+  if (pressure_column_probe) {
+    expected_order.push_back(":pressure_column_probe(");
+  }
+  expected_order.push_back(":cycle_end(");
+  expected_order.push_back(":output_write_preparation(");
+  assert_contains_in_order(events, expected_order);
   assert(timeline_field_value(events, "cycle_start", "cycle_start") == kCycleStart);
   assert(timeline_field_value(events, "cycle_start", "cycle_end") == kTenMinuteEnd);
   assert(timeline_field_value(events, "cycle_end", "cycle_start") == kCycleStart);
@@ -607,6 +614,11 @@ void assert_selected_field_timeline_attrs(
     assert(timeline_field_value(events, "pressure_refresh_apply", "applied") == "false");
     assert(timeline_field_value(events, "pressure_refresh_apply", "status") == "skipped");
   }
+  if (pressure_column_probe) {
+    assert(timeline_field_value(events, "pressure_column_probe", "enabled") == "true");
+    assert(timeline_field_value(events, "pressure_column_probe", "evidence_only") == "true");
+    assert(timeline_u64_field(events, "pressure_column_probe", "record_count") > 0);
+  }
   assert(
       timeline_field_value(events, "output_write_preparation", "metadata_write") == "pending");
   (void)experimental_pressure_refresh;
@@ -669,7 +681,8 @@ void assert_successful_candidate(
     const std::filesystem::path& output,
     const bool pressure_refresh = false,
     const std::filesystem::path& pressure_refresh_metadata_source = {},
-    const bool experimental_pressure_refresh = false) {
+    const bool experimental_pressure_refresh = false,
+    const bool pressure_column_probe = false) {
   int file_id = -1;
   check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open output");
   assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ONLY") ==
@@ -764,7 +777,15 @@ void assert_successful_candidate(
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
   }
-  assert_selected_field_timeline_attrs(file_id, pressure_refresh, experimental_pressure_refresh);
+  if (pressure_column_probe) {
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_VERSION") == "runtime_v0");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_ENABLED") == "true");
+    assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_EVIDENCE_ONLY") == "true");
+  } else {
+    assert(!has_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_ENABLED"));
+  }
+  assert_selected_field_timeline_attrs(
+      file_id, pressure_refresh, experimental_pressure_refresh, pressure_column_probe);
   const auto state_variables = read_text_attr(file_id, "TYWRF_STATE_VARIABLES");
   assert(contains_csv_value(state_variables, "PB"));
   assert(contains_csv_value(state_variables, "PHB"));
@@ -864,6 +885,86 @@ void assert_successful_candidate(
   expect_close(read_2d_value(file_id, "RAINC", 9, 9), linear_2d(9, 9, 160'000.0F, 1.0F, 10.0F), "RAINC preserved");
   expect_close(read_2d_value(file_id, "RAINNC", 9, 9), linear_2d(9, 9, 170'000.0F, 1.0F, 10.0F), "RAINNC preserved");
   check_nc(nc_close(file_id), "close output");
+}
+
+void assert_pressure_column_probe_output(
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path,
+    const bool pressure_refresh) {
+  int file_id = -1;
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open probe output");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_VERSION") == "runtime_v0");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_ENABLED") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_EVIDENCE_ONLY") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_INDEX_BASE") ==
+      "zero_based_mass_grid");
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_COLUMN_COUNT") == 1);
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_LEVEL_COUNT") == 2);
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_PHASE_COUNT") == 2);
+  assert(read_int_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_RECORD_COUNT") == 4);
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_COLUMNS") == "9,9");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_LEVELS") == "0,1");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_PHASES") ==
+      (pressure_refresh ? "post_static_refresh,post_pressure_refresh"
+                        : "post_static_refresh,pressure_refresh_skipped"));
+  const auto fields = read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_FIELDS");
+  assert(contains_csv_value(fields, "P"));
+  assert(contains_csv_value(fields, "PB"));
+  assert(contains_csv_value(fields, "P+PB"));
+  assert(contains_csv_value(fields, "MU"));
+  assert(contains_csv_value(fields, "MUB"));
+  assert(contains_csv_value(fields, "MU+MUB"));
+  assert(contains_csv_value(fields, "PH"));
+  assert(contains_csv_value(fields, "PHB"));
+  assert(contains_csv_value(fields, "PH+PHB"));
+  assert(contains_csv_value(fields, "T"));
+  assert(contains_csv_value(fields, "QVAPOR"));
+  assert(contains_csv_value(fields, "HGT"));
+  const auto not_available =
+      read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_NOT_AVAILABLE");
+  assert(contains_csv_value(not_available, "ALB"));
+  assert(contains_csv_value(not_available, "C3F"));
+  assert(contains_csv_value(not_available, "C4F"));
+  assert(contains_csv_value(not_available, "C3H"));
+  assert(contains_csv_value(not_available, "C4H"));
+  assert(contains_csv_value(not_available, "P_TOP"));
+  assert(contains_csv_value(not_available, "theta_m"));
+  const auto values = read_text_attr(file_id, "TYWRF_PRESSURE_COLUMN_PROBE_VALUES");
+  assert(values.find("phase=post_static_refresh;i=9;j=9;k=0") != std::string::npos);
+  assert(values.find("phase=post_static_refresh;i=9;j=9;k=1") != std::string::npos);
+  assert(
+      values.find(pressure_refresh ? "phase=post_pressure_refresh;i=9;j=9;k=1"
+                                   : "phase=pressure_refresh_skipped;i=9;j=9;k=1") !=
+      std::string::npos);
+  assert(values.find(";P=") != std::string::npos);
+  assert(values.find(";PB=") != std::string::npos);
+  assert(values.find(";P_PLUS_PB=") != std::string::npos);
+  assert(values.find(";MU=") != std::string::npos);
+  assert(values.find(";MUB=") != std::string::npos);
+  assert(values.find(";MU_PLUS_MUB=") != std::string::npos);
+  assert(values.find(";PH=") != std::string::npos);
+  assert(values.find(";PHB=") != std::string::npos);
+  assert(values.find(";PH_PLUS_PHB=") != std::string::npos);
+  assert(values.find(";T=") != std::string::npos);
+  assert(values.find(";QVAPOR=") != std::string::npos);
+  assert(values.find(";HGT=") != std::string::npos);
+  check_nc(nc_close(file_id), "close probe output");
+
+  const auto log = read_file(log_path);
+  assert(log.find("\"pressure_column_probe_enabled\": true") != std::string::npos);
+  assert(log.find("\"pressure_column_probe_version\": \"runtime_v0\"") != std::string::npos);
+  assert(
+      log.find("\"pressure_column_probe_index_base\": \"zero_based_mass_grid\"") !=
+      std::string::npos);
+  assert(log.find("\"pressure_column_probe_column_count\": 1") != std::string::npos);
+  assert(log.find("\"pressure_column_probe_level_count\": 2") != std::string::npos);
+  assert(log.find("\"pressure_column_probe_record_count\": 4") != std::string::npos);
+  assert(log.find("\"pressure_column_probe_columns\": \"9,9\"") != std::string::npos);
+  assert(log.find("\"pressure_column_probe_levels\": \"0,1\"") != std::string::npos);
+  assert(log.find("\"pressure_column_probe_not_available\":") != std::string::npos);
+  assert(log.find("P_PLUS_PB=") != std::string::npos);
 }
 
 [[nodiscard]] std::uint64_t log_u64_field(
@@ -1013,6 +1114,42 @@ void assert_normal_pressure_refresh_apply(
   assert_successful_candidate(output, true, template_path);
 }
 
+void assert_pressure_column_probe_default_path(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path) {
+  std::filesystem::remove(output);
+  assert(!std::filesystem::exists(output));
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, output) +
+      " --pressure-column-probe 9,9 --pressure-column-levels 0,1 >" +
+      shell_quote(log_path) + " 2>&1");
+  assert(std::filesystem::exists(output));
+  assert_successful_candidate(output, false, std::filesystem::path{}, false, true);
+  assert_pressure_column_probe_output(output, log_path, false);
+}
+
+void assert_pressure_column_probe_pressure_refresh_path(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path) {
+  std::filesystem::remove(output);
+  assert(!std::filesystem::exists(output));
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, output) +
+      " --pressure-refresh --pressure-column-probe 9,9 --pressure-column-levels 0,1 >" +
+      shell_quote(log_path) + " 2>&1");
+  assert(std::filesystem::exists(output));
+  assert_successful_candidate(output, true, template_path, false, true);
+  assert_pressure_column_probe_output(output, log_path, true);
+}
+
 void assert_pressure_refresh_invalid_dry_run_fail_closed(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
@@ -1056,6 +1193,8 @@ void assert_hidden_apply_flag_absent_from_help(
   assert(status == 0);
   const auto help = read_file(help_log);
   assert(help.find("--pressure-refresh") != std::string::npos);
+  assert(help.find("--pressure-column-probe") != std::string::npos);
+  assert(help.find("--pressure-column-levels") != std::string::npos);
   assert(help.find("--experimental-pressure-refresh-apply") == std::string::npos);
 }
 
@@ -1195,6 +1334,23 @@ void run_rejection_tests(
   assert(hidden_without_pressure.find(
              "--experimental-pressure-refresh-apply requires --pressure-refresh") !=
          std::string::npos);
+
+  const std::vector<std::string> bad_probe_options = {
+      "--pressure-column-probe 9",
+      "--pressure-column-probe bad",
+      "--pressure-column-probe -1,0",
+      "--pressure-column-probe 99,99",
+      "--pressure-column-probe 9,9 --pressure-column-levels 99",
+      "--pressure-column-levels 0,1",
+  };
+  for (std::size_t index = 0; index < bad_probe_options.size(); ++index) {
+    const auto output = root / ("bad_pressure_column_probe_" + std::to_string(index));
+    const auto status = run_command_status(
+        base_command(executable, d01_start, d02_start, template_path, output) + " " +
+        bad_probe_options[index] + " >/dev/null 2>&1");
+    assert(status != 0);
+    assert(!std::filesystem::exists(output));
+  }
 }
 
 }  // namespace
@@ -1219,11 +1375,17 @@ int main(const int argc, char** argv) {
     const auto output = root / "tywrf_selected_field_d02_2025-07-26_00:10:00";
     const auto pressure_output =
         root / "tywrf_selected_field_pressure_d02_2025-07-26_00:10:00";
+    const auto pressure_column_probe_output =
+        root / "tywrf_selected_field_pressure_column_probe_d02_2025-07-26_00:10:00";
+    const auto pressure_column_probe_refresh_output =
+        root / "tywrf_selected_field_pressure_column_probe_refresh_d02_2025-07-26_00:10:00";
     const auto experimental_pressure_output =
         root / "tywrf_selected_field_experimental_pressure_d02_2025-07-26_00:10:00";
     const auto invalid_pressure_output =
         root / "tywrf_selected_field_invalid_pressure_d02_2025-07-26_00:10:00";
     const auto pressure_log = root / "pressure_refresh_normal_apply.log";
+    const auto pressure_column_probe_log = root / "pressure_column_probe.log";
+    const auto pressure_column_probe_refresh_log = root / "pressure_column_probe_refresh.log";
     const auto experimental_pressure_log = root / "pressure_refresh_experimental_apply.log";
     const auto invalid_pressure_log = root / "pressure_refresh_invalid_dry_run.log";
     create_wrf_fixture(d01_start, 10000.0, FixtureShape{8, 8}, true, true);
@@ -1259,6 +1421,20 @@ int main(const int argc, char** argv) {
         pressure_template_path,
         pressure_output,
         pressure_log);
+    assert_pressure_column_probe_default_path(
+        executable,
+        d01_start,
+        d02_start,
+        template_path,
+        pressure_column_probe_output,
+        pressure_column_probe_log);
+    assert_pressure_column_probe_pressure_refresh_path(
+        executable,
+        d01_start,
+        d02_start,
+        pressure_template_path,
+        pressure_column_probe_refresh_output,
+        pressure_column_probe_refresh_log);
     assert_experimental_pressure_refresh_apply(
         executable,
         d01_start,

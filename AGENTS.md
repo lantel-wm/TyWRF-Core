@@ -39,6 +39,10 @@ Responsibilities:
   report risks, or when integration/test/Git status changes.
 - Write `PROGRESS.md` in Chinese. It is a local progress log, should remain in
   `.gitignore`, and should not be committed.
+- Keep `PROGRESS.md` in ascending round/time order, with the newest integrated
+  state always appended at the bottom. If reversed order, insertion into older
+  rounds, or old rounds drifting to the bottom is detected, fix the ordering
+  before continuing development.
 - Commit Git changes at verified integration milestones. Do not commit raw
   subagent intermediate work before main-agent review and unified validation.
 - Prefer small, coherent commits that match completed phases or reviewed
@@ -367,6 +371,9 @@ Phase 7: Optimization Preparation
 ## Reporting Rules
 
 Keep `PROGRESS.md` current.
+
+Append each new integrated status update to the bottom of `PROGRESS.md`; do not
+insert current updates above older rounds.
 
 Each progress update should include:
 

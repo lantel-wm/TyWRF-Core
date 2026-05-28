@@ -47,6 +47,130 @@ STRICT_SELECTED_STATE_VARIABLES = frozenset(DEFAULT_TIMELINE_VARIABLES)
 LARGE_CHILD_DELTA_I = 50
 LARGE_CHILD_DELTA_J = 30
 SMALL_SHIFT_LIMIT = 5
+EXPECTED_RUNTIME_TIMELINE_ORDER_D60 = (
+    "cycle_start",
+    "move_from_to_parent_start",
+    "overlap_remap",
+    "exchange_plan_build",
+    "parent_interpolation",
+    "selected_field_change_summary",
+    "static_refresh",
+    "pressure_refresh_readiness",
+    "pressure_refresh_apply",
+    "cycle_end",
+    "output_write_preparation",
+)
+EXPECTED_RUNTIME_TIMELINE_ORDER_D61_PRESSURE_COLUMN_PROBE = (
+    "cycle_start",
+    "move_from_to_parent_start",
+    "overlap_remap",
+    "exchange_plan_build",
+    "parent_interpolation",
+    "selected_field_change_summary",
+    "static_refresh",
+    "pressure_refresh_readiness",
+    "pressure_refresh_apply",
+    "pressure_column_probe",
+    "cycle_end",
+    "output_write_preparation",
+)
+EXPECTED_RUNTIME_TIMELINE_ORDERS = (
+    EXPECTED_RUNTIME_TIMELINE_ORDER_D60,
+    EXPECTED_RUNTIME_TIMELINE_ORDER_D61_PRESSURE_COLUMN_PROBE,
+)
+RUNTIME_TIMELINE_ATTRS = (
+    "TYWRF_SELECTED_FIELD_TIMELINE_VERSION",
+    "TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY",
+    "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT",
+    "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES",
+    "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS",
+)
+RUNTIME_COUNT_PARITY_SPECS = (
+    (
+        "exchange_points",
+        "exchange_plan_build",
+        "exchange_points",
+        "TYWRF_EXPOSED_EXCHANGE_POINTS",
+    ),
+    (
+        "interpolated_points",
+        "parent_interpolation",
+        "interpolated_points",
+        "TYWRF_INTERPOLATED_POINTS",
+    ),
+    (
+        "static_overlap_cells",
+        "static_refresh",
+        "overlap_cells",
+        "TYWRF_STATIC_REFRESH_OVERLAP_CELLS",
+    ),
+    (
+        "static_exposed_cells",
+        "static_refresh",
+        "exposed_cells",
+        "TYWRF_STATIC_REFRESH_EXPOSED_CELLS",
+    ),
+    (
+        "static_hgt_parent_interpolated_cells",
+        "static_refresh",
+        "hgt_parent_interpolated_cells",
+        "TYWRF_STATIC_REFRESH_HGT_PARENT_INTERPOLATED_CELLS",
+    ),
+    (
+        "static_changed_template_points",
+        "static_refresh",
+        "changed_template_points",
+        "TYWRF_STATIC_REFRESH_CHANGED_TEMPLATE_POINTS",
+    ),
+    (
+        "pressure_refreshed_points",
+        "pressure_refresh_apply",
+        "refreshed_points",
+        "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT",
+    ),
+    (
+        "pressure_synced_pb_points",
+        "pressure_refresh_apply",
+        "synced_pb_points",
+        "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS",
+    ),
+    (
+        "pressure_synced_mub_points",
+        "pressure_refresh_apply",
+        "synced_mub_points",
+        "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS",
+    ),
+    (
+        "pressure_synced_phb_points",
+        "pressure_refresh_apply",
+        "synced_phb_points",
+        "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS",
+    ),
+    (
+        "pressure_changed_p_points",
+        "pressure_refresh_apply",
+        "changed_p_points",
+        "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS",
+    ),
+    (
+        "pressure_changed_pb_points",
+        "pressure_refresh_apply",
+        "changed_pb_points",
+        "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS",
+    ),
+    (
+        "pressure_changed_mub_points",
+        "pressure_refresh_apply",
+        "changed_mub_points",
+        "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS",
+    ),
+    (
+        "pressure_changed_phb_points",
+        "pressure_refresh_apply",
+        "changed_phb_points",
+        "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS",
+    ),
+)
 
 SOURCE_HOOKS = {
     "selected_field_tool": (
@@ -135,6 +259,7 @@ TIMELINE_ATTRS = (
     "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS",
     "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS",
     "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS",
+    *RUNTIME_TIMELINE_ATTRS,
     "I_PARENT_START",
     "J_PARENT_START",
     "DX",
@@ -176,6 +301,213 @@ def _split_csv_attr(value: Any) -> list[str]:
     if value is None:
         return []
     return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def _timeline_numeric(value: str | None) -> float | None:
+    if value is None:
+        return None
+    return _numeric_attr(value)
+
+
+def _parse_runtime_timeline_events(value: Any) -> dict[str, Any]:
+    if value is None:
+        return _report_base(
+            status="not_available",
+            raw=None,
+            events=[],
+            events_by_name={},
+            event_names=[],
+            parse_errors=[],
+            malformed=False,
+        )
+
+    raw = str(value).strip()
+    if not raw:
+        return _report_base(
+            status="malformed",
+            raw=raw,
+            events=[],
+            events_by_name={},
+            event_names=[],
+            parse_errors=["TYWRF_SELECTED_FIELD_TIMELINE_EVENTS is empty"],
+            malformed=True,
+        )
+
+    events: list[dict[str, Any]] = []
+    events_by_name: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    event_pattern = re.compile(r"^(\d+):([A-Za-z0-9_]+)\((.*)\)$")
+    for segment_index, segment in enumerate(raw.split("|"), start=1):
+        segment = segment.strip()
+        match = event_pattern.fullmatch(segment)
+        if match is None:
+            errors.append(f"event segment {segment_index} is malformed: {segment!r}")
+            continue
+
+        event_index = _integerish_attr(match.group(1))
+        event_name = match.group(2)
+        field_blob = match.group(3)
+        fields: dict[str, str] = {}
+        field_order: list[str] = []
+        if field_blob:
+            for field_segment in field_blob.split(","):
+                if "=" not in field_segment:
+                    errors.append(
+                        f"event {event_name!r} field is missing '=': {field_segment!r}"
+                    )
+                    continue
+                key, field_value = field_segment.split("=", 1)
+                key = key.strip()
+                if not key:
+                    errors.append(f"event {event_name!r} contains an empty field key")
+                    continue
+                fields[key] = field_value.strip()
+                field_order.append(key)
+
+        event = _report_base(
+            ordinal=segment_index,
+            encoded_index=event_index,
+            encoded_index_matches_order=event_index == segment_index,
+            name=event_name,
+            field_order=field_order,
+            fields=fields,
+        )
+        events.append(event)
+        events_by_name[event_name] = _report_base(
+            ordinal=segment_index,
+            encoded_index=event_index,
+            fields=fields,
+        )
+
+    ordered_names = [str(event["name"]) for event in events]
+    if any(event.get("encoded_index_matches_order") is False for event in events):
+        errors.append("one or more encoded event indexes do not match parsed order")
+
+    return _report_base(
+        status="malformed" if errors else "available",
+        raw=raw,
+        events=events,
+        events_by_name=events_by_name,
+        event_names=ordered_names,
+        parse_errors=errors,
+        malformed=bool(errors),
+    )
+
+
+def _runtime_count_parity(
+    attrs: dict[str, Any],
+    parsed_events: dict[str, Any],
+) -> dict[str, Any]:
+    events_by_name = parsed_events.get("events_by_name", {})
+    checks: dict[str, dict[str, Any]] = {}
+    mismatches: list[dict[str, Any]] = []
+    available_check_count = 0
+    for label, event_name, field_name, attr_name in RUNTIME_COUNT_PARITY_SPECS:
+        event_entry = events_by_name.get(event_name, {})
+        field_value = (event_entry.get("fields") or {}).get(field_name)
+        attr_value = attrs.get(attr_name)
+        event_number = _timeline_numeric(field_value)
+        attr_number = _numeric_attr(attr_value)
+        comparable = event_number is not None and attr_number is not None
+        consistent = (
+            None
+            if not comparable
+            else math.isclose(event_number, attr_number, rel_tol=0.0, abs_tol=0.0)
+        )
+        if comparable:
+            available_check_count += 1
+        check = _report_base(
+            status="available" if comparable else "not_available",
+            label=label,
+            event_name=event_name,
+            field_name=field_name,
+            attr_name=attr_name,
+            event_value=field_value,
+            attr_value=attr_value,
+            event_number=event_number,
+            attr_number=attr_number,
+            consistent=consistent,
+        )
+        checks[label] = check
+        if consistent is False:
+            mismatches.append(check)
+
+    return _report_base(
+        status="available" if available_check_count else "not_available",
+        checks=checks,
+        available_check_count=available_check_count,
+        mismatch_count=len(mismatches),
+        mismatches=mismatches,
+        all_available_counts_consistent=not mismatches,
+    )
+
+
+def _runtime_timeline_summary(attrs: dict[str, Any]) -> dict[str, Any]:
+    parsed_events = _parse_runtime_timeline_events(
+        attrs.get("TYWRF_SELECTED_FIELD_TIMELINE_EVENTS")
+    )
+    attr_event_count_raw = attrs.get("TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT")
+    attr_event_names_raw = attrs.get("TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES")
+    attr_event_count = _integerish_attr(
+        attr_event_count_raw
+    )
+    attr_event_names = _split_csv_attr(
+        attr_event_names_raw
+    )
+    parsed_event_names = parsed_events.get("event_names", [])
+    missing_attrs = [
+        name
+        for name in RUNTIME_TIMELINE_ATTRS
+        if attrs.get(name) is None
+    ]
+    event_count_consistent = (
+        None
+        if attr_event_count_raw is None or parsed_events["status"] == "not_available"
+        else attr_event_count == len(parsed_event_names)
+    )
+    event_names_consistent = (
+        None
+        if attr_event_names_raw is None or parsed_events["status"] == "not_available"
+        else attr_event_names == parsed_event_names
+    )
+    expected_order_match = (
+        None
+        if parsed_events["status"] == "not_available"
+        else any(
+            parsed_event_names == list(expected_order)
+            for expected_order in EXPECTED_RUNTIME_TIMELINE_ORDERS
+        )
+    )
+    parity = _runtime_count_parity(attrs, parsed_events)
+
+    if missing_attrs:
+        status = "not_available"
+    elif parsed_events["status"] == "malformed":
+        status = "malformed"
+    else:
+        status = "available"
+
+    return _report_base(
+        status=status,
+        version=attrs.get("TYWRF_SELECTED_FIELD_TIMELINE_VERSION"),
+        evidence_only=_coerce_bool(
+            attrs.get("TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY")
+        ),
+        attr_event_count=attr_event_count,
+        attr_event_names=attr_event_names,
+        missing_required_attrs=missing_attrs,
+        parsed_events=parsed_events,
+        parsed_event_count=len(parsed_event_names),
+        parsed_event_names=parsed_event_names,
+        expected_event_order=list(EXPECTED_RUNTIME_TIMELINE_ORDER_D60),
+        allowed_event_orders=[
+            list(expected_order) for expected_order in EXPECTED_RUNTIME_TIMELINE_ORDERS
+        ],
+        event_count_consistent=event_count_consistent,
+        event_names_consistent=event_names_consistent,
+        expected_order_match=expected_order_match,
+        key_count_parity=parity,
+    )
 
 
 def _read_attrs(dataset: netCDF4.Dataset) -> dict[str, Any]:
@@ -488,6 +820,7 @@ def candidate_timeline(
         selected_state_variables_without_parent_interpolation=missing_parent_interpolation,
         static_refresh=_static_refresh_summary(attrs),
         pressure_refresh=_pressure_refresh_summary(attrs),
+        runtime_timeline=_runtime_timeline_summary(attrs),
         present_metadata_attrs=sorted(attrs),
     )
 
@@ -808,6 +1141,75 @@ def risk_flags(
     movement = timeline.get("movement", {})
     child_delta = movement.get("child_delta")
     aggregate = inventory.get("aggregate_hooks", {})
+    runtime = timeline.get("runtime_timeline", {})
+    missing_runtime_attrs = runtime.get("missing_required_attrs", []) or []
+    disposition = timeline.get("disposition", {})
+    candidate_kind = str(disposition.get("candidate_kind") or "").lower()
+    new_selected_candidate = (
+        "selected_field" in candidate_kind
+        or bool(disposition.get("gate_candidate"))
+        or bool(disposition.get("integrator_output"))
+    )
+    if missing_runtime_attrs and new_selected_candidate:
+        _add_flag(
+            flags,
+            "missing_runtime_timeline_attrs_on_new_candidate",
+            "high",
+            "Selected-field candidate metadata is missing one or more D60 runtime timeline attrs.",
+            {"missing_required_attrs": missing_runtime_attrs},
+        )
+
+    parsed_events = runtime.get("parsed_events", {})
+    if parsed_events.get("malformed"):
+        _add_flag(
+            flags,
+            "malformed_runtime_timeline_string",
+            "high",
+            "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS could not be parsed cleanly.",
+            {"parse_errors": parsed_events.get("parse_errors", [])},
+        )
+
+    if runtime.get("event_count_consistent") is False:
+        _add_flag(
+            flags,
+            "runtime_timeline_event_count_mismatch",
+            "high",
+            "Runtime timeline event count attr differs from parsed event count.",
+            {
+                "attr_event_count": runtime.get("attr_event_count"),
+                "parsed_event_count": runtime.get("parsed_event_count"),
+            },
+        )
+
+    if (
+        runtime.get("expected_order_match") is False
+        or runtime.get("event_names_consistent") is False
+    ):
+        _add_flag(
+            flags,
+            "runtime_timeline_event_order_mismatch",
+            "high",
+            "Runtime timeline event order or event-name attr differs from the allowed runtime orders.",
+            {
+                "attr_event_names": runtime.get("attr_event_names"),
+                "parsed_event_names": runtime.get("parsed_event_names"),
+                "expected_event_order": runtime.get("expected_event_order"),
+                "allowed_event_orders": runtime.get("allowed_event_orders"),
+                "event_names_consistent": runtime.get("event_names_consistent"),
+                "expected_order_match": runtime.get("expected_order_match"),
+            },
+        )
+
+    runtime_parity = runtime.get("key_count_parity", {})
+    if runtime_parity.get("mismatch_count", 0):
+        _add_flag(
+            flags,
+            "runtime_count_parity_mismatch",
+            "high",
+            "Runtime timeline count fields disagree with existing NetCDF metadata attrs.",
+            {"mismatches": runtime_parity.get("mismatches", [])},
+        )
+
     if movement.get("large_movement"):
         _add_flag(
             flags,
@@ -896,7 +1298,6 @@ def risk_flags(
     diagnostics_fail = bool(prior_high_errors) or (
         "candidate_claims_gate_or_integrator_but_audits_fail" in pipeline_risk_codes
     )
-    disposition = timeline.get("disposition", {})
     if (
         diagnostics_fail
         and (disposition.get("gate_candidate") or disposition.get("integrator_output"))

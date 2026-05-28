@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -32,6 +33,8 @@ namespace {
 
 constexpr double kD02TargetDxMeters = 2000.0;
 constexpr double kD02ResolutionToleranceMeters = 0.5;
+constexpr std::size_t kMaxPressureColumnProbeColumns = 8;
+constexpr std::size_t kMaxPressureColumnProbeLevels = 16;
 
 const std::vector<std::string>& template_variable_names() {
   static const std::vector<std::string> names = {"Times", "XLAT", "XLONG", "HGT"};
@@ -51,6 +54,19 @@ const std::vector<std::string>& optional_preserved_state_variable_names() {
 
 const std::vector<std::string>& parent_interpolation_variable_names() {
   static const std::vector<std::string> names = {"U", "V", "T", "PH", "MU", "QVAPOR"};
+  return names;
+}
+
+const std::vector<std::string>& pressure_column_probe_field_names() {
+  static const std::vector<std::string> names = {
+      "P",    "PB",  "P+PB", "MU", "MUB",    "MU+MUB",
+      "PH",   "PHB", "PH+PHB", "T", "QVAPOR", "HGT"};
+  return names;
+}
+
+const std::vector<std::string>& pressure_column_probe_unavailable_names() {
+  static const std::vector<std::string> names = {
+      "ALB", "C3F", "C4F", "C3H", "C4H", "P_TOP", "theta_m"};
   return names;
 }
 
@@ -74,6 +90,9 @@ struct Options {
   bool experimental_pressure_refresh_apply = false;
   bool pretty = false;
   std::vector<std::string> variables;
+  std::vector<std::pair<std::int32_t, std::int32_t>> pressure_column_probe_columns;
+  std::vector<std::int32_t> pressure_column_probe_levels;
+  bool has_pressure_column_probe_levels = false;
 };
 
 struct Resolution {
@@ -84,6 +103,25 @@ struct Resolution {
 struct RuntimeTimelineEvent {
   std::string name;
   std::vector<std::pair<std::string, std::string>> fields;
+};
+
+struct PressureColumnObservation {
+  std::string phase;
+  std::int32_t i = 0;
+  std::int32_t j = 0;
+  std::int32_t k = 0;
+  double p = 0.0;
+  double pb = 0.0;
+  double p_plus_pb = 0.0;
+  double mu = 0.0;
+  double mub = 0.0;
+  double mu_plus_mub = 0.0;
+  double ph = 0.0;
+  double phb = 0.0;
+  double ph_plus_phb = 0.0;
+  double t = 0.0;
+  double qvapor = 0.0;
+  double hgt = 0.0;
 };
 
 struct CandidateReport {
@@ -108,6 +146,7 @@ struct CandidateReport {
   std::uint64_t pressure_refresh_changed_phb_points = 0;
   double cen_lat = 0.0;
   double cen_lon = 0.0;
+  std::vector<PressureColumnObservation> pressure_column_observations;
 };
 
 struct PressureRefreshReportParity {
@@ -275,6 +314,12 @@ Options:
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
                                   with the moved-pose T/PH and terrain producer.
+  --pressure-column-probe I,J[;I,J...]
+                                  Opt in to runtime same-column pressure telemetry for zero-based
+                                  d02 mass-grid columns. Bounded to 8 columns.
+  --pressure-column-levels K[,K...]
+                                  Zero-based mass levels for --pressure-column-probe; default is
+                                  levels 0..4 capped to the active mass-level count.
   --pretty                       Pretty-print JSON report.
   --help                         Show this help.
 
@@ -297,20 +342,41 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
   return static_cast<std::size_t>(result);
 }
 
+[[nodiscard]] std::string trim_copy(std::string token) {
+  token.erase(token.begin(), std::find_if(token.begin(), token.end(), [](const unsigned char c) {
+                return !std::isspace(c);
+              }));
+  token.erase(
+      std::find_if(token.rbegin(), token.rend(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }).base(),
+      token.end());
+  return token;
+}
+
+[[nodiscard]] std::int32_t parse_nonnegative_int32(
+    const std::string& value,
+    const std::string_view option) {
+  const auto trimmed = trim_copy(value);
+  if (trimmed.empty()) {
+    throw std::invalid_argument(std::string(option) + " expects a non-negative integer");
+  }
+  std::size_t parsed_chars = 0;
+  const auto parsed = std::stoll(trimmed, &parsed_chars);
+  if (parsed_chars != trimmed.size() || parsed < 0 ||
+      parsed > static_cast<long long>(std::numeric_limits<std::int32_t>::max())) {
+    throw std::invalid_argument(std::string(option) + " expects a non-negative integer");
+  }
+  return static_cast<std::int32_t>(parsed);
+}
+
 [[nodiscard]] std::vector<std::string> split_variables(const std::string& value) {
   std::vector<std::string> variables;
   std::size_t begin = 0;
   while (begin <= value.size()) {
     const auto end = value.find(',', begin);
-    auto token = value.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
-    token.erase(token.begin(), std::find_if(token.begin(), token.end(), [](const unsigned char c) {
-                  return !std::isspace(c);
-                }));
-    token.erase(
-        std::find_if(token.rbegin(), token.rend(), [](const unsigned char c) {
-          return !std::isspace(c);
-        }).base(),
-        token.end());
+    auto token = trim_copy(
+        value.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
     if (!token.empty()) {
       variables.push_back(token);
     }
@@ -320,6 +386,69 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
     begin = end + 1;
   }
   return variables;
+}
+
+[[nodiscard]] std::vector<std::pair<std::int32_t, std::int32_t>> parse_pressure_probe_columns(
+    const std::string& value,
+    const std::string_view option) {
+  std::vector<std::pair<std::int32_t, std::int32_t>> columns;
+  std::size_t begin = 0;
+  while (begin <= value.size()) {
+    const auto end = value.find(';', begin);
+    const auto token = trim_copy(
+        value.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
+    if (token.empty()) {
+      throw std::invalid_argument(
+          std::string(option) + " must contain zero-based I,J column pairs");
+    }
+    const auto separator = token.find(',');
+    if (separator == std::string::npos || token.find(',', separator + 1) != std::string::npos) {
+      throw std::invalid_argument(
+          std::string(option) + " must contain zero-based I,J column pairs");
+    }
+    columns.push_back({
+        parse_nonnegative_int32(token.substr(0, separator), option),
+        parse_nonnegative_int32(token.substr(separator + 1), option)});
+    if (columns.size() > kMaxPressureColumnProbeColumns) {
+      throw std::invalid_argument("--pressure-column-probe is limited to 8 columns");
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    begin = end + 1;
+  }
+  if (columns.empty()) {
+    throw std::invalid_argument(std::string(option) + " requires at least one column");
+  }
+  return columns;
+}
+
+[[nodiscard]] std::vector<std::int32_t> parse_pressure_probe_levels(
+    const std::string& value,
+    const std::string_view option) {
+  std::vector<std::int32_t> levels;
+  std::size_t begin = 0;
+  while (begin <= value.size()) {
+    const auto end = value.find(',', begin);
+    const auto token = trim_copy(
+        value.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
+    if (token.empty()) {
+      throw std::invalid_argument(
+          std::string(option) + " must contain zero-based mass levels");
+    }
+    levels.push_back(parse_nonnegative_int32(token, option));
+    if (levels.size() > kMaxPressureColumnProbeLevels) {
+      throw std::invalid_argument("--pressure-column-levels is limited to 16 levels");
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    begin = end + 1;
+  }
+  if (levels.empty()) {
+    throw std::invalid_argument(std::string(option) + " requires at least one level");
+  }
+  return levels;
 }
 
 [[nodiscard]] tywrf::nest::ParentChildPosition parse_parent_start(
@@ -403,6 +532,13 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       options.variables = split_variables(require_value(arg));
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
+    } else if (arg == "--pressure-column-probe") {
+      options.pressure_column_probe_columns =
+          parse_pressure_probe_columns(require_value(arg), arg);
+    } else if (arg == "--pressure-column-levels") {
+      options.pressure_column_probe_levels =
+          parse_pressure_probe_levels(require_value(arg), arg);
+      options.has_pressure_column_probe_levels = true;
     } else if (arg == "--experimental-pressure-refresh-apply") {
       options.experimental_pressure_refresh_apply = true;
     } else if (arg == "--pretty") {
@@ -442,6 +578,11 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
   if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
     throw std::invalid_argument(
         "--experimental-pressure-refresh-apply requires --pressure-refresh");
+  }
+  if (options.has_pressure_column_probe_levels &&
+      options.pressure_column_probe_columns.empty()) {
+    throw std::invalid_argument(
+        "--pressure-column-levels requires --pressure-column-probe");
   }
   return options;
 }
@@ -746,6 +887,196 @@ void require_finite_static_fields(const StaticFieldSet& fields) {
 }
 
 [[nodiscard]] std::string join_variables(const std::vector<std::string>& variables);
+
+[[nodiscard]] bool pressure_column_probe_enabled(const Options& options) {
+  return !options.pressure_column_probe_columns.empty();
+}
+
+void finalize_pressure_column_probe_options(Options& options, const tywrf::Grid& grid) {
+  if (!pressure_column_probe_enabled(options)) {
+    return;
+  }
+
+  const auto mass_layout = grid.mass_layout();
+  if (mass_layout.active_nx() <= 0 || mass_layout.active_ny() <= 0 ||
+      mass_layout.active_nz() <= 0) {
+    throw std::runtime_error("pressure column probe requires a positive d02 mass-grid shape");
+  }
+
+  if (!options.has_pressure_column_probe_levels) {
+    const auto default_count = std::min<std::int32_t>(5, mass_layout.active_nz());
+    options.pressure_column_probe_levels.clear();
+    for (std::int32_t k = 0; k < default_count; ++k) {
+      options.pressure_column_probe_levels.push_back(k);
+    }
+  }
+
+  for (const auto [i, j] : options.pressure_column_probe_columns) {
+    if (i >= mass_layout.active_nx() || j >= mass_layout.active_ny()) {
+      std::ostringstream message;
+      message << "--pressure-column-probe column " << i << "," << j
+              << " is outside zero-based d02 mass-grid shape "
+              << mass_layout.active_nx() << "x" << mass_layout.active_ny();
+      throw std::invalid_argument(message.str());
+    }
+  }
+  for (const auto k : options.pressure_column_probe_levels) {
+    if (k >= mass_layout.active_nz()) {
+      std::ostringstream message;
+      message << "--pressure-column-levels level " << k
+              << " is outside zero-based d02 mass-level count "
+              << mass_layout.active_nz();
+      throw std::invalid_argument(message.str());
+    }
+  }
+}
+
+[[nodiscard]] std::string join_pressure_probe_columns(
+    const std::vector<std::pair<std::int32_t, std::int32_t>>& columns) {
+  std::ostringstream joined;
+  for (std::size_t index = 0; index < columns.size(); ++index) {
+    if (index != 0) {
+      joined << ";";
+    }
+    joined << columns[index].first << "," << columns[index].second;
+  }
+  return joined.str();
+}
+
+[[nodiscard]] std::string join_pressure_probe_levels(
+    const std::vector<std::int32_t>& levels) {
+  std::ostringstream joined;
+  for (std::size_t index = 0; index < levels.size(); ++index) {
+    if (index != 0) {
+      joined << ",";
+    }
+    joined << levels[index];
+  }
+  return joined.str();
+}
+
+[[nodiscard]] std::vector<std::string> pressure_column_probe_phase_names(
+    const std::vector<PressureColumnObservation>& observations) {
+  std::vector<std::string> phases;
+  for (const auto& observation : observations) {
+    if (!contains(phases, observation.phase)) {
+      phases.push_back(observation.phase);
+    }
+  }
+  return phases;
+}
+
+[[nodiscard]] std::string format_probe_double(const double value) {
+  std::ostringstream formatted;
+  formatted << std::setprecision(9) << value;
+  return formatted.str();
+}
+
+[[nodiscard]] std::string pressure_column_probe_values(
+    const std::vector<PressureColumnObservation>& observations) {
+  std::ostringstream joined;
+  for (std::size_t index = 0; index < observations.size(); ++index) {
+    if (index != 0) {
+      joined << "|";
+    }
+    const auto& value = observations[index];
+    joined << "phase=" << value.phase << ";i=" << value.i << ";j=" << value.j
+           << ";k=" << value.k << ";P=" << format_probe_double(value.p)
+           << ";PB=" << format_probe_double(value.pb)
+           << ";P_PLUS_PB=" << format_probe_double(value.p_plus_pb)
+           << ";MU=" << format_probe_double(value.mu)
+           << ";MUB=" << format_probe_double(value.mub)
+           << ";MU_PLUS_MUB=" << format_probe_double(value.mu_plus_mub)
+           << ";PH=" << format_probe_double(value.ph)
+           << ";PHB=" << format_probe_double(value.phb)
+           << ";PH_PLUS_PHB=" << format_probe_double(value.ph_plus_phb)
+           << ";T=" << format_probe_double(value.t)
+           << ";QVAPOR=" << format_probe_double(value.qvapor)
+           << ";HGT=" << format_probe_double(value.hgt);
+  }
+  return joined.str();
+}
+
+void capture_pressure_column_observations(
+    const Options& options,
+    const std::string_view phase,
+    const tywrf::State<float>& candidate,
+    const StaticFieldSet& output_static,
+    CandidateReport& report) {
+  if (!pressure_column_probe_enabled(options)) {
+    return;
+  }
+
+  const auto p_layout = candidate.p.layout();
+  const auto ph_layout = candidate.ph.layout();
+  const auto surface_layout = candidate.mu.layout();
+  const auto static_layout = output_static.hgt.layout();
+  const auto p = candidate.p.view();
+  const auto pb = candidate.pb.view();
+  const auto mu = candidate.mu.view();
+  const auto mub = candidate.mub.view();
+  const auto ph = candidate.ph.view();
+  const auto phb = candidate.phb.view();
+  const auto t = candidate.t.view();
+  const auto qvapor = candidate.qvapor.view();
+  const auto hgt = output_static.hgt.view();
+
+  for (const auto [column_i, column_j] : options.pressure_column_probe_columns) {
+    const auto i = p_layout.i_begin() + column_i;
+    const auto j = p_layout.j_begin() + column_j;
+    const auto surface_i = surface_layout.i_begin() + column_i;
+    const auto surface_j = surface_layout.j_begin() + column_j;
+    const auto static_i = static_layout.i_begin() + column_i;
+    const auto static_j = static_layout.j_begin() + column_j;
+    for (const auto level : options.pressure_column_probe_levels) {
+      const auto k = p_layout.k_begin() + level;
+      const auto ph_k = ph_layout.k_begin() + level;
+      const double p_value = p(i, j, k);
+      const double pb_value = pb(i, j, k);
+      const double mu_value = mu(surface_i, surface_j);
+      const double mub_value = mub(surface_i, surface_j);
+      const double ph_value = ph(i, j, ph_k);
+      const double phb_value = phb(i, j, ph_k);
+      report.pressure_column_observations.push_back({
+          std::string(phase),
+          column_i,
+          column_j,
+          level,
+          p_value,
+          pb_value,
+          p_value + pb_value,
+          mu_value,
+          mub_value,
+          mu_value + mub_value,
+          ph_value,
+          phb_value,
+          ph_value + phb_value,
+          static_cast<double>(t(i, j, k)),
+          static_cast<double>(qvapor(i, j, k)),
+          static_cast<double>(hgt(static_i, static_j))});
+    }
+  }
+}
+
+void append_pressure_column_probe_timeline(CandidateReport& report) {
+  if (report.pressure_column_observations.empty()) {
+    return;
+  }
+  append_timeline_event(
+      report,
+      "pressure_column_probe",
+      {
+          timeline_field("enabled", "true"),
+          timeline_field(
+              "phase_count",
+              static_cast<std::uint64_t>(
+                  pressure_column_probe_phase_names(report.pressure_column_observations).size())),
+          timeline_field(
+              "record_count",
+              static_cast<std::uint64_t>(report.pressure_column_observations.size())),
+          timeline_field("evidence_only", "true"),
+      });
+}
 
 struct PressureRefreshReadiness {
   bool static_refresh_applied = false;
@@ -1590,6 +1921,58 @@ void write_pressure_refresh_readiness_attrs(
   return joined.str();
 }
 
+void write_pressure_column_probe_attrs(
+    const NetcdfHandle& file,
+    const Options& options,
+    const CandidateReport& report) {
+  if (report.pressure_column_observations.empty()) {
+    return;
+  }
+
+  const auto phases = pressure_column_probe_phase_names(report.pressure_column_observations);
+  write_text_attr(file, "TYWRF_PRESSURE_COLUMN_PROBE_VERSION", "runtime_v0");
+  write_text_attr(file, "TYWRF_PRESSURE_COLUMN_PROBE_ENABLED", "true");
+  write_text_attr(file, "TYWRF_PRESSURE_COLUMN_PROBE_EVIDENCE_ONLY", "true");
+  write_text_attr(file, "TYWRF_PRESSURE_COLUMN_PROBE_INDEX_BASE", "zero_based_mass_grid");
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_COLUMN_COUNT",
+      static_cast<std::int32_t>(options.pressure_column_probe_columns.size()));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_LEVEL_COUNT",
+      static_cast<std::int32_t>(options.pressure_column_probe_levels.size()));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_PHASE_COUNT",
+      static_cast<std::int32_t>(phases.size()));
+  write_int_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_RECORD_COUNT",
+      static_cast<std::int32_t>(report.pressure_column_observations.size()));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_COLUMNS",
+      join_pressure_probe_columns(options.pressure_column_probe_columns));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_LEVELS",
+      join_pressure_probe_levels(options.pressure_column_probe_levels));
+  write_text_attr(file, "TYWRF_PRESSURE_COLUMN_PROBE_PHASES", join_variables(phases));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_FIELDS",
+      join_variables(pressure_column_probe_field_names()));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_NOT_AVAILABLE",
+      join_variables(pressure_column_probe_unavailable_names()));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_COLUMN_PROBE_VALUES",
+      pressure_column_probe_values(report.pressure_column_observations));
+}
+
 void stamp_gate_metadata(
     const Options& options,
     const Resolution resolution,
@@ -1816,6 +2199,7 @@ void stamp_gate_metadata(
         "TYWRF_PRESSURE_REFRESH_OVERLAP_HALO_UNTOUCHED",
         parity.overlap_halo_untouched ? "true" : "false");
   }
+  write_pressure_column_probe_attrs(file, options, report);
   if (experimental_pressure_refresh_apply) {
     write_text_attr(
         file,
@@ -2054,6 +2438,75 @@ void write_pressure_refresh_readiness_json(
       pretty);
 }
 
+void write_pressure_column_probe_json(
+    std::ostream& stream,
+    const Options& options,
+    const CandidateReport& report,
+    const bool comma,
+    const bool pretty) {
+  const auto phases = pressure_column_probe_phase_names(report.pressure_column_observations);
+  write_json_bool(stream, "pressure_column_probe_enabled", true, true, pretty);
+  write_json_string(stream, "pressure_column_probe_version", "runtime_v0", true, pretty);
+  write_json_bool(stream, "pressure_column_probe_evidence_only", true, true, pretty);
+  write_json_string(
+      stream, "pressure_column_probe_index_base", "zero_based_mass_grid", true, pretty);
+  write_json_number(
+      stream,
+      "pressure_column_probe_column_count",
+      static_cast<double>(options.pressure_column_probe_columns.size()),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_column_probe_level_count",
+      static_cast<double>(options.pressure_column_probe_levels.size()),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_column_probe_phase_count",
+      static_cast<double>(phases.size()),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_column_probe_record_count",
+      static_cast<double>(report.pressure_column_observations.size()),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_column_probe_columns",
+      join_pressure_probe_columns(options.pressure_column_probe_columns),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_column_probe_levels",
+      join_pressure_probe_levels(options.pressure_column_probe_levels),
+      true,
+      pretty);
+  write_json_string(stream, "pressure_column_probe_phases", join_variables(phases), true, pretty);
+  write_json_string(
+      stream,
+      "pressure_column_probe_fields",
+      join_variables(pressure_column_probe_field_names()),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_column_probe_not_available",
+      join_variables(pressure_column_probe_unavailable_names()),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_column_probe_values",
+      pressure_column_probe_values(report.pressure_column_observations),
+      comma,
+      pretty);
+}
+
 void print_report(
     const Options& options,
     const Resolution resolution,
@@ -2073,6 +2526,7 @@ void print_report(
       pressure_refresh_readiness->ready();
   const bool gate_candidate =
       report.pressure_refresh.has_value() ? pressure_refresh_gate_candidate : true;
+  const bool has_pressure_column_probe = !report.pressure_column_observations.empty();
   std::cout << "{" << (pretty ? "\n" : "");
   write_json_string(
       std::cout,
@@ -2156,7 +2610,7 @@ void print_report(
       std::cout,
       "selected_field_timeline_events",
       join_timeline_events(report.timeline),
-      report.pressure_refresh.has_value(),
+      report.pressure_refresh.has_value() || has_pressure_column_probe,
       pretty);
   if (report.pressure_refresh.has_value()) {
     const auto& pressure = *report.pressure_refresh;
@@ -2300,8 +2754,11 @@ void print_report(
         std::cout,
         "pressure_refresh_overlap_halo_untouched",
         parity.overlap_halo_untouched,
-        false,
+        has_pressure_column_probe,
         pretty);
+  }
+  if (has_pressure_column_probe) {
+    write_pressure_column_probe_json(std::cout, options, report, false, pretty);
   }
   std::cout << "}" << (pretty ? "\n" : "\n");
 }
@@ -2329,6 +2786,7 @@ int run(Options options) {
   const auto d02_grid = tywrf::io::derive_grid_from_wrf_file(
       options.d02_start_state_path, tywrf::uniform_halo_3d(0));
   const auto descriptor = make_descriptor(d01_resolution, d02_resolution, d01_grid, d02_grid);
+  finalize_pressure_column_probe_options(options, d02_grid);
 
   const auto d01_start_hgt =
       load_hgt_field(options.d01_start_state_path, d01_grid, options.d01_time_index);
@@ -2364,6 +2822,8 @@ int run(Options options) {
       d01_start_hgt,
       output_static,
       report);
+  capture_pressure_column_observations(
+      options, "post_static_refresh", candidate, output_static, report);
   if (options.pressure_refresh) {
     probe_pressure_refresh_provider_readiness(options, candidate, output_static, report);
     probe_pressure_refresh_dry_run_contract(options, candidate, output_static, report);
@@ -2371,6 +2831,8 @@ int run(Options options) {
       require_pressure_refresh_ready_for_compute(report);
     }
     apply_pressure_refresh(options, candidate, output_static, report);
+    capture_pressure_column_observations(
+        options, "post_pressure_refresh", candidate, output_static, report);
   } else {
     append_timeline_event(
         report,
@@ -2388,7 +2850,10 @@ int run(Options options) {
             timeline_field("applied", "false"),
             timeline_field("status", "skipped"),
         });
+    capture_pressure_column_observations(
+        options, "pressure_refresh_skipped", candidate, output_static, report);
   }
+  append_pressure_column_probe_timeline(report);
   append_timeline_event(
       report,
       "cycle_end",

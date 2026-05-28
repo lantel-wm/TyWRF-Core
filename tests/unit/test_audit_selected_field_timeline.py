@@ -105,6 +105,115 @@ def _base_attrs(
     }
 
 
+def _runtime_event_names(*, include_pressure_column_probe: bool = False) -> str:
+    names = [
+        "cycle_start",
+        "move_from_to_parent_start",
+        "overlap_remap",
+        "exchange_plan_build",
+        "parent_interpolation",
+        "selected_field_change_summary",
+        "static_refresh",
+        "pressure_refresh_readiness",
+        "pressure_refresh_apply",
+        "cycle_end",
+        "output_write_preparation",
+    ]
+    if include_pressure_column_probe:
+        names.insert(9, "pressure_column_probe")
+    return ",".join(names)
+
+
+def _runtime_events(
+    *,
+    include_pressure_column_probe: bool = False,
+    exchange_points: int = 900,
+    interpolated_points: int = 900,
+    static_overlap_cells: int = 26250,
+    static_exposed_cells: int = 17850,
+    static_hgt_parent_interpolated_cells: int = 17850,
+    static_changed_template_points: int = 53000,
+) -> str:
+    events = [
+        "1:cycle_start(cycle_start=2025-07-26_00:00:00,cycle_end=2025-07-26_00:10:00)",
+        (
+            "2:move_from_to_parent_start(from_i=1,from_j=1,to_i=13,to_j=8,"
+            "parent_grid_ratio=5,parent_delta_i=12,parent_delta_j=7,"
+            "child_delta_i=60,child_delta_j=35)"
+        ),
+        (
+            "3:overlap_remap(copied_points=1200,copied_fields=7,"
+            "child_delta_i=60,child_delta_j=35,needs_parent_fill=true,"
+            "needs_derived_pressure_refresh=true)"
+        ),
+        (
+            "4:exchange_plan_build(exchange_points="
+            f"{exchange_points},requires_parent_interpolation=true,"
+            "modifies_overlap=false,modifies_halo=false)"
+        ),
+        (
+            "5:parent_interpolation(interpolated_points="
+            f"{interpolated_points},wrote_overlap=false,wrote_halo=false)"
+        ),
+        "6:selected_field_change_summary(changed_points=900)",
+        (
+            "7:static_refresh(overlap_cells="
+            f"{static_overlap_cells},exposed_cells={static_exposed_cells},"
+            "coord_extrapolated_cells=200,"
+            f"hgt_parent_interpolated_cells={static_hgt_parent_interpolated_cells},"
+            f"changed_template_points={static_changed_template_points},"
+            "uses_reference_end=false)"
+        ),
+        "8:pressure_refresh_readiness(opt_in=false,ready=not_applicable,status=skipped)",
+        "9:pressure_refresh_apply(opt_in=false,applied=false,status=skipped)",
+    ]
+    if include_pressure_column_probe:
+        events.append(
+            "10:pressure_column_probe(enabled=true,phase_count=2,"
+            "record_count=50,evidence_only=true)"
+        )
+    cycle_end_index = len(events) + 1
+    events.extend(
+        [
+            (
+                f"{cycle_end_index}:cycle_end("
+                "cycle_start=2025-07-26_00:00:00,"
+                "cycle_end=2025-07-26_00:10:00)"
+            ),
+            (
+                f"{cycle_end_index + 1}:output_write_preparation("
+                "time_index=0,variable_count=7,times=2025-07-26_00:10:00,"
+                "state_write=pending,metadata_write=pending)"
+            ),
+        ]
+    )
+    return "|".join(events)
+
+
+def _runtime_attrs(
+    *,
+    include_pressure_column_probe: bool = False,
+    **overrides: object,
+) -> dict[str, object]:
+    attrs: dict[str, object] = {
+        "TYWRF_SELECTED_FIELD_TIMELINE_VERSION": "runtime_v0",
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY": "true",
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT": (
+            12 if include_pressure_column_probe else 11
+        ),
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES": _runtime_event_names(
+            include_pressure_column_probe=include_pressure_column_probe
+        ),
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS": _runtime_events(
+            include_pressure_column_probe=include_pressure_column_probe
+        ),
+        "TYWRF_STATIC_REFRESH_HGT_PARENT_INTERPOLATED_CELLS": 17850.0,
+        "TYWRF_STATIC_REFRESH_CHANGED_TEMPLATE_POINTS": 53000.0,
+    }
+    attrs.update(overrides)
+    return attrs
+
+
 def _write_source_snippets(source_root: Path, *, include_post_fill: bool = True) -> None:
     selected = source_root / "src/tools/selected_field_cycle.cpp"
     selected.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +274,147 @@ void build_exposed_child_state_exchange_plan() {
 }
 """,
         encoding="utf-8",
+    )
+
+
+def test_runtime_timeline_attrs_are_parsed_and_serialized(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate.nc"
+    source_root = tmp_path / "source"
+    attrs = {
+        **_base_attrs(changed=900.0, interpolated=900.0),
+        **_runtime_attrs(),
+    }
+    _write_candidate(candidate, attrs=attrs)
+    _write_source_snippets(source_root)
+
+    payload = json.loads(
+        report_to_json(
+            audit_selected_field_timeline(candidate, source_root=source_root)
+        )
+    )
+
+    runtime = payload["candidate_timeline"]["runtime_timeline"]
+    assert runtime["diagnostic_only"] is True
+    assert runtime["candidate_model_pass"] == "not_applicable"
+    assert runtime["status"] == "available"
+    assert runtime["version"] == "runtime_v0"
+    assert runtime["evidence_only"] is True
+    assert runtime["parsed_event_count"] == 11
+    assert runtime["event_count_consistent"] is True
+    assert runtime["event_names_consistent"] is True
+    assert runtime["expected_order_match"] is True
+    assert runtime["parsed_events"]["events"][0]["name"] == "cycle_start"
+    assert runtime["parsed_events"]["events"][1]["fields"]["child_delta_i"] == "60"
+    assert runtime["parsed_events"]["events_by_name"]["static_refresh"]["fields"][
+        "hgt_parent_interpolated_cells"
+    ] == "17850"
+    assert runtime["key_count_parity"]["all_available_counts_consistent"] is True
+    assert runtime["key_count_parity"]["mismatch_count"] == 0
+    assert "runtime_timeline_event_count_mismatch" not in set(
+        payload["summary"]["risk_codes"]
+    )
+    assert "runtime_timeline_event_order_mismatch" not in set(
+        payload["summary"]["risk_codes"]
+    )
+    assert "runtime_count_parity_mismatch" not in set(payload["summary"]["risk_codes"])
+
+
+def test_runtime_timeline_pressure_column_probe_order_is_allowed(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    source_root = tmp_path / "source"
+    attrs = {
+        **_base_attrs(changed=900.0, interpolated=900.0),
+        **_runtime_attrs(include_pressure_column_probe=True),
+    }
+    _write_candidate(candidate, attrs=attrs)
+    _write_source_snippets(source_root)
+
+    payload = audit_selected_field_timeline(candidate, source_root=source_root)
+    runtime = payload["candidate_timeline"]["runtime_timeline"]
+    risk_codes = set(payload["summary"]["risk_codes"])
+
+    assert runtime["diagnostic_only"] is True
+    assert runtime["candidate_model_pass"] == "not_applicable"
+    assert runtime["evidence_only"] is True
+    assert runtime["parsed_event_count"] == 12
+    assert runtime["parsed_event_names"][9] == "pressure_column_probe"
+    assert runtime["parsed_events"]["events_by_name"]["pressure_column_probe"][
+        "fields"
+    ]["evidence_only"] == "true"
+    assert runtime["event_count_consistent"] is True
+    assert runtime["event_names_consistent"] is True
+    assert runtime["expected_order_match"] is True
+    assert "runtime_timeline_event_count_mismatch" not in risk_codes
+    assert "runtime_timeline_event_order_mismatch" not in risk_codes
+
+
+def test_runtime_timeline_malformed_string_is_reported(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate.nc"
+    source_root = tmp_path / "source"
+    attrs = {
+        **_base_attrs(changed=900.0, interpolated=900.0),
+        **_runtime_attrs(
+            TYWRF_SELECTED_FIELD_TIMELINE_EVENTS="1:cycle_start(cycle_start=broken"
+        ),
+    }
+    _write_candidate(candidate, attrs=attrs)
+    _write_source_snippets(source_root)
+
+    payload = audit_selected_field_timeline(candidate, source_root=source_root)
+    runtime = payload["candidate_timeline"]["runtime_timeline"]
+
+    assert runtime["status"] == "malformed"
+    assert runtime["parsed_events"]["malformed"] is True
+    assert runtime["parsed_events"]["parse_errors"]
+    assert "malformed_runtime_timeline_string" in set(payload["summary"]["risk_codes"])
+
+
+def test_runtime_timeline_count_and_parity_mismatches_are_flagged(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    source_root = tmp_path / "source"
+    attrs = {
+        **_base_attrs(changed=900.0, interpolated=901.0),
+        **_runtime_attrs(TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT=12),
+    }
+    _write_candidate(candidate, attrs=attrs)
+    _write_source_snippets(source_root)
+
+    payload = audit_selected_field_timeline(candidate, source_root=source_root)
+    runtime = payload["candidate_timeline"]["runtime_timeline"]
+    risk_codes = set(payload["summary"]["risk_codes"])
+
+    assert runtime["event_count_consistent"] is False
+    assert runtime["key_count_parity"]["mismatch_count"] == 1
+    assert runtime["key_count_parity"]["mismatches"][0]["label"] == "interpolated_points"
+    assert "runtime_timeline_event_count_mismatch" in risk_codes
+    assert "runtime_count_parity_mismatch" in risk_codes
+
+
+def test_runtime_timeline_missing_attrs_are_nonfatal_but_flagged(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate.nc"
+    source_root = tmp_path / "source"
+    _write_candidate(candidate, attrs=_base_attrs(changed=900.0, interpolated=900.0))
+    _write_source_snippets(source_root)
+
+    payload = audit_selected_field_timeline(candidate, source_root=source_root)
+    runtime = payload["candidate_timeline"]["runtime_timeline"]
+
+    assert runtime["status"] == "not_available"
+    assert set(runtime["missing_required_attrs"]) == {
+        "TYWRF_SELECTED_FIELD_TIMELINE_VERSION",
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY",
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT",
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES",
+        "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS",
+    }
+    assert "missing_runtime_timeline_attrs_on_new_candidate" in set(
+        payload["summary"]["risk_codes"]
     )
 
 

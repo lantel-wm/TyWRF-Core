@@ -1229,6 +1229,65 @@ must not patch fields, tune formulas from reference-end truth, generate
 candidate files from oracle data, use diagnostic/probe/hidden-seam output as
 gate evidence, lower d02 below `2 km`, or introduce best-track nudging.
 
+## Round D61 Runtime Observation Direction
+
+D60 commit `7903cbf` (`Add pressure column probe and timeline metadata`)
+preserves the same compatibility state after full validation: CMake build
+passed, CTest passed `29/29`, pytest passed `178/178`, and push to
+`origin/main` succeeded. This remains codebase validation, not a
+WRF-compatible numerical pass. The strict d02 `2025-07-26_00:10:00` gate
+remains failed, and no `00:20` progression is compatible until that endpoint
+passes.
+
+The D60 normal `--pressure-refresh` KROSA candidate output is
+`build/validation/r60_pressure_normal/wrfout_d02_2025-07-26_00:10:00`. It emits
+runtime timeline metadata with 11 ordered events:
+`cycle_start`, `move_from_to_parent_start`, `overlap_remap`,
+`exchange_plan_build`, `parent_interpolation`,
+`selected_field_change_summary`, `static_refresh`,
+`pressure_refresh_readiness`, `pressure_refresh_apply`, `cycle_end`, and
+`output_write_preparation`. The metadata records child movement delta `(60,35)`
+and pressure-refresh refreshed, synced, and changed counts. The added telemetry
+does not change normal candidate numerics: `U`, `V`, `T`, `PH`, `MU`, `P`,
+`QVAPOR`, `PB`, `PHB`, `MUB`, and `HGT` match the D54 normal candidate with
+maximum absolute difference `0.0`.
+
+The D60 pressure column probe
+`build/validation/r60_pressure_formula_column_probe_audit.json` remains
+diagnostic-only. It selected worst columns `(160,49)`, `(160,50)`, `(160,51)`,
+`(161,49)`, and `(161,50)`. For rank 1 at level `0`, candidate `P` is
+`-4172.158691 Pa`, reference `P` is `514.484375 Pa`, and the difference is
+`-4686.643066 Pa`; the mean absolute low-level `P` error across levels `0..4`
+is `4391.227588 Pa`. Unique risk codes include
+`low_level_column_p_error_large`,
+`column_candidate_source_delta_matches_p_error`,
+`coefficient_terms_missing_from_candidate_netcdf`, and
+`formula_input_json_prior_risks_present`.
+
+The D60 selected-field timeline audit
+`build/validation/r60_selected_field_timeline_audit.json` is also
+diagnostic-only. It confirms that runtime timeline attributes are present, but
+it still reports the D59 risks until the audit parser fully structures the
+event strings. The strict `00:10` gate report
+`build/validation/r60_pressure_normal_gate.json` still fails: first failing
+field `U` has normalized RMSE `0.117875`, with `V = 0.134244`,
+`MU = 0.133382`, `P = 6.334952`, and storm-center error `43.482716 km`.
+
+D61 compatibility work should remain telemetry/audit-only:
+
+- add optional same-column runtime observation metadata for pressure formula
+  attribution, without patching fields or tuning formulas from reference-end
+  truth;
+- parse selected-field runtime timeline attributes structurally, so movement,
+  remap, static refresh, pressure-refresh, and output-preparation events can be
+  audited without becoming gate evidence.
+
+D61 telemetry may explain when and where a mismatch enters the local runtime
+path, but it must not patch fields, tune formulas from reference-end truth,
+generate candidate files from oracle data, convert audit/probe/hidden-seam
+outputs into gate evidence, lower d02 below `2 km`, or introduce best-track
+nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

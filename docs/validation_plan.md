@@ -1010,6 +1010,59 @@ formulas from reference-end truth, generate candidate files from oracle data,
 promote audit/probe/hidden-seam outputs to gate evidence, advance to `00:20`,
 reduce d02 below `2 km`, or add best-track nudging.
 
+D61 starts from D60 commit `7903cbf`, where full code validation passed
+(`cmake --build`, CTest `29/29`, pytest `178/178`) and the branch was pushed
+to `origin/main`. This does not change scientific validation status: the
+strict d02 `2025-07-26_00:10:00` gate remains failed, and validation must not
+advance to `00:20`.
+
+The D60 normal `--pressure-refresh` candidate output is
+`build/validation/r60_pressure_normal/wrfout_d02_2025-07-26_00:10:00`. Runtime
+timeline metadata is present with 11 ordered events:
+`cycle_start`, `move_from_to_parent_start`, `overlap_remap`,
+`exchange_plan_build`, `parent_interpolation`,
+`selected_field_change_summary`, `static_refresh`,
+`pressure_refresh_readiness`, `pressure_refresh_apply`, `cycle_end`, and
+`output_write_preparation`. The metadata records child movement delta `(60,35)`
+and pressure-refresh refreshed, synced, and changed counts. It is telemetry
+only: core numerical fields match the D54 normal candidate exactly, with max
+absolute difference `0.0` for `U`, `V`, `T`, `PH`, `MU`, `P`, `QVAPOR`, `PB`,
+`PHB`, `MUB`, and `HGT`.
+
+The D60 pressure column probe output is
+`build/validation/r60_pressure_formula_column_probe_audit.json`. It is
+diagnostic-only and selected worst columns `(160,49)`, `(160,50)`, `(160,51)`,
+`(161,49)`, and `(161,50)`. Rank 1 level `0` `P` is `-4172.158691 Pa` in the
+candidate and `514.484375 Pa` in the reference, for a difference of
+`-4686.643066 Pa`; levels `0..4` have mean absolute low-level `P` error
+`4391.227588 Pa`. Unique risk codes include
+`low_level_column_p_error_large`,
+`column_candidate_source_delta_matches_p_error`,
+`coefficient_terms_missing_from_candidate_netcdf`, and
+`formula_input_json_prior_risks_present`.
+
+The D60 selected-field timeline audit output is
+`build/validation/r60_selected_field_timeline_audit.json`. It confirms runtime
+timeline attributes are present, but it still reports D59 risks until event
+strings are parsed into structured event records. The D60 strict gate report
+`build/validation/r60_pressure_normal_gate.json` still fails. The first failing
+field is `U` with normalized RMSE `0.117875`; related failures include
+`V = 0.134244`, `MU = 0.133382`, `P = 6.334952`, and storm-center error
+`43.482716 km`.
+
+D61 validation diagnostics should remain telemetry/audit-only:
+
+- optional same-column runtime observation metadata for pressure attribution,
+  without field patches or reference-end formula tuning;
+- structural parsing of runtime timeline attributes for selected-field
+  movement, remap, static refresh, pressure refresh, and output-preparation
+  ordering/counts.
+
+Both D61 tasks are observation-only. They cannot patch fields, tune formulas
+from reference-end truth, generate oracle candidates, promote
+audit/probe/hidden-seam outputs to gate evidence, advance to `00:20`, reduce
+d02 below `2 km`, or add best-track nudging.
+
 Example:
 
 ```bash

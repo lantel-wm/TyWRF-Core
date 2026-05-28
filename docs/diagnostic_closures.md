@@ -800,6 +800,45 @@ Round D60 keeps the D59 audit results outside closure scope:
   reference-end truth, convert diagnostic/probe/hidden-seam outputs into gate
   evidence, reduce d02 below `2 km`, or introduce best-track nudging.
 
+Round D61 keeps the D60 telemetry results outside closure scope:
+
+- D60 commit `7903cbf` passed full code validation (`cmake --build`, CTest
+  `29/29`, pytest `178/178`) and pushed to `origin/main`, but that is still
+  not a scientific validation pass. The strict d02
+  `2025-07-26_00:10:00` gate remains failed and validation must not advance to
+  `00:20`.
+- The normal D60 `--pressure-refresh` candidate output
+  `build/validation/r60_pressure_normal/wrfout_d02_2025-07-26_00:10:00`
+  emitted runtime timeline metadata with 11 events, from `cycle_start` through
+  `output_write_preparation`, including movement delta `(60,35)` and
+  pressure-refresh refreshed, synced, and changed counts. It did not modify
+  accepted numerical fields relative to the D54 normal candidate: max absolute
+  difference is `0.0` for `U`, `V`, `T`, `PH`, `MU`, `P`, `QVAPOR`, `PB`,
+  `PHB`, `MUB`, and `HGT`. A closure must not treat metadata emission as a
+  repair or as gate evidence.
+- The pressure column probe
+  `build/validation/r60_pressure_formula_column_probe_audit.json` is
+  diagnostic-only. It selected worst columns `(160,49)`, `(160,50)`,
+  `(160,51)`, `(161,49)`, and `(161,50)`. Rank 1 level `0` `P` differs by
+  `-4686.643066 Pa` (`-4172.158691 Pa` candidate versus `514.484375 Pa`
+  reference), and levels `0..4` have mean absolute low-level `P` error
+  `4391.227588 Pa`. A closure must not patch those columns, tune formula terms
+  from reference-end truth, or use the probe as an accepted pressure producer.
+- The selected-field timeline audit
+  `build/validation/r60_selected_field_timeline_audit.json` confirms timeline
+  attributes are present but still reports D59 risks until the parser fully
+  structures event strings. The strict gate report
+  `build/validation/r60_pressure_normal_gate.json` still fails with first
+  failing field `U` normalized RMSE `0.117875`, plus `V = 0.134244`,
+  `MU = 0.133382`, `P = 6.334952`, and storm-center error `43.482716 km`. A
+  closure must not relabel these failing metrics as accepted through
+  telemetry, hidden-seam output, or diagnostic probes.
+- D61 may add optional same-column runtime observation metadata and structural
+  timeline parsing. Both are telemetry/audit-only; they cannot generate closure
+  candidates, patch fields, tune formulas from reference-end truth, convert
+  diagnostic/probe/hidden-seam outputs into gate evidence, reduce d02 below
+  `2 km`, or introduce best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
