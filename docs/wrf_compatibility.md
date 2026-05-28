@@ -1612,16 +1612,31 @@ metadata. Provider-backed source provenance and staged/count metadata explain
 which source populated hidden scratch buffers, but that metadata is itself
 disqualifying context and cannot be used as strict-gate evidence.
 
-D76 compatibility scope is source-vs-child delta/provenance planning for hidden
-base-state adapter source staging only. It may document diagnostic deltas,
-zero-difference cases, source/child provenance, and useful staged/exposed/masked
-counts for the hidden adapter scratch path. The presence of any source-child
-delta or provenance metadata remains a non-gate marker and is disqualifying for
-strict compatibility evidence, even when it shows zero difference or useful
-counts. D76 must not write normal candidates, refresh candidate `P`, change the
-normal pressure-refresh path, relax strict gate metadata, advance validation to
-`00:20`, reduce d02 below `2 km`, or introduce best-track nudging. The strict
-d02 `2025-07-26_00:10:00` gate remains failed.
+D76 is complete, verified, and pushed at commit `f7082c1`. It added
+source-vs-child delta/provenance planning for hidden base-state adapter source
+staging only. Diagnostic deltas, zero-difference summaries, source/child
+provenance, and staged/exposed/masked counts for the hidden adapter scratch path
+remain non-gate metadata. The presence of any source-child delta or provenance
+metadata is disqualifying for strict compatibility evidence, even when it shows
+zero difference or useful counts. D76 did not write normal candidates, refresh
+candidate `P`, change the normal pressure-refresh path, relax strict gate
+metadata, advance validation to `00:20`, reduce d02 below `2 km`, or introduce
+best-track nudging. The strict d02 `2025-07-26_00:10:00` gate remains failed.
+
+D77 compatibility scope is hidden diagnostic provider-derived base-state source
+work only. It may use `KrosaBaseStateProvider` with `moved_candidate_HGT` as the
+source for hidden adapter source staging, but only inside that hidden diagnostic
+scratch/source boundary. Provider-derived source metadata and source-child
+deltas remain disqualifying diagnostic context; they cannot be used as strict
+gate evidence, cannot borrow positive selected-field metadata, and cannot make a
+normal candidate compatible by report wording. Any `PHB` reconstruction in this
+provider-derived hidden source path is diagnostic evidence about provider
+staging only, not WRF rebalance semantics and not proof that candidate `PHB`,
+`P`, or pressure refresh is physically produced.
+
+D77 must not write normal candidates, refresh candidate `P`, change the normal
+pressure-refresh path, relax strict gate metadata, advance validation to
+`00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
 
 ## Physics Bridge Compatibility Notes
 

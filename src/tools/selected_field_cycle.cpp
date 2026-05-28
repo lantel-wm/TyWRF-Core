@@ -194,6 +194,8 @@ struct CandidateReport {
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport> pressure_refresh;
   std::optional<tywrf::nest::ExposedBaseStateExchangeAdapterReport>
       diagnostic_adapter;
+  std::optional<tywrf::dynamics::KrosaBaseStateProviderReport>
+      diagnostic_adapter_provider_source;
   std::optional<tywrf::nest::BaseStateSourceStagingReport>
       diagnostic_adapter_source_staging;
   bool diagnostic_adapter_source_staging_aliases_child = false;
@@ -244,6 +246,11 @@ struct DiagnosticBaseStateAdapterStaging {
   tywrf::FieldStorage3D<float> t_init;
   tywrf::FieldStorage3D<float> alb;
   tywrf::FieldStorage2D<float> ht;
+};
+
+struct DiagnosticAdapterProviderSource {
+  tywrf::dynamics::KrosaBaseStateProvider provider;
+  tywrf::dynamics::KrosaBaseStateProviderReport report;
 };
 
 [[nodiscard]] const char* bool_text(const bool value) noexcept {
@@ -380,6 +387,10 @@ make_moved_candidate_hgt_terrain_override(const StaticFieldSet& output_static) {
       .terrain_height_m = output_static.hgt.view(),
       .source_name = "moved_candidate_HGT",
       .provenance = "override:moved_candidate_HGT"};
+}
+
+[[nodiscard]] constexpr std::string_view diagnostic_adapter_provider_source_origin() noexcept {
+  return "base_state_reconstruction_provider+moved_candidate_HGT";
 }
 
 [[nodiscard]] PressureRefreshReportParity pressure_refresh_report_parity(
@@ -2069,6 +2080,66 @@ void fill_diagnostic_adapter_staging(
   copy_storage(output_static.hgt, staging.ht, "diagnostic adapter HT/HGT");
 }
 
+[[nodiscard]] DiagnosticAdapterProviderSource
+build_diagnostic_adapter_provider_source(
+    const tywrf::State<float>& candidate,
+    const StaticFieldSet& output_static,
+    const tywrf::io::KrosaPressureRefreshMetadata& metadata) {
+  DiagnosticAdapterProviderSource source;
+  const auto terrain_override =
+      make_moved_candidate_hgt_terrain_override(output_static);
+  source.report = source.provider.reconstruct(
+      candidate.grid,
+      metadata,
+      terrain_override);
+
+  const bool terrain_ok =
+      source.report.terrain_override_used &&
+      source.report.terrain_source_name == "moved_candidate_HGT" &&
+      source.report.terrain_provenance == "override:moved_candidate_HGT";
+  if (source.report.ok() && source.report.allocated_buffers &&
+      source.report.wrote_pb && source.report.wrote_t_init &&
+      source.report.wrote_mub && source.report.wrote_alb &&
+      source.report.wrote_phb && terrain_ok) {
+    return source;
+  }
+
+  std::ostringstream message;
+  message << "diagnostic_adapter_provider_source_failed";
+  if (source.report.result.message != nullptr &&
+      source.report.result.message[0] != '\0') {
+    message << ": " << source.report.result.message;
+  }
+  message << "; provider_ok=" << (source.report.ok() ? "true" : "false")
+          << "; allocated_buffers="
+          << (source.report.allocated_buffers ? "true" : "false")
+          << "; wrote_pb=" << (source.report.wrote_pb ? "true" : "false")
+          << "; wrote_t_init="
+          << (source.report.wrote_t_init ? "true" : "false")
+          << "; wrote_mub=" << (source.report.wrote_mub ? "true" : "false")
+          << "; wrote_alb=" << (source.report.wrote_alb ? "true" : "false")
+          << "; wrote_phb=" << (source.report.wrote_phb ? "true" : "false")
+          << "; terrain_override_used="
+          << (source.report.terrain_override_used ? "true" : "false")
+          << "; terrain_source=" << source.report.terrain_source_name
+          << "; terrain_provenance=" << source.report.terrain_provenance;
+  throw std::runtime_error(message.str());
+}
+
+[[nodiscard]] tywrf::nest::ExposedBaseStateViews<const float>
+diagnostic_adapter_provider_source_views(
+    const DiagnosticAdapterProviderSource& source,
+    const StaticFieldSet& output_static) {
+  const auto provider_views = source.provider.views();
+  return {
+      provider_views.phb,
+      provider_views.mub,
+      provider_views.pb,
+      provider_views.t_init,
+      provider_views.alb,
+      output_static.hgt.view()};
+}
+
 struct DiagnosticAdapterExposedRegionSet {
   std::array<tywrf::nest::RemapWindow, 4> regions{};
   std::uint8_t count = 0;
@@ -2324,17 +2395,71 @@ void run_diagnostic_adapter_report(
       {.time_index = options.template_time_index});
   require_pressure_refresh_inputs_ready(metadata);
 
-  DiagnosticBaseStateAdapterStaging explicit_source(candidate.grid);
   DiagnosticBaseStateAdapterStaging child(candidate.grid);
-  fill_diagnostic_adapter_staging(candidate, output_static, metadata_alb, explicit_source);
   fill_diagnostic_adapter_staging(candidate, output_static, metadata_alb, child);
+
+  const auto provider_source = build_diagnostic_adapter_provider_source(
+      candidate,
+      output_static,
+      metadata.metadata);
+  const auto source_views =
+      diagnostic_adapter_provider_source_views(provider_source, output_static);
+  report.diagnostic_adapter_provider_source = provider_source.report;
+  append_timeline_event(
+      report,
+      "diagnostic_adapter_provider_source",
+      {
+          timeline_field(
+              "origin",
+              std::string(diagnostic_adapter_provider_source_origin())),
+          timeline_field(
+              "source_origin",
+              std::string(diagnostic_adapter_provider_source_origin())),
+          timeline_field(
+              "provider_ok",
+              std::string(bool_text(provider_source.report.ok()))),
+          timeline_field(
+              "diagnostic_only",
+              std::string(bool_text(provider_source.report.diagnostic_only))),
+          timeline_field(
+              "gate_candidate",
+              std::string(bool_text(provider_source.report.gate_candidate))),
+          timeline_field(
+              "integrator_output",
+              std::string(bool_text(provider_source.report.integrator_output))),
+          timeline_field("writes_candidate", "false"),
+          timeline_field("reads_direct_p", "false"),
+          timeline_field(
+              "terrain_source",
+              provider_source.report.terrain_source_name),
+          timeline_field(
+              "terrain_provenance",
+              provider_source.report.terrain_provenance),
+          timeline_field(
+              "wrote_pb",
+              std::string(bool_text(provider_source.report.wrote_pb))),
+          timeline_field(
+              "wrote_t_init",
+              std::string(bool_text(provider_source.report.wrote_t_init))),
+          timeline_field(
+              "wrote_mub",
+              std::string(bool_text(provider_source.report.wrote_mub))),
+          timeline_field(
+              "wrote_alb",
+              std::string(bool_text(provider_source.report.wrote_alb))),
+          timeline_field(
+              "wrote_phb",
+              std::string(bool_text(provider_source.report.wrote_phb))),
+          timeline_field(
+              "provider_reconstructed_phb_not_wrf_rebalance_validated",
+              "true"),
+      });
 
   tywrf::nest::BaseStateSourceStagingProvider source_provider;
   const auto source_staging_report = source_provider.stage(
       candidate.grid,
       report.remap_plan,
-      diagnostic_adapter_views(
-          static_cast<const DiagnosticBaseStateAdapterStaging&>(explicit_source)));
+      source_views);
   const auto provider_source_views = source_provider.views();
   const auto child_views = diagnostic_adapter_views(child);
   report.diagnostic_adapter_source_staging = source_staging_report;
@@ -2924,6 +3049,128 @@ void write_pressure_formula_observation_attrs(
       pressure_formula_observation_values(report.pressure_formula_observations));
 }
 
+void write_diagnostic_adapter_provider_source_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (!report.diagnostic_adapter_provider_source.has_value()) {
+    return;
+  }
+
+  const auto& provider = *report.diagnostic_adapter_provider_source;
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_VERSION",
+      "d77_provider_source_v0");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_ORIGIN",
+      diagnostic_adapter_provider_source_origin());
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_SOURCE_ORIGIN",
+      diagnostic_adapter_provider_source_origin());
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_SOURCE",
+      provider.source);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_SOURCE",
+      provider.terrain_source_name);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_PROVENANCE",
+      provider.terrain_provenance);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_OVERRIDE_USED",
+      bool_text(provider.terrain_override_used));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_HT_SOURCE",
+      "output_static.hgt");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_HT_PROVENANCE",
+      "adapter_HT_from_output_static_HGT");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_OK",
+      bool_text(provider.ok()));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_RESULT_MESSAGE",
+      provider.result.message == nullptr ? "" : provider.result.message);
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_DIAGNOSTIC_ONLY",
+      bool_text(provider.diagnostic_only));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_GATE_CANDIDATE",
+      bool_text(provider.gate_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_INTEGRATOR_OUTPUT",
+      bool_text(provider.integrator_output));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WRITES_CANDIDATE",
+      "false");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WRITES_NETCDF",
+      "false");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_NO_CANDIDATE_WRITE",
+      "true");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_USES_REFERENCE_END_TRUTH",
+      "false");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_NO_REFERENCE_END_TRUTH",
+      "true");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_USES_DIRECT_P_SHORTCUT",
+      "false");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_NO_DIRECT_P_SHORTCUT",
+      "true");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_READS_DIRECT_P",
+      "false");
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_PB",
+      bool_text(provider.wrote_pb));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_T_INIT",
+      bool_text(provider.wrote_t_init));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_MUB",
+      bool_text(provider.wrote_mub));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_ALB",
+      bool_text(provider.wrote_alb));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_PHB",
+      bool_text(provider.wrote_phb));
+  write_text_attr(
+      file,
+      "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_RECONSTRUCTED_PHB_NOT_WRF_REBALANCE_VALIDATED",
+      "true");
+}
+
 void write_diagnostic_adapter_source_staging_attrs(
     const NetcdfHandle& file,
     const CandidateReport& report) {
@@ -3360,6 +3607,7 @@ void write_diagnostic_adapter_attrs(
       file,
       "TYWRF_DIAGNOSTIC_ADAPTER_INVALID_POINT_COUNT",
       static_cast<double>(adapter.invalid_point_count));
+  write_diagnostic_adapter_provider_source_attrs(file, report);
   write_diagnostic_adapter_source_staging_attrs(file, report);
   write_diagnostic_adapter_source_child_delta_attrs(file, report);
   write_text_attr(file, "TYWRF_DIAGNOSTIC_ADAPTER_WRITTEN_FIELDS", "PHB,MUB,HGT,PB,T_INIT,ALB");
@@ -3972,6 +4220,185 @@ void write_pressure_formula_observation_json(
       pretty);
 }
 
+void write_diagnostic_adapter_provider_source_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool pretty) {
+  if (!report.diagnostic_adapter_provider_source.has_value()) {
+    return;
+  }
+
+  const auto& provider = *report.diagnostic_adapter_provider_source;
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_version",
+      "d77_provider_source_v0",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_origin",
+      diagnostic_adapter_provider_source_origin(),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_source_origin",
+      diagnostic_adapter_provider_source_origin(),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_provider_source",
+      provider.source,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_terrain_source",
+      provider.terrain_source_name,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_terrain_provenance",
+      provider.terrain_provenance,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_terrain_override_used",
+      provider.terrain_override_used,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_ht_source",
+      "output_static.hgt",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_ht_provenance",
+      "adapter_HT_from_output_static_HGT",
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_provider_ok",
+      provider.ok(),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "diagnostic_adapter_provider_source_result_message",
+      provider.result.message == nullptr ? "" : provider.result.message,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_diagnostic_only",
+      provider.diagnostic_only,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_gate_candidate",
+      provider.gate_candidate,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_integrator_output",
+      provider.integrator_output,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_writes_candidate",
+      false,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_writes_netcdf",
+      false,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_no_candidate_write",
+      true,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_uses_reference_end_truth",
+      false,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_no_reference_end_truth",
+      true,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_uses_direct_p_shortcut",
+      false,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_no_direct_p_shortcut",
+      true,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_reads_direct_p",
+      false,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_wrote_pb",
+      provider.wrote_pb,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_wrote_t_init",
+      provider.wrote_t_init,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_wrote_mub",
+      provider.wrote_mub,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_wrote_alb",
+      provider.wrote_alb,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_wrote_phb",
+      provider.wrote_phb,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "diagnostic_adapter_provider_source_provider_reconstructed_phb_not_wrf_rebalance_validated",
+      true,
+      true,
+      pretty);
+}
+
 void write_diagnostic_adapter_source_staging_json(
     std::ostream& stream,
     const CandidateReport& report,
@@ -4579,6 +5006,7 @@ void write_diagnostic_adapter_json(
       static_cast<double>(adapter.invalid_point_count),
       true,
       pretty);
+  write_diagnostic_adapter_provider_source_json(stream, report, pretty);
   write_diagnostic_adapter_source_staging_json(stream, report, pretty);
   write_diagnostic_adapter_source_child_delta_json(stream, report, pretty);
   write_json_string(

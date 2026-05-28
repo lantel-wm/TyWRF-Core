@@ -1370,18 +1370,36 @@ disqualifying and cannot be used as gate evidence. D75 did not write or relabel
 normal candidates, refresh candidate `P`, change the normal pressure-refresh
 path, mark a report as integrator output, or relax strict metadata rejection.
 
-D76 validation scope is diagnostic source-vs-child delta/provenance planning for
-the hidden base-state adapter source-staging path. Default strict-gate tooling
-must treat any such source-child delta/provenance block as disqualifying
-diagnostic context before field RMSE or TC diagnostics are interpreted. This is
-true even if the reported source-child differences are all zero, or if the
-staged/exposed/masked counts are useful for debugging. Source-child provenance
-does not prove integrator output, does not satisfy the pressure-refresh
-contract, and cannot be used as evidence that the strict d02 gate passed. D76
-must not write normal candidates, refresh candidate `P`, change the normal
-pressure-refresh path, relax strict metadata rejection, or proceed to `00:20`.
-The strict d02 `2025-07-26_00:10:00` gate still fails; d02 stays `2 km`, and
-best-track nudging remains prohibited.
+D76 is complete, verified, and pushed at commit `f7082c1`. Its validation scope
+was diagnostic source-vs-child delta/provenance planning for the hidden
+base-state adapter source-staging path. Default strict-gate tooling must treat
+any such source-child delta/provenance block as disqualifying diagnostic context
+before field RMSE or TC diagnostics are interpreted. This is true even if the
+reported source-child differences are all zero, or if the staged/exposed/masked
+counts are useful for debugging. Source-child provenance does not prove
+integrator output, does not satisfy the pressure-refresh contract, and cannot be
+used as evidence that the strict d02 gate passed. D76 did not write normal
+candidates, refresh candidate `P`, change the normal pressure-refresh path,
+relax strict metadata rejection, or proceed to `00:20`. The strict d02
+`2025-07-26_00:10:00` gate still fails; d02 stays `2 km`, and best-track
+nudging remains prohibited.
+
+D77 validation scope is hidden diagnostic provider-derived base-state source
+work. It may use `KrosaBaseStateProvider` plus `moved_candidate_HGT` only to
+populate or report hidden adapter source staging; this is not the normal
+pressure-refresh path and not selected-field candidate production. Default
+strict-gate tooling must keep provider-derived source metadata and source-child
+deltas as disqualifying diagnostic context before interpreting RMSE or TC
+diagnostics. A provider-derived hidden source report cannot prove integrator
+output, cannot satisfy the pressure-refresh contract, cannot refresh candidate
+`P`, and cannot permit validation to advance beyond the failed `00:10` gate.
+
+Any `PHB` reconstruction observed in D77 provider-derived source staging is
+diagnostic evidence only. It is not WRF rebalance semantics, not a validated
+candidate `PHB` producer, and not a substitute for a normal pressure-refresh or
+base-state producer. D77 must not write normal candidates, change normal
+pressure-refresh behavior, relax strict metadata rejection, proceed to `00:20`,
+reduce d02 below `2 km`, or introduce best-track nudging.
 
 Example:
 

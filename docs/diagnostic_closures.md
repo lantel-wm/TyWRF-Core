@@ -1152,17 +1152,35 @@ normal candidates, refresh candidate `P`, change normal pressure-refresh
 behavior, borrow positive selected-field metadata, or weaken strict gate
 rejection.
 
-D76 is limited to diagnostic source-vs-child delta/provenance planning for the
-same hidden adapter source-staging boundary. A closure must not convert
-source-child delta blocks, zero-difference summaries, source/child provenance,
-or staged/exposed/masked counts into a pressure closure, a candidate-field
-patch, pressure-refresh evidence, or strict-gate evidence. The metadata remains
-disqualifying even when every reported source-child delta is zero or the counts
-are useful for debugging. D76 must not write normal candidates, refresh
-candidate `P`, change normal pressure-refresh behavior, borrow positive
-selected-field metadata, weaken strict gate rejection, or advance validation to
-`00:20`. The strict d02 `00:10` gate remains failed, d02 must remain `2 km`,
-and best-track nudging remains forbidden.
+D76 is complete, verified, and pushed at commit `f7082c1`. It added diagnostic
+source-vs-child delta/provenance planning for the same hidden adapter
+source-staging boundary. A closure must not convert source-child delta blocks,
+zero-difference summaries, source/child provenance, or staged/exposed/masked
+counts into a pressure closure, a candidate-field patch, pressure-refresh
+evidence, or strict-gate evidence. The metadata remains disqualifying even when
+every reported source-child delta is zero or the counts are useful for
+debugging. D76 did not write normal candidates, refresh candidate `P`, change
+normal pressure-refresh behavior, borrow positive selected-field metadata,
+weaken strict gate rejection, or advance validation to `00:20`. The strict d02
+`00:10` gate remains failed, d02 must remain `2 km`, and best-track nudging
+remains forbidden.
+
+D77 remains inside the hidden diagnostic adapter source-staging boundary. It
+may use `KrosaBaseStateProvider` with `moved_candidate_HGT` only to derive a
+hidden source for adapter staging; it is not a closure permission, not a normal
+candidate writer, not a pressure-refresh producer, and not selected-field gate
+evidence. Provider-derived source metadata and source-child deltas remain
+disqualifying diagnostic context even when they explain or reduce source/child
+differences. A closure must not use that metadata to patch candidate fields,
+refresh candidate `P`, borrow positive selected-field metadata, or weaken strict
+gate rejection.
+
+Any D77 `PHB` reconstruction is diagnostic provider evidence only. It must not
+be described as WRF rebalance semantics, must not be treated as a candidate
+`PHB` producer, and must not be used to close pressure-refresh or base-state
+validation. D77 must not write normal candidates, change normal
+pressure-refresh behavior, advance validation to `00:20`, reduce d02 below
+`2 km`, or introduce best-track nudging.
 
 ## Hard Prohibitions
 
@@ -1184,6 +1202,10 @@ The following schemes are forbidden:
   `RAINNC` as a real surface-diagnostics producer;
 - treating hidden adapter source-child delta/provenance metadata as closure or
   gate evidence, even when the deltas are zero or the counts are useful;
+- treating provider-derived hidden source metadata or provider-derived
+  source-child deltas as closure or gate evidence;
+- treating provider-derived `PHB` reconstruction as WRF rebalance semantics or
+  as a validated candidate `PHB`/pressure producer;
 - allowing a closure-modified file to satisfy the normal validation gate
   without an explicit diagnostic-closure mode;
 - emitting closure fields without metadata that marks them as non-physical

@@ -1459,14 +1459,61 @@ void assert_experimental_pressure_refresh_apply(
       {true, false, false, "selected_field_pressure_refresh_experimental_apply_v0"});
 }
 
+void assert_diagnostic_adapter_provider_source_log(const std::string& log) {
+  assert(
+      log.find("\"diagnostic_adapter_provider_source_version\": "
+               "\"d77_provider_source_v0\"") != std::string::npos);
+  assert(
+      log.find("\"diagnostic_adapter_provider_source_origin\": "
+               "\"base_state_reconstruction_provider+moved_candidate_HGT\"") !=
+      std::string::npos);
+  assert(
+      log.find("\"diagnostic_adapter_provider_source_source_origin\": "
+               "\"base_state_reconstruction_provider+moved_candidate_HGT\"") !=
+      std::string::npos);
+  assert(
+      log.find("\"diagnostic_adapter_provider_source_provider_source\": "
+               "\"base_state_reconstruction_provider\"") != std::string::npos);
+  assert(
+      log.find("\"diagnostic_adapter_provider_source_terrain_source\": "
+               "\"moved_candidate_HGT\"") != std::string::npos);
+  assert(
+      log.find("\"diagnostic_adapter_provider_source_terrain_provenance\": "
+               "\"override:moved_candidate_HGT\"") != std::string::npos);
+  assert(
+      log.find("\"diagnostic_adapter_provider_source_ht_source\": "
+               "\"output_static.hgt\"") != std::string::npos);
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_terrain_override_used"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_provider_ok"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_diagnostic_only"));
+  assert(!json_bool_field(log, "diagnostic_adapter_provider_source_gate_candidate"));
+  assert(!json_bool_field(log, "diagnostic_adapter_provider_source_integrator_output"));
+  assert(!json_bool_field(log, "diagnostic_adapter_provider_source_writes_candidate"));
+  assert(!json_bool_field(log, "diagnostic_adapter_provider_source_writes_netcdf"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_no_candidate_write"));
+  assert(!json_bool_field(log, "diagnostic_adapter_provider_source_uses_reference_end_truth"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_no_reference_end_truth"));
+  assert(!json_bool_field(log, "diagnostic_adapter_provider_source_uses_direct_p_shortcut"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_no_direct_p_shortcut"));
+  assert(!json_bool_field(log, "diagnostic_adapter_provider_source_reads_direct_p"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_wrote_pb"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_wrote_t_init"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_wrote_mub"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_wrote_alb"));
+  assert(json_bool_field(log, "diagnostic_adapter_provider_source_wrote_phb"));
+  assert(json_bool_field(
+      log,
+      "diagnostic_adapter_provider_source_provider_reconstructed_phb_not_wrf_rebalance_validated"));
+}
+
 void assert_diagnostic_adapter_source_child_delta_json_field(
     const std::string& log,
     const std::string_view field) {
   const std::string prefix =
       "diagnostic_adapter_source_child_delta_" + std::string(field);
   assert(json_number_field(log, prefix + "_compared_value_count") > 0.0);
-  assert(json_number_field(log, prefix + "_differing_value_count") == 0.0);
-  assert(json_number_field(log, prefix + "_max_abs_diff") == 0.0);
+  assert(json_number_field(log, prefix + "_differing_value_count") >= 0.0);
+  assert(json_number_field(log, prefix + "_max_abs_diff") >= 0.0);
 }
 
 void assert_diagnostic_adapter_source_child_delta_log(const std::string& log) {
@@ -1478,7 +1525,7 @@ void assert_diagnostic_adapter_source_child_delta_log(const std::string& log) {
   assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_integrator_output"));
   assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_writes_candidate"));
   assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_writes_netcdf"));
-  assert(json_bool_field(log, "diagnostic_adapter_source_child_delta_values_identical"));
+  assert(!json_bool_field(log, "diagnostic_adapter_source_child_delta_values_identical"));
   const auto compared =
       json_number_field(log, "diagnostic_adapter_source_child_delta_compared_value_count");
   assert(compared > 0.0);
@@ -1486,9 +1533,9 @@ void assert_diagnostic_adapter_source_child_delta_log(const std::string& log) {
       compared ==
       json_number_field(log, "diagnostic_adapter_source_staging_staged_value_count"));
   assert(
-      json_number_field(log, "diagnostic_adapter_source_child_delta_differing_value_count") ==
+      json_number_field(log, "diagnostic_adapter_source_child_delta_differing_value_count") >
       0.0);
-  assert(json_number_field(log, "diagnostic_adapter_source_child_delta_max_abs_diff") == 0.0);
+  assert(json_number_field(log, "diagnostic_adapter_source_child_delta_max_abs_diff") > 0.0);
   assert_diagnostic_adapter_source_child_delta_json_field(log, "phb");
   assert_diagnostic_adapter_source_child_delta_json_field(log, "mub");
   assert_diagnostic_adapter_source_child_delta_json_field(log, "ht");
@@ -1503,8 +1550,83 @@ void assert_diagnostic_adapter_source_child_delta_attr_field(
   const std::string prefix =
       "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_" + std::string(field);
   assert(read_double_attr(file_id, prefix + "_COMPARED_VALUE_COUNT") > 0.0);
-  assert(read_double_attr(file_id, prefix + "_DIFFERING_VALUE_COUNT") == 0.0);
-  assert(read_double_attr(file_id, prefix + "_MAX_ABS_DIFF") == 0.0);
+  assert(read_double_attr(file_id, prefix + "_DIFFERING_VALUE_COUNT") >= 0.0);
+  assert(read_double_attr(file_id, prefix + "_MAX_ABS_DIFF") >= 0.0);
+}
+
+void assert_diagnostic_adapter_provider_source_attrs(const int file_id) {
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_VERSION") ==
+      "d77_provider_source_v0");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_ORIGIN") ==
+      "base_state_reconstruction_provider+moved_candidate_HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_SOURCE_ORIGIN") ==
+      "base_state_reconstruction_provider+moved_candidate_HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_SOURCE") ==
+      "base_state_reconstruction_provider");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_SOURCE") ==
+      "moved_candidate_HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_PROVENANCE") ==
+      "override:moved_candidate_HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_OVERRIDE_USED") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_HT_SOURCE") ==
+      "output_static.hgt");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_OK") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_DIAGNOSTIC_ONLY") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_GATE_CANDIDATE") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_INTEGRATOR_OUTPUT") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WRITES_CANDIDATE") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WRITES_NETCDF") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_NO_CANDIDATE_WRITE") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_USES_REFERENCE_END_TRUTH") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_NO_REFERENCE_END_TRUTH") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_USES_DIRECT_P_SHORTCUT") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_NO_DIRECT_P_SHORTCUT") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_READS_DIRECT_P") ==
+      "false");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_PB") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_T_INIT") ==
+      "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_MUB") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_ALB") == "true");
+  assert(read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_PHB") == "true");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_RECONSTRUCTED_PHB_NOT_WRF_REBALANCE_VALIDATED") ==
+      "true");
 }
 
 void assert_diagnostic_adapter_source_child_delta_attrs(const int file_id) {
@@ -1537,7 +1659,7 @@ void assert_diagnostic_adapter_source_child_delta_attrs(const int file_id) {
       "false");
   assert(
       read_text_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_VALUES_IDENTICAL") ==
-      "true");
+      "false");
   const auto compared = read_double_attr(
       file_id,
       "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_COMPARED_VALUE_COUNT");
@@ -1548,9 +1670,9 @@ void assert_diagnostic_adapter_source_child_delta_attrs(const int file_id) {
   assert(
       read_double_attr(
           file_id,
-          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_DIFFERING_VALUE_COUNT") == 0.0);
+          "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_DIFFERING_VALUE_COUNT") > 0.0);
   assert(
-      read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_MAX_ABS_DIFF") ==
+      read_double_attr(file_id, "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_MAX_ABS_DIFF") >
       0.0);
   assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "PHB");
   assert_diagnostic_adapter_source_child_delta_attr_field(file_id, "MUB");
@@ -1601,6 +1723,7 @@ void assert_diagnostic_adapter_report_path(
                   "\"explicit_base_state_source_staging_provider\"") != std::string::npos);
   assert(log.find("\"diagnostic_adapter_source_staging_source\": "
                   "\"selected_field_integrator_v0\"") == std::string::npos);
+  assert_diagnostic_adapter_provider_source_log(log);
   assert(json_bool_field(log, "diagnostic_adapter_source_staging_ok"));
   assert(json_bool_field(log, "diagnostic_adapter_source_staging_diagnostic_only"));
   assert(!json_bool_field(log, "diagnostic_adapter_source_staging_gate_candidate"));
@@ -1731,10 +1854,47 @@ void assert_diagnostic_adapter_report_path(
       read_double_attr(
           file_id,
           "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_EXPOSED_VALUE_COUNT") == 0.0);
+  assert_diagnostic_adapter_provider_source_attrs(file_id);
   assert_diagnostic_adapter_source_child_delta_attrs(file_id);
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
   const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
+  assert(events.find(":diagnostic_adapter_provider_source(") != std::string::npos);
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "origin") ==
+      "base_state_reconstruction_provider+moved_candidate_HGT");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "source_origin") ==
+      "base_state_reconstruction_provider+moved_candidate_HGT");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "provider_ok") ==
+      "true");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "gate_candidate") ==
+      "false");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "integrator_output") ==
+      "false");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "writes_candidate") ==
+      "false");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "reads_direct_p") ==
+      "false");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "terrain_source") ==
+      "moved_candidate_HGT");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "terrain_provenance") ==
+      "override:moved_candidate_HGT");
+  assert(
+      timeline_field_value(events, "diagnostic_adapter_provider_source", "wrote_phb") ==
+      "true");
+  assert(
+      timeline_field_value(
+          events,
+          "diagnostic_adapter_provider_source",
+          "provider_reconstructed_phb_not_wrf_rebalance_validated") == "true");
   assert(events.find(":diagnostic_adapter_source_staging(") != std::string::npos);
   assert(
       timeline_field_value(events, "diagnostic_adapter_source_staging", "provider") ==
@@ -1773,7 +1933,7 @@ void assert_diagnostic_adapter_report_path(
       timeline_field_value(
           events,
           "diagnostic_adapter_source_child_delta",
-          "values_identical") == "true");
+          "values_identical") == "false");
   assert(
       timeline_u64_field(events, "diagnostic_adapter_source_child_delta", "compared_values") ==
       static_cast<std::uint64_t>(
@@ -1782,13 +1942,18 @@ void assert_diagnostic_adapter_report_path(
               "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_COMPARED_VALUE_COUNT")));
   assert(
       timeline_u64_field(events, "diagnostic_adapter_source_child_delta", "differing_values") ==
-      0U);
+      static_cast<std::uint64_t>(
+          read_double_attr(
+              file_id,
+              "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_CHILD_DELTA_DIFFERING_VALUE_COUNT")));
+  assert(timeline_u64_field(events, "diagnostic_adapter_source_child_delta", "differing_values") >
+         0U);
   assert(
       std::stod(
           timeline_field_value(
               events,
               "diagnostic_adapter_source_child_delta",
-              "max_abs_diff")) == 0.0);
+              "max_abs_diff")) > 0.0);
   assert(events.find(":diagnostic_adapter_report(") != std::string::npos);
   assert(timeline_field_value(events, "diagnostic_adapter_report", "opt_in") == "true");
   assert(timeline_field_value(events, "diagnostic_adapter_report", "diagnostic_only") == "true");

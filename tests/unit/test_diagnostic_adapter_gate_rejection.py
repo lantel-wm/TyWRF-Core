@@ -60,6 +60,28 @@ D75_SOURCE_STAGING_PROVIDER_REPORT = {
     "diagnostic_adapter_source_staging_invalid_count": 0,
 }
 
+D77_PROVIDER_SOURCE_METADATA_REPORT = {
+    "status": "diagnostic_adapter_provider_source_metadata_reported",
+    "candidate_kind": "integrator_candidate",
+    "source_origin": "base_state_reconstruction_provider+moved_candidate_HGT",
+    "terrain_source": "moved_candidate_HGT",
+    "terrain_provenance": "override:moved_candidate_HGT",
+    "provider_ok": True,
+    "wrote_pb": True,
+    "wrote_t_init": True,
+    "wrote_mub": True,
+    "wrote_alb": True,
+    "wrote_phb": True,
+    "diagnostic_only": True,
+    "gate_candidate": False,
+    "integrator_output": False,
+    "writes_candidate": False,
+    "uses_reference_end_truth": False,
+    "uses_direct_p_shortcut": False,
+    "reads_direct_p": False,
+    "provider_reconstructed_phb_not_wrf_rebalance_validated": True,
+}
+
 
 def _bool_attr(value: bool) -> str:
     return "true" if value else "false"
@@ -210,6 +232,74 @@ def _attrs_from_source_staging_provider_report(
         "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_INVALID_COUNT": report[
             "diagnostic_adapter_source_staging_invalid_count"
         ],
+    }
+
+
+def _attrs_from_provider_source_metadata_report(
+    report: dict[str, object],
+) -> dict[str, object]:
+    assert report["status"] == "diagnostic_adapter_provider_source_metadata_reported"
+    assert report["candidate_kind"] == "integrator_candidate"
+    assert (
+        report["source_origin"]
+        == "base_state_reconstruction_provider+moved_candidate_HGT"
+    )
+    assert report["terrain_source"] == "moved_candidate_HGT"
+    assert report["terrain_provenance"] == "override:moved_candidate_HGT"
+    assert report["provider_ok"] is True
+    assert report["wrote_pb"] is True
+    assert report["wrote_t_init"] is True
+    assert report["wrote_mub"] is True
+    assert report["wrote_alb"] is True
+    assert report["wrote_phb"] is True
+    assert report["diagnostic_only"] is True
+    assert report["gate_candidate"] is False
+    assert report["integrator_output"] is False
+    assert report["writes_candidate"] is False
+    assert report["uses_reference_end_truth"] is False
+    assert report["uses_direct_p_shortcut"] is False
+    assert report["reads_direct_p"] is False
+    assert (
+        report["provider_reconstructed_phb_not_wrf_rebalance_validated"] is True
+    )
+
+    prefix = "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE"
+    return {
+        "DX": 2000.0,
+        "DY": 2000.0,
+        "TYWRF_DIAGNOSTIC_ONLY": "false",
+        "TYWRF_GATE_CANDIDATE": "true",
+        "TYWRF_INTEGRATOR_OUTPUT": "true",
+        "TYWRF_VALIDATION_GATE_ONLY": "false",
+        "TYWRF_CANDIDATE_KIND": report["candidate_kind"],
+        f"{prefix}_VERSION": "d77_provider_source_metadata_v0",
+        f"{prefix}_SOURCE_ORIGIN": report["source_origin"],
+        f"{prefix}_TERRAIN_SOURCE": report["terrain_source"],
+        f"{prefix}_TERRAIN_PROVENANCE": report["terrain_provenance"],
+        f"{prefix}_PROVIDER_OK": _bool_attr(report["provider_ok"]),
+        f"{prefix}_WROTE_PB": _bool_attr(report["wrote_pb"]),
+        f"{prefix}_WROTE_T_INIT": _bool_attr(report["wrote_t_init"]),
+        f"{prefix}_WROTE_MUB": _bool_attr(report["wrote_mub"]),
+        f"{prefix}_WROTE_ALB": _bool_attr(report["wrote_alb"]),
+        f"{prefix}_WROTE_PHB": _bool_attr(report["wrote_phb"]),
+        f"{prefix}_DIAGNOSTIC_ONLY": _bool_attr(report["diagnostic_only"]),
+        f"{prefix}_GATE_CANDIDATE": _bool_attr(report["gate_candidate"]),
+        f"{prefix}_INTEGRATOR_OUTPUT": _bool_attr(report["integrator_output"]),
+        f"{prefix}_WRITES_CANDIDATE": _bool_attr(report["writes_candidate"]),
+        f"{prefix}_USES_REFERENCE_END_TRUTH": _bool_attr(
+            report["uses_reference_end_truth"]
+        ),
+        f"{prefix}_USES_DIRECT_P_SHORTCUT": _bool_attr(
+            report["uses_direct_p_shortcut"]
+        ),
+        f"{prefix}_READS_DIRECT_P": _bool_attr(report["reads_direct_p"]),
+        f"{prefix}_PROVIDER_RECONSTRUCTED_PHB_NOT_WRF_REBALANCE_VALIDATED": (
+            _bool_attr(
+                report[
+                    "provider_reconstructed_phb_not_wrf_rebalance_validated"
+                ]
+            )
+        ),
     }
 
 
@@ -423,6 +513,147 @@ def test_d75_source_staging_provider_metadata_is_rejected_by_strict_0010_gate(
         assert (
             dataset.getncattr(
                 "TYWRF_DIAGNOSTIC_ADAPTER_SOURCE_STAGING_USES_DIRECT_P_SHORTCUT"
+            )
+            == "false"
+        )
+
+    assert {field["status"] for field in cycle["fields"]} == {"passed"}
+    assert {
+        metric["status"]
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
+    assert payload["first_failure"]["cycle_index"] == 1
+    assert payload["first_failure"]["end_time"] == END_00_10
+    assert payload["first_failure"]["field"] is None
+    assert payload["first_failure"]["diagnostic"] == "candidate_metadata"
+
+
+def test_d77_provider_source_metadata_first_rejected_by_strict_0010_gate(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_FILE)
+    _write_wrfout(
+        candidate_dir / END_FILE,
+        attrs=_attrs_from_provider_source_metadata_report(
+            D77_PROVIDER_SOURCE_METADATA_REPORT
+        ),
+    )
+
+    report_path = tmp_path / "strict_gate.json"
+    exit_code = cycle_gate_main(
+        [
+            "--reference-dir",
+            str(reference_dir),
+            "--candidate-dir",
+            str(candidate_dir),
+            "--start",
+            START,
+            "--end",
+            END_00_10,
+            "--interval-minutes",
+            "10",
+            "--output",
+            str(report_path),
+            "--pretty",
+        ]
+    )
+    capsys.readouterr()
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    cycle = payload["cycles"][0]
+    diagnostics = {metric["name"]: metric for metric in cycle["diagnostics"]}
+    metadata = diagnostics["candidate_metadata"]
+    message = metadata["message"] or ""
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["summary"] == {"total": 1, "passed": 0, "failed": 1}
+    assert payload["interval_minutes"] == 10
+    assert len(payload["cycles"]) == 1
+    assert cycle["start_time"] == START
+    assert cycle["end_time"] == END_00_10
+    assert "2025-07-26_00:20:00" not in json.dumps(payload)
+
+    assert cycle["diagnostics"][0]["name"] == "candidate_metadata"
+    assert metadata["status"] == "failed"
+    assert "TYWRF_DIAGNOSTIC_ONLY=true" not in message
+    assert "TYWRF_GATE_CANDIDATE=false" not in message
+    assert "TYWRF_INTEGRATOR_OUTPUT=false" not in message
+    assert "TYWRF_CANDIDATE_KIND=integrator_candidate" not in message
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_SOURCE_ORIGIN="
+        "base_state_reconstruction_provider+moved_candidate_HGT"
+    ) in message
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_SOURCE="
+        "moved_candidate_HGT"
+    ) in message
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_TERRAIN_PROVENANCE="
+        "override:moved_candidate_HGT"
+    ) in message
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_OK=true"
+        in message
+    )
+    assert "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_PB=true" in message
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_T_INIT=true"
+        in message
+    )
+    assert "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_MUB=true" in message
+    assert "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_ALB=true" in message
+    assert "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WROTE_PHB=true" in message
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_DIAGNOSTIC_ONLY=true"
+        in message
+    )
+    assert (
+        "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_PROVIDER_RECONSTRUCTED_PHB_"
+        "NOT_WRF_REBALANCE_VALIDATED=true"
+    ) in message
+
+    with netCDF4.Dataset(candidate_dir / END_FILE) as dataset:
+        assert dataset.getncattr("TYWRF_GATE_CANDIDATE") == "true"
+        assert dataset.getncattr("TYWRF_INTEGRATOR_OUTPUT") == "true"
+        assert dataset.getncattr("TYWRF_CANDIDATE_KIND") == "integrator_candidate"
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_GATE_CANDIDATE"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_INTEGRATOR_OUTPUT"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_WRITES_CANDIDATE"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_USES_REFERENCE_END_TRUTH"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_USES_DIRECT_P_SHORTCUT"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_DIAGNOSTIC_ADAPTER_PROVIDER_SOURCE_READS_DIRECT_P"
             )
             == "false"
         )
