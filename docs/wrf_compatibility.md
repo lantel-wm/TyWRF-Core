@@ -1799,6 +1799,29 @@ not touch `P`, `MU`, `PB`, or `PHB`, must not invoke pressure refresh,
 physics, or best-track nudging, must not change d02 below `2 km`, and must not
 advance or report validation at `00:20`.
 
+D86 is complete, validated, and pushed at commit `83162d3`
+(`Add self-advection wind tendency source`). The `self_advection` source is a
+non-oracle selected-field `U`/`V` tendency source and its real KROSA output
+passes the `candidate_metadata` eligibility check, but that metadata result is
+not a field pass. The real strict d02 `2025-07-26_00:10:00` gate still fails
+first on `U`, so compatibility work remains stopped at `00:10` and must not
+advance to `00:20`.
+
+D87 may add only selected-field `U`/`V` `self_advection` subcycling. The
+subcycling path must remain non-oracle and may use only candidate/start-state
+wind tendency inputs already allowed for the selected-field path. It must not
+use reference-end truth, WRF end-state deltas, oracle/reference-copy data, or
+reference-end-derived tendencies. It must not touch `P`, `MU`, `PB`, or `PHB`,
+must not run pressure refresh, must not invoke physics or best-track nudging,
+and must not change d02 resolution below `2 km`.
+
+D87 subcycling metadata may make an artifact gate-eligible only as
+`candidate_metadata` from the normal non-oracle candidate path. Metadata,
+substep counts, source reports, or tendency reports are not pass proof. The
+only compatibility proof remains a real strict `2025-07-26_00:10:00` d02 run
+whose fields and TC diagnostics pass; until then validation must not proceed to
+`00:20`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

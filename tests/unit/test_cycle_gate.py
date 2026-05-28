@@ -24,6 +24,11 @@ PRODUCTION_CANDIDATE_ATTRS = {
     "TYWRF_VALIDATION_GATE_ONLY": "false",
     "TYWRF_CANDIDATE_KIND": "integrator_candidate",
 }
+WIND_TENDENCY_SUBCYCLING_ATTRS = {
+    "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT": 75,
+    "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS": 8,
+    "TYWRF_WIND_TENDENCY_TOTAL_SECONDS": 600,
+}
 
 
 def _production_attrs(overrides: dict[str, object] | None = None) -> dict[str, object]:
@@ -43,6 +48,7 @@ def _wind_tendency_evidence_attrs(
         "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": "true",
         "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "false",
         "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY": "false",
+        **WIND_TENDENCY_SUBCYCLING_ATTRS,
     }
     attrs.update(overrides or {})
     return attrs
@@ -400,13 +406,7 @@ def test_cycle_gate_rejects_wind_tendency_placeholder_metadata_at_0010(
     wind_attrs: dict[str, object],
     expected_message: str,
 ) -> None:
-    attrs = _production_attrs(
-        {
-            "TYWRF_WIND_TENDENCY_OPT_IN": "true",
-            "TYWRF_WIND_TENDENCY_APPLIED": "true",
-            **wind_attrs,
-        }
-    )
+    attrs = _production_attrs(_wind_tendency_evidence_attrs(wind_attrs))
     reference_dir, candidate_dir = _write_10min_progressive_pair(
         tmp_path,
         candidate_attrs=attrs,
@@ -447,12 +447,16 @@ def test_cycle_gate_rejects_wind_tendency_non_evidence_even_when_validation_gate
     tmp_path: Path,
 ) -> None:
     attrs = _production_attrs(
+        _wind_tendency_evidence_attrs(
+            {
+                "TYWRF_WIND_TENDENCY_GATE_EVIDENCE": "false",
+            }
+        )
+    )
+    attrs.update(
         {
             "TYWRF_VALIDATION_GATE_ONLY": "true",
             "TYWRF_INTEGRATOR_OUTPUT": "false",
-            "TYWRF_WIND_TENDENCY_OPT_IN": "true",
-            "TYWRF_WIND_TENDENCY_APPLIED": "true",
-            "TYWRF_WIND_TENDENCY_GATE_EVIDENCE": "false",
         }
     )
     reference_dir, candidate_dir = _write_10min_progressive_pair(
@@ -498,7 +502,7 @@ def test_cycle_gate_allows_wind_tendency_evidence_metadata(
     assert metadata.status == "passed"
 
 
-def test_cycle_gate_self_advection_wind_tendency_enters_normal_field_gate(
+def test_cycle_gate_self_advection_subcycling_metadata_enters_normal_field_gate(
     tmp_path: Path,
 ) -> None:
     reference_dir, candidate_dir = _write_pair(
@@ -512,10 +516,15 @@ def test_cycle_gate_self_advection_wind_tendency_enters_normal_field_gate(
     cycle = report.cycles[0]
     diagnostics = {metric.name: metric for metric in cycle.diagnostics}
     fields = {field.variable: field for field in cycle.fields}
+    with netCDF4.Dataset(candidate_dir / END_FILE) as dataset:
+        for name, expected_value in WIND_TENDENCY_SUBCYCLING_ATTRS.items():
+            assert dataset.getncattr(name) == expected_value
 
     assert report.status == "failed"
     assert cycle.status == "failed"
     assert diagnostics["candidate_metadata"].status == "passed"
+    assert payload["cycles"][0]["diagnostics"][0]["name"] == "candidate_metadata"
+    assert payload["cycles"][0]["diagnostics"][0]["status"] == "passed"
     assert fields["U"].status == "failed"
     assert fields["U"].source_status == "threshold_exceeded"
     assert {

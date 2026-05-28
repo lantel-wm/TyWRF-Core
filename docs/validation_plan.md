@@ -1567,6 +1567,27 @@ must not invoke pressure refresh, physics, or best-track nudging; must not
 lower d02 below `2 km`; and must not run or report `00:20` as validation
 progress.
 
+D86 is complete at commit `83162d3`
+(`Add self-advection wind tendency source`). It was validated and pushed. The
+real `self_advection` candidate passes `candidate_metadata`, so the strict gate
+can evaluate the artifact instead of rejecting it on metadata, but the real
+`2025-07-26_00:10:00` d02 gate still fails first on `U`. This remains a failed
+`00:10` endpoint, not permission to advance to `00:20`.
+
+D87 validation scope is selected-field `U`/`V` `self_advection` subcycling
+only. It may vary the internal substep application of the non-oracle wind
+tendency source, but it must not use reference-end truth, oracle/reference-copy
+data, WRF end-state deltas, reference-end-derived tendencies, pressure refresh,
+physics, best-track nudging, or any d02 resolution change. It must not handle
+`P`, `MU`, `PB`, or `PHB`.
+
+D87 subcycling metadata may be considered gate-eligible only as normal
+`candidate_metadata`. Subcycling reports, source metadata, and finite
+candidate fields are not validation-pass proof by themselves. A pass requires
+the real strict `2025-07-26_00:10:00` d02 field thresholds and TC diagnostic
+gates to pass from that non-oracle candidate; otherwise validation remains
+stopped at `00:10`.
+
 Example:
 
 ```bash

@@ -902,6 +902,9 @@ void assert_no_wind_tendency_attrs(const int file_id) {
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_WRITTEN_FIELDS"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_STATUS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_TOTAL_SECONDS"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_V_POINTS"));
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_UPDATED_U_POINTS"));
@@ -1644,6 +1647,7 @@ void assert_hidden_apply_flag_absent_from_help(
   assert(status == 0);
   const auto help = read_file(help_log);
   assert(help.find("--wind-tendency-source") != std::string::npos);
+  assert(help.find("--wind-tendency-substeps") != std::string::npos);
   assert(help.find("--pressure-refresh") != std::string::npos);
   assert(help.find("--pressure-column-probe") != std::string::npos);
   assert(help.find("--pressure-column-levels") != std::string::npos);
@@ -2265,7 +2269,8 @@ void assert_wind_tendency_opt_in_output(
     const std::string_view source_kind,
     const bool expect_uv_changes,
     const bool expect_gate_evidence,
-    const bool expect_zero_or_identity_only) {
+    const bool expect_zero_or_identity_only,
+    const int expected_self_advection_substeps = 0) {
   int baseline_file_id = -1;
   int file_id = -1;
   check_nc(nc_open(baseline_output.string().c_str(), NC_NOWRITE, &baseline_file_id), "open wind baseline");
@@ -2289,6 +2294,27 @@ void assert_wind_tendency_opt_in_output(
   assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_STATUS") == "ok");
   assert(read_double_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_V_POINTS") > 0.0);
+  if (expected_self_advection_substeps > 0) {
+    assert(
+        read_int_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT") ==
+        expected_self_advection_substeps);
+    assert(read_double_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS") == 8.0);
+    assert(
+        read_double_attr(file_id, "TYWRF_WIND_TENDENCY_TOTAL_SECONDS") ==
+        8.0 * static_cast<double>(expected_self_advection_substeps));
+    assert(
+        read_double_attr(file_id, "TYWRF_WIND_TENDENCY_UPDATED_U_POINTS") ==
+        read_double_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS") *
+            static_cast<double>(expected_self_advection_substeps));
+    assert(
+        read_double_attr(file_id, "TYWRF_WIND_TENDENCY_UPDATED_V_POINTS") ==
+        read_double_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_V_POINTS") *
+            static_cast<double>(expected_self_advection_substeps));
+  } else {
+    assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT"));
+    assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS"));
+    assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_TOTAL_SECONDS"));
+  }
 
   const auto changed_u = read_double_attr(file_id, "TYWRF_WIND_TENDENCY_CHANGED_U_POINTS");
   const auto changed_v = read_double_attr(file_id, "TYWRF_WIND_TENDENCY_CHANGED_V_POINTS");
@@ -2342,6 +2368,15 @@ void assert_wind_tendency_opt_in_output(
   assert(
       timeline_field_value(events, "wind_tendency_apply", "uses_reference_end_truth") ==
       "false");
+  if (expected_self_advection_substeps > 0) {
+    assert(
+        timeline_field_value(events, "wind_tendency_apply", "substep_count") ==
+        std::to_string(expected_self_advection_substeps));
+    assert(timeline_field_value(events, "wind_tendency_apply", "substep_dt_seconds") == "8");
+    assert(
+        timeline_field_value(events, "wind_tendency_apply", "total_seconds") ==
+        std::to_string(8 * expected_self_advection_substeps));
+  }
   assert(
       timeline_u64_field(events, "wind_tendency_apply", "changed_u_points") ==
       static_cast<std::uint64_t>(changed_u));
@@ -2374,6 +2409,19 @@ void assert_wind_tendency_opt_in_output(
           "\"wind_tendency_zero_or_identity_only\": " +
           std::string(expect_zero_or_identity_only ? "true" : "false")) !=
       std::string::npos);
+  if (expected_self_advection_substeps > 0) {
+    assert(
+        log.find(
+            "\"wind_tendency_substep_count\": " +
+            std::to_string(expected_self_advection_substeps)) != std::string::npos);
+    assert(log.find("\"wind_tendency_substep_dt_seconds\": 8") != std::string::npos);
+    assert(
+        log.find(
+            "\"wind_tendency_total_seconds\": " +
+            std::to_string(8 * expected_self_advection_substeps)) != std::string::npos);
+  } else {
+    assert(log.find("wind_tendency_substep_count") == std::string::npos);
+  }
 }
 
 void assert_wind_tendency_paths(
@@ -2389,11 +2437,14 @@ void assert_wind_tendency_paths(
   const auto self_advection_output = root / "tywrf_selected_field_wind_self_advection";
   const auto self_advection_alias_output =
       root / "tywrf_selected_field_wind_self_advection_alias";
+  const auto self_advection_substeps_output =
+      root / "tywrf_selected_field_wind_self_advection_substeps";
   const auto explicit_none_log = root / "wind_none.log";
   const auto zero_log = root / "wind_zero.log";
   const auto identity_log = root / "wind_identity.log";
   const auto self_advection_log = root / "wind_self_advection.log";
   const auto self_advection_alias_log = root / "wind_self_advection_alias.log";
+  const auto self_advection_substeps_log = root / "wind_self_advection_substeps.log";
 
   run_command(
       base_command(executable, d01_start, d02_start, template_path, explicit_none_output) +
@@ -2438,7 +2489,8 @@ void assert_wind_tendency_paths(
       "self_advection",
       true,
       true,
-      false);
+      false,
+      1);
 
   run_command(
       base_command(executable, d01_start, d02_start, template_path, self_advection_alias_output) +
@@ -2451,7 +2503,37 @@ void assert_wind_tendency_paths(
       "self_advection",
       true,
       true,
-      false);
+      false,
+      1);
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, self_advection_substeps_output) +
+      " --wind-tendency-source self_advection --wind-tendency-substeps 3 >" +
+      shell_quote(self_advection_substeps_log) + " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output,
+      self_advection_substeps_output,
+      self_advection_substeps_log,
+      "self_advection",
+      true,
+      true,
+      false,
+      3);
+  int one_step_file_id = -1;
+  int substeps_file_id = -1;
+  check_nc(nc_open(self_advection_output.string().c_str(), NC_NOWRITE, &one_step_file_id), "open one-step self advection");
+  check_nc(nc_open(self_advection_substeps_output.string().c_str(), NC_NOWRITE, &substeps_file_id), "open substep self advection");
+  assert(
+      std::fabs(
+          read_3d_value(substeps_file_id, "U", 1, 2, 0) -
+          read_3d_value(one_step_file_id, "U", 1, 2, 0)) > kTolerance);
+  assert(
+      std::fabs(
+          read_3d_value(substeps_file_id, "V", 1, 10, 9) -
+          read_3d_value(one_step_file_id, "V", 1, 10, 9)) > kTolerance);
+  assert_nonwind_fields_match(one_step_file_id, substeps_file_id, "self-advection substeps");
+  check_nc(nc_close(substeps_file_id), "close substep self advection");
+  check_nc(nc_close(one_step_file_id), "close one-step self advection");
 }
 
 void run_rejection_tests(
@@ -2539,6 +2621,23 @@ void run_rejection_tests(
       " --wind-tendency-source bogus >/dev/null 2>&1");
   assert(bad_wind_source_status != 0);
   assert(!std::filesystem::exists(bad_wind_source_output));
+
+  const std::vector<std::string> bad_wind_substep_options = {
+      "--wind-tendency-source self_advection --wind-tendency-substeps 0",
+      "--wind-tendency-source self_advection --wind-tendency-substeps -1",
+      "--wind-tendency-source self_advection --wind-tendency-substeps 601",
+      "--wind-tendency-source none --wind-tendency-substeps 2",
+      "--wind-tendency-source zero --wind-tendency-substeps 2",
+      "--wind-tendency-source identity --wind-tendency-substeps 2",
+  };
+  for (std::size_t index = 0; index < bad_wind_substep_options.size(); ++index) {
+    const auto output = root / ("bad_wind_substeps_" + std::to_string(index));
+    const auto status = run_command_status(
+        base_command(executable, d01_start, d02_start, template_path, output) + " " +
+        bad_wind_substep_options[index] + " >/dev/null 2>&1");
+    assert(status != 0);
+    assert(!std::filesystem::exists(output));
+  }
 
   const std::vector<std::string> bad_probe_options = {
       "--pressure-column-probe 9",

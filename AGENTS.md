@@ -26,6 +26,12 @@ Responsibilities:
 - Split work into independent subtasks.
 - Use subagents when available.
 - Keep subagent write scopes disjoint.
+- When spawning subagents, do not enable fast mode and do not select low
+  reasoning; use the inherited/default model and at least normal reasoning
+  unless the user explicitly changes this constraint.
+- Use a `600` second wait window for subagent rounds when waiting is needed.
+- Close completed or no-longer-needed subagents promptly after integrating
+  their results.
 - Review and integrate all subagent outputs.
 - Maintain `PROGRESS.md` with completed work, in-progress work, blockers, and next steps.
 - Report only the integrated state to the user.

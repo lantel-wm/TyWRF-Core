@@ -37,6 +37,9 @@ namespace {
 
 constexpr double kD02TargetDxMeters = 2000.0;
 constexpr double kD02ResolutionToleranceMeters = 0.5;
+constexpr std::size_t kDefaultWindTendencySubsteps = 1;
+constexpr std::size_t kMaxWindTendencySubsteps = 600;
+constexpr float kWindTendencySubstepSeconds = 8.0F;
 constexpr std::size_t kMaxPressureColumnProbeColumns = 8;
 constexpr std::size_t kMaxPressureColumnProbeLevels = 16;
 
@@ -128,6 +131,8 @@ struct Options {
   bool experimental_pressure_refresh_apply = false;
   bool diagnostic_adapter_report = false;
   WindTendencySourceKind wind_tendency_source = WindTendencySourceKind::none;
+  std::size_t wind_tendency_substeps = kDefaultWindTendencySubsteps;
+  bool has_wind_tendency_substeps = false;
   bool pretty = false;
   std::vector<std::string> variables;
   std::vector<std::pair<std::int32_t, std::int32_t>> pressure_column_probe_columns;
@@ -191,6 +196,9 @@ struct DiagnosticAdapterSourceChildDeltaReport {
 struct WindTendencyOptInReport {
   WindTendencySourceKind source_kind = WindTendencySourceKind::none;
   tywrf::dynamics::WindTendencyReport kernel;
+  std::size_t substep_count = kDefaultWindTendencySubsteps;
+  double dt_seconds = kWindTendencySubstepSeconds;
+  double total_integrated_seconds = kWindTendencySubstepSeconds;
   std::uint64_t changed_u_points = 0;
   std::uint64_t changed_v_points = 0;
 };
@@ -577,6 +585,8 @@ Options:
                                   KIND is none, zero, identity, self-advection, or self_advection;
                                   default none. zero and identity are placeholder sources only and
                                   are not validation-gate evidence.
+  --wind-tendency-substeps N     Positive self_advection-only substep count; default 1.
+                                  Each substep integrates 8 s. Maximum 600.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
@@ -619,6 +629,24 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       }).base(),
       token.end());
   return token;
+}
+
+[[nodiscard]] std::size_t parse_positive_bounded_size(
+    const std::string& value,
+    const std::string_view option,
+    const std::size_t upper_bound) {
+  const auto trimmed = trim_copy(value);
+  if (trimmed.empty() || trimmed.front() == '-' || trimmed.front() == '+') {
+    throw std::invalid_argument(std::string(option) + " expects a positive integer");
+  }
+  std::size_t parsed_chars = 0;
+  const auto parsed = std::stoull(trimmed, &parsed_chars);
+  if (parsed_chars != trimmed.size() || parsed == 0 || parsed > upper_bound) {
+    throw std::invalid_argument(
+        std::string(option) + " expects a positive integer no greater than " +
+        std::to_string(upper_bound));
+  }
+  return static_cast<std::size_t>(parsed);
 }
 
 [[nodiscard]] std::int32_t parse_nonnegative_int32(
@@ -802,6 +830,16 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
     } else if (arg.rfind("--wind-tendency-source=", 0) == 0) {
       options.wind_tendency_source =
           parse_wind_tendency_source(arg.substr(std::string("--wind-tendency-source=").size()), "--wind-tendency-source");
+    } else if (arg == "--wind-tendency-substeps") {
+      options.wind_tendency_substeps =
+          parse_positive_bounded_size(require_value(arg), arg, kMaxWindTendencySubsteps);
+      options.has_wind_tendency_substeps = true;
+    } else if (arg.rfind("--wind-tendency-substeps=", 0) == 0) {
+      options.wind_tendency_substeps = parse_positive_bounded_size(
+          arg.substr(std::string("--wind-tendency-substeps=").size()),
+          "--wind-tendency-substeps",
+          kMaxWindTendencySubsteps);
+      options.has_wind_tendency_substeps = true;
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
     } else if (arg == "--diagnostic-base-state-adapter-report") {
@@ -848,6 +886,11 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
   }
   if (!options.has_to_parent_start) {
     throw std::invalid_argument("--to-parent-start is required");
+  }
+  if (options.has_wind_tendency_substeps &&
+      options.wind_tendency_source != WindTendencySourceKind::self_advection) {
+    throw std::invalid_argument(
+        "--wind-tendency-substeps is only valid with --wind-tendency-source self_advection");
   }
   if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
     throw std::invalid_argument(
@@ -1258,56 +1301,90 @@ void apply_selected_field_wind_tendency(
       static_cast<const tywrf::FieldStorage3D<float>&>(v_advect_y);
   WindTendencyOptInReport wind_report;
   wind_report.source_kind = options.wind_tendency_source;
+  wind_report.substep_count =
+      options.wind_tendency_source == WindTendencySourceKind::self_advection
+          ? options.wind_tendency_substeps
+          : kDefaultWindTendencySubsteps;
+  wind_report.dt_seconds = kWindTendencySubstepSeconds;
+  wind_report.total_integrated_seconds =
+      static_cast<double>(wind_report.substep_count) * wind_report.dt_seconds;
   const bool gate_evidence = wind_tendency_gate_evidence(options.wind_tendency_source);
-  wind_report.kernel = tywrf::dynamics::apply_horizontal_wind_tendency(
-      tywrf::dynamics::WindTendencyViews<float>{
-          {u_target.view(),
-           u_source_const.view(),
-           u_advect_x_const.view(),
-           u_advect_y_const.view()},
-          {v_target.view(),
-           v_source_const.view(),
-           v_advect_x_const.view(),
-           v_advect_y_const.view()}},
-      tywrf::dynamics::WindTendencyConfig<float>{
-          .dt_seconds = 8.0F,
-          .dx_m = static_cast<float>(kD02TargetDxMeters),
-          .dy_m = static_cast<float>(kD02TargetDxMeters),
-          .enable_horizontal_advection = true,
-          .diagnostic_only = false,
-          .gate_candidate = gate_evidence,
-          .validation_gate_evidence = gate_evidence});
-  if (wind_report.kernel.status != tywrf::dynamics::WindTendencyStatus::ok) {
-    throw std::runtime_error(
-        "selected-field wind tendency failed: " +
-        std::string(wind_tendency_status_name(wind_report.kernel.status)));
+  tywrf::dynamics::WindTendencyReport aggregate_kernel;
+  for (std::size_t substep = 0; substep < wind_report.substep_count; ++substep) {
+    const auto kernel_report = tywrf::dynamics::apply_horizontal_wind_tendency(
+        tywrf::dynamics::WindTendencyViews<float>{
+            {u_target.view(),
+             u_source_const.view(),
+             u_advect_x_const.view(),
+             u_advect_y_const.view()},
+            {v_target.view(),
+             v_source_const.view(),
+             v_advect_x_const.view(),
+             v_advect_y_const.view()}},
+        tywrf::dynamics::WindTendencyConfig<float>{
+            .dt_seconds = kWindTendencySubstepSeconds,
+            .dx_m = static_cast<float>(kD02TargetDxMeters),
+            .dy_m = static_cast<float>(kD02TargetDxMeters),
+            .enable_horizontal_advection = true,
+            .diagnostic_only = false,
+            .gate_candidate = gate_evidence,
+            .validation_gate_evidence = gate_evidence});
+    if (kernel_report.status != tywrf::dynamics::WindTendencyStatus::ok) {
+      throw std::runtime_error(
+          "selected-field wind tendency failed: " +
+          std::string(wind_tendency_status_name(kernel_report.status)));
+    }
+    if (substep == 0) {
+      aggregate_kernel = kernel_report;
+    } else {
+      aggregate_kernel.updated_u_points += kernel_report.updated_u_points;
+      aggregate_kernel.updated_v_points += kernel_report.updated_v_points;
+    }
+    if (options.wind_tendency_source == WindTendencySourceKind::self_advection &&
+        substep + 1 < wind_report.substep_count) {
+      fill_halo_staging_from_active_clamped(u_target_const.view(), u_source);
+      fill_halo_staging_from_active_clamped(v_target_const.view(), v_source);
+      fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_x);
+      fill_halo_staging_from_active_clamped(u_target_const.view(), u_advect_y);
+      fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_x);
+      fill_halo_staging_from_active_clamped(v_target_const.view(), v_advect_y);
+    }
   }
+  wind_report.kernel = aggregate_kernel;
 
   copy_staging_active_to_field(u_target_const.view(), candidate.u.view());
   copy_staging_active_to_field(v_target_const.view(), candidate.v.view());
   wind_report.changed_u_points = changed_points(u_before, candidate.u);
   wind_report.changed_v_points = changed_points(v_before, candidate.v);
   report.wind_tendency = wind_report;
-  append_timeline_event(
-      report,
-      "wind_tendency_apply",
-      {
-          timeline_field("opt_in", "true"),
-          timeline_field("applied", "true"),
-          timeline_field(
-              "source_kind",
-              std::string(wind_tendency_source_name(options.wind_tendency_source))),
-          timeline_field("fields", "U_V"),
-          timeline_field(
-              "zero_or_identity_only",
-              wind_tendency_zero_or_identity_only(options.wind_tendency_source) ? "true"
-                                                                                : "false"),
-          timeline_field("gate_evidence", gate_evidence ? "true" : "false"),
-          timeline_field("validation_gate_evidence", gate_evidence ? "true" : "false"),
-          timeline_field("uses_reference_end_truth", "false"),
-          timeline_field("changed_u_points", wind_report.changed_u_points),
-          timeline_field("changed_v_points", wind_report.changed_v_points),
-      });
+  std::vector<std::pair<std::string, std::string>> timeline_fields = {
+      timeline_field("opt_in", "true"),
+      timeline_field("applied", "true"),
+      timeline_field(
+          "source_kind",
+          std::string(wind_tendency_source_name(options.wind_tendency_source))),
+      timeline_field("fields", "U_V"),
+      timeline_field(
+          "zero_or_identity_only",
+          wind_tendency_zero_or_identity_only(options.wind_tendency_source) ? "true"
+                                                                            : "false"),
+      timeline_field("gate_evidence", gate_evidence ? "true" : "false"),
+      timeline_field("validation_gate_evidence", gate_evidence ? "true" : "false"),
+      timeline_field("uses_reference_end_truth", "false"),
+  };
+  if (options.wind_tendency_source == WindTendencySourceKind::self_advection) {
+    timeline_fields.push_back(
+        timeline_field("substep_count", static_cast<std::uint64_t>(wind_report.substep_count)));
+    timeline_fields.push_back(timeline_field(
+        "substep_dt_seconds",
+        static_cast<std::uint64_t>(wind_report.dt_seconds)));
+    timeline_fields.push_back(timeline_field(
+        "total_seconds",
+        static_cast<std::uint64_t>(wind_report.total_integrated_seconds)));
+  }
+  timeline_fields.push_back(timeline_field("changed_u_points", wind_report.changed_u_points));
+  timeline_fields.push_back(timeline_field("changed_v_points", wind_report.changed_v_points));
+  append_timeline_event(report, "wind_tendency_apply", std::move(timeline_fields));
 }
 
 template <typename Storage>
@@ -4302,6 +4379,17 @@ void write_wind_tendency_attrs(
       file,
       "TYWRF_WIND_TENDENCY_STATUS",
       wind_tendency_status_name(wind.kernel.status));
+  if (wind.source_kind == WindTendencySourceKind::self_advection) {
+    write_int_attr(
+        file,
+        "TYWRF_WIND_TENDENCY_SUBSTEP_COUNT",
+        static_cast<std::int32_t>(wind.substep_count));
+    write_double_attr(file, "TYWRF_WIND_TENDENCY_SUBSTEP_DT_SECONDS", wind.dt_seconds);
+    write_double_attr(
+        file,
+        "TYWRF_WIND_TENDENCY_TOTAL_SECONDS",
+        wind.total_integrated_seconds);
+  }
   write_double_attr(
       file,
       "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS",
@@ -5148,6 +5236,22 @@ void write_wind_tendency_json(
       wind_tendency_status_name(wind.kernel.status),
       true,
       pretty);
+  if (wind.source_kind == WindTendencySourceKind::self_advection) {
+    write_json_number(
+        stream,
+        "wind_tendency_substep_count",
+        static_cast<double>(wind.substep_count),
+        true,
+        pretty);
+    write_json_number(
+        stream, "wind_tendency_substep_dt_seconds", wind.dt_seconds, true, pretty);
+    write_json_number(
+        stream,
+        "wind_tendency_total_seconds",
+        wind.total_integrated_seconds,
+        true,
+        pretty);
+  }
   write_json_number(
       stream,
       "wind_tendency_active_u_points",

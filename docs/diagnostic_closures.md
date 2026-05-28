@@ -1340,6 +1340,27 @@ handle `P`, `MU`, `PB`, or `PHB`; must not invoke pressure refresh, physics,
 or best-track nudging; must not lower d02 below `2 km`; and must not run or
 report `00:20` as validation progress.
 
+D86 is complete, validated, and pushed at commit `83162d3`
+(`Add self-advection wind tendency source`). The D86 `self_advection` candidate
+passes `candidate_metadata`, but that is candidate eligibility only and not a
+closure result or field pass. The real strict d02 `2025-07-26_00:10:00` gate
+still fails first on `U`; a diagnostic closure must not patch `U`, relabel
+metadata as success, or allow validation to advance to `00:20`.
+
+D87 selected-field `U`/`V` `self_advection` subcycling also remains outside
+diagnostic closures. It may adjust only the non-oracle selected-field wind
+tendency subcycling boundary. It must not use reference-end truth,
+oracle/reference-copy data, WRF end-state deltas, or reference-end-derived
+tendencies; must not handle `P`, `MU`, `PB`, or `PHB`; must not invoke
+pressure refresh, physics, or best-track nudging; and must not change d02
+resolution below `2 km`.
+
+Subcycling metadata may be gate-eligible only as normal `candidate_metadata`
+for the non-oracle candidate path. It is not closure evidence and not pass
+proof. A pass still requires the real strict `2025-07-26_00:10:00` d02 fields
+and TC diagnostics to pass; otherwise closures and reports must keep the
+sequence stopped at `00:10`.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:
