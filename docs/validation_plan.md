@@ -969,6 +969,47 @@ fields, tune formulas from reference-end truth, promote audit/probe/hidden-seam
 outputs to gate evidence, advance to `00:20`, reduce d02 below `2 km`, or add
 best-track nudging.
 
+D60 starts from D59 commit `957c3d6`, where full code validation passed
+(`cmake --build`, CTest `29/29`, pytest `175/175`) and the branch was pushed
+to `origin/main`. This does not change scientific validation status: the
+strict d02 `2025-07-26_00:10:00` gate remains failed, and validation must not
+advance to `00:20`.
+
+The D59 pressure formula/input audit output is
+`build/validation/r59_pressure_formula_inputs_audit.json`. It is
+diagnostic-only and reported status `computed_with_flags` with six risk flags.
+For `P`, the target-region normalized RMSE is `10.335362` and target mean
+difference is `-805.058863 Pa`. Low mass level `0` remains the sharpest
+failure, with `P` mean difference `-4167.790767 Pa` and RMSE `4170.444038 Pa`.
+`P + PB` at level `0` has mean difference `-4166.786671 Pa`, while companion
+target normalized RMSE values are much smaller for `PB` (`8.76e-05`),
+`MU + MUB` (`0.000878`), `PH + PHB` (`0.000805`), `T` (`0.012115`), and
+`QVAPOR` (`0.016169`). `HGT` target normalized RMSE is `0.495197`, but mean
+difference is only `-0.085612 m`. Validation should therefore treat this as
+pressure formula-term and input attribution evidence, not as a gate result or
+candidate-generation recipe.
+
+The D59 selected-field timeline audit output is
+`build/validation/r59_selected_field_timeline_audit.json`. It is
+diagnostic-only and reported status `computed_with_flags` with six risk flags.
+The movement child delta is `{i:60,j:35}`, large movement is true, `P` is not
+listed as parent-interpolated, and the changed/interpolated count mismatch flag
+is true. Target fractions remain about `0.407583` for `U` and `V`, and
+`0.404762` for `T`, `PH`, `MU`, `P`, and `QVAPOR`.
+
+D60 validation diagnostics should remain telemetry-only:
+
+- a pressure per-column formula-term probe for worst low-level target columns,
+  with term-level attribution but no field patching;
+- selected-field runtime schedule/timeline metadata emission around move
+  checks, post-move parent fill, exposed-cell interpolation, static refresh,
+  pressure refresh, and output counts/timestamps.
+
+Both D60 diagnostics are observation-only. They cannot patch fields, tune
+formulas from reference-end truth, generate candidate files from oracle data,
+promote audit/probe/hidden-seam outputs to gate evidence, advance to `00:20`,
+reduce d02 below `2 km`, or add best-track nudging.
+
 Example:
 
 ```bash

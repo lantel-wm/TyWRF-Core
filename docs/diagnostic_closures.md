@@ -768,6 +768,38 @@ Round D59 keeps the D58 audit results outside closure scope:
   truth, convert diagnostic/probe/hidden-seam outputs into gate evidence,
   reduce d02 below `2 km`, or introduce best-track nudging.
 
+Round D60 keeps the D59 audit results outside closure scope:
+
+- D59 commit `957c3d6` passed code validation (`cmake --build`, CTest `29/29`,
+  pytest `175/175`) and pushed to `origin/main`, but that is still not a
+  scientific validation pass. The strict d02 `2025-07-26_00:10:00` gate remains
+  failed and validation must not advance to `00:20`.
+- The pressure formula/input audit
+  `build/validation/r59_pressure_formula_inputs_audit.json` is
+  diagnostic-only, with status `computed_with_flags` and six risk flags. It
+  reports `P` target-region normalized RMSE `10.335362`, target mean
+  difference `-805.058863 Pa`, and low level `0` `P` mean difference
+  `-4167.790767 Pa` with RMSE `4170.444038 Pa`. `P + PB` at low level `0`
+  inherits the bias with mean difference `-4166.786671 Pa`, while companion
+  fields remain much smaller: `PB` target normalized RMSE `8.76e-05`,
+  `MU + MUB` `0.000878`, `PH + PHB` `0.000805`, `T` `0.012115`, and `QVAPOR`
+  `0.016169`. `HGT` target normalized RMSE is `0.495197`, but its mean
+  difference is only `-0.085612 m`. A closure must not patch pressure, tune a
+  formula, or generate candidates from these diagnostic differences.
+- The selected-field timeline audit
+  `build/validation/r59_selected_field_timeline_audit.json` is also
+  diagnostic-only, with status `computed_with_flags` and six risk flags. It
+  reports movement child delta `{i:60,j:35}`, large movement true, `P` not
+  listed as parent-interpolated, changed/interpolated count mismatch true, and
+  target fractions about `0.407583` for `U` and `V`, and `0.404762` for `T`,
+  `PH`, `MU`, `P`, and `QVAPOR`. A closure must not use this telemetry to
+  shift, blend, patch, or relabel candidate fields as passing.
+- D60 may add pressure per-column formula-term probes and selected-field
+  runtime schedule/timeline metadata emission. Both are observation-only; they
+  cannot generate closure candidates, patch fields, tune formulas from
+  reference-end truth, convert diagnostic/probe/hidden-seam outputs into gate
+  evidence, reduce d02 below `2 km`, or introduce best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

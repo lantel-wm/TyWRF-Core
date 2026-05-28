@@ -25,6 +25,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -80,9 +81,15 @@ struct Resolution {
   double dy = 0.0;
 };
 
+struct RuntimeTimelineEvent {
+  std::string name;
+  std::vector<std::pair<std::string, std::string>> fields;
+};
+
 struct CandidateReport {
   std::uint64_t changed_selected_points = 0;
   std::uint64_t changed_static_template_points = 0;
+  std::vector<RuntimeTimelineEvent> timeline;
   tywrf::nest::ChildStateRemapReport remap;
   tywrf::nest::RemapPlan remap_plan;
   tywrf::nest::StateExchangePlan exchange;
@@ -120,6 +127,72 @@ struct StaticFieldSet {
 
 [[nodiscard]] const char* bool_text(const bool value) noexcept {
   return value ? "true" : "false";
+}
+
+[[nodiscard]] std::string timeline_value(std::string value) {
+  for (char& c : value) {
+    if (c == '|' || c == ';' || c == '(' || c == ')' || c == ',' || c == '=') {
+      c = '_';
+    }
+  }
+  return value;
+}
+
+[[nodiscard]] std::pair<std::string, std::string> timeline_field(
+    std::string name,
+    std::string value) {
+  return {std::move(name), timeline_value(std::move(value))};
+}
+
+[[nodiscard]] std::pair<std::string, std::string> timeline_field(
+    std::string name,
+    const std::int64_t value) {
+  return {std::move(name), std::to_string(value)};
+}
+
+[[nodiscard]] std::pair<std::string, std::string> timeline_field(
+    std::string name,
+    const std::uint64_t value) {
+  return {std::move(name), std::to_string(value)};
+}
+
+void append_timeline_event(
+    CandidateReport& report,
+    std::string name,
+    std::vector<std::pair<std::string, std::string>> fields) {
+  report.timeline.push_back({std::move(name), std::move(fields)});
+}
+
+[[nodiscard]] std::string join_timeline_event_names(
+    const std::vector<RuntimeTimelineEvent>& events) {
+  std::ostringstream joined;
+  for (std::size_t index = 0; index < events.size(); ++index) {
+    if (index != 0) {
+      joined << ",";
+    }
+    joined << events[index].name;
+  }
+  return joined.str();
+}
+
+[[nodiscard]] std::string join_timeline_events(
+    const std::vector<RuntimeTimelineEvent>& events) {
+  std::ostringstream joined;
+  for (std::size_t event_index = 0; event_index < events.size(); ++event_index) {
+    if (event_index != 0) {
+      joined << "|";
+    }
+    const auto& event = events[event_index];
+    joined << (event_index + 1U) << ":" << event.name << "(";
+    for (std::size_t field_index = 0; field_index < event.fields.size(); ++field_index) {
+      if (field_index != 0) {
+        joined << ",";
+      }
+      joined << event.fields[field_index].first << "=" << event.fields[field_index].second;
+    }
+    joined << ")";
+  }
+  return joined.str();
 }
 
 [[nodiscard]] tywrf::dynamics::KrosaBaseStateProviderTerrainOverride
@@ -997,6 +1070,31 @@ void probe_pressure_refresh_dry_run_contract(
       !dry_run_report.pressure_compute_dry_run_report.touched_overlap_cells &&
       !dry_run_report.pressure_compute_dry_run_report.touched_halo_cells &&
       !dry_run_report.pressure_refresh_applied;
+  const auto readiness = evaluate_pressure_refresh_readiness(report);
+  append_timeline_event(
+      report,
+      "pressure_refresh_readiness",
+      {
+          timeline_field("opt_in", "true"),
+          timeline_field("ready", readiness.ready() ? "true" : "false"),
+          timeline_field("provider_ok", dry_run_report.provider_ok ? "true" : "false"),
+          timeline_field(
+              "base_state_sync_dry_run",
+              dry_run_report.base_state_sync_dry_run ? "true" : "false"),
+          timeline_field(
+              "would_sync_pb_points", dry_run_report.would_sync_pb_point_count),
+          timeline_field(
+              "would_sync_mub_points", dry_run_report.would_sync_mub_point_count),
+          timeline_field(
+              "would_sync_phb_points", dry_run_report.would_sync_phb_point_count),
+          timeline_field(
+              "would_refresh_p_points", dry_run_report.would_refresh_p_point_count),
+          timeline_field(
+              "dry_run_invalid_p_points", dry_run_report.dry_run_invalid_p_point_count),
+          timeline_field(
+              "dry_run_skipped_p_points",
+              dry_run_report.pressure_compute_dry_run_report.skipped_point_count),
+      });
   if (dry_run_contract_ok) {
     return;
   }
@@ -1137,6 +1235,21 @@ void apply_pressure_refresh(
   report.pressure_refresh_metadata_source = options.template_path;
   report.pressure_refresh_metadata_time_index = options.template_time_index;
   report.pressure_refresh = hook_report;
+  append_timeline_event(
+      report,
+      "pressure_refresh_apply",
+      {
+          timeline_field("opt_in", "true"),
+          timeline_field("applied", "true"),
+          timeline_field("refreshed_points", hook_report.compute_report.refreshed_point_count),
+          timeline_field("synced_pb_points", hook_report.synced_pb_point_count),
+          timeline_field("synced_mub_points", hook_report.synced_mub_point_count),
+          timeline_field("synced_phb_points", hook_report.synced_phb_point_count),
+          timeline_field("changed_p_points", report.pressure_refresh_changed_p_points),
+          timeline_field("changed_pb_points", report.pressure_refresh_changed_pb_points),
+          timeline_field("changed_mub_points", report.pressure_refresh_changed_mub_points),
+          timeline_field("changed_phb_points", report.pressure_refresh_changed_phb_points),
+      });
 }
 
 [[nodiscard]] CandidateReport build_candidate_state(
@@ -1163,11 +1276,55 @@ void apply_pressure_refresh(
 
   candidate = d02_start;
   CandidateReport report;
+  append_timeline_event(
+      report,
+      "cycle_start",
+      {
+          timeline_field("cycle_start", options.cycle_start),
+          timeline_field("cycle_end", options.cycle_end),
+      });
+  const auto parent_delta_i =
+      static_cast<std::int64_t>(options.to_parent_start.i_parent_start) -
+      static_cast<std::int64_t>(options.from_parent_start.i_parent_start);
+  const auto parent_delta_j =
+      static_cast<std::int64_t>(options.to_parent_start.j_parent_start) -
+      static_cast<std::int64_t>(options.from_parent_start.j_parent_start);
+  append_timeline_event(
+      report,
+      "move_from_to_parent_start",
+      {
+          timeline_field("from_i", static_cast<std::int64_t>(options.from_parent_start.i_parent_start)),
+          timeline_field("from_j", static_cast<std::int64_t>(options.from_parent_start.j_parent_start)),
+          timeline_field("to_i", static_cast<std::int64_t>(options.to_parent_start.i_parent_start)),
+          timeline_field("to_j", static_cast<std::int64_t>(options.to_parent_start.j_parent_start)),
+          timeline_field("parent_grid_ratio", static_cast<std::int64_t>(descriptor.parent_grid_ratio)),
+          timeline_field("parent_delta_i", parent_delta_i),
+          timeline_field("parent_delta_j", parent_delta_j),
+          timeline_field(
+              "child_delta_i",
+              parent_delta_i * static_cast<std::int64_t>(descriptor.parent_grid_ratio)),
+          timeline_field(
+              "child_delta_j",
+              parent_delta_j * static_cast<std::int64_t>(descriptor.parent_grid_ratio)),
+      });
   report.remap_plan = remap_plan;
   report.remap = tywrf::nest::remap_child_state_overlap_only(remap_plan, d02_start, candidate);
   if (!report.remap.ok()) {
     throw std::runtime_error("failed to remap d02 overlap: " + std::string(report.remap.result.message));
   }
+  append_timeline_event(
+      report,
+      "overlap_remap",
+      {
+          timeline_field("copied_points", report.remap.copied_point_count),
+          timeline_field("copied_fields", static_cast<std::uint64_t>(report.remap.copied_field_count)),
+          timeline_field("child_delta_i", static_cast<std::int64_t>(report.remap_plan.delta.child_di)),
+          timeline_field("child_delta_j", static_cast<std::int64_t>(report.remap_plan.delta.child_dj)),
+          timeline_field("needs_parent_fill", report.remap.needs_parent_fill ? "true" : "false"),
+          timeline_field(
+              "needs_derived_pressure_refresh",
+              report.remap.needs_derived_pressure_refresh ? "true" : "false"),
+      });
 
   report.exchange =
       tywrf::nest::build_exposed_child_state_exchange_plan(
@@ -1181,6 +1338,18 @@ void apply_pressure_refresh(
       report.exchange.report.exchange_point_count == 0) {
     throw std::runtime_error("moving-nest pose change exposes no selected-field cells");
   }
+  append_timeline_event(
+      report,
+      "exchange_plan_build",
+      {
+          timeline_field("exchange_points", report.exchange.report.exchange_point_count),
+          timeline_field(
+              "requires_parent_interpolation",
+              report.exchange.report.requires_parent_interpolation ? "true" : "false"),
+          timeline_field(
+              "modifies_overlap", report.exchange.report.modifies_overlap ? "true" : "false"),
+          timeline_field("modifies_halo", report.exchange.report.modifies_halo ? "true" : "false"),
+      });
 
   report.interpolation = tywrf::nest::interpolate_parent_to_exposed_child(
       descriptor,
@@ -1197,11 +1366,26 @@ void apply_pressure_refresh(
       report.exchange.report.modifies_overlap || report.exchange.report.modifies_halo) {
     throw std::runtime_error("selected-field interpolation unexpectedly wrote overlap or halo cells");
   }
+  append_timeline_event(
+      report,
+      "parent_interpolation",
+      {
+          timeline_field("interpolated_points", report.interpolation.interpolated_point_count),
+          timeline_field(
+              "wrote_overlap", report.interpolation.wrote_overlap ? "true" : "false"),
+          timeline_field("wrote_halo", report.interpolation.wrote_halo ? "true" : "false"),
+      });
 
   report.changed_selected_points = changed_selected_points(d02_start, candidate);
   if (report.changed_selected_points == 0) {
     throw std::runtime_error("selected-field candidate did not change any selected-field point");
   }
+  append_timeline_event(
+      report,
+      "selected_field_change_summary",
+      {
+          timeline_field("changed_points", report.changed_selected_points),
+      });
   require_finite_strict_fields(candidate);
   return report;
 }
@@ -1233,6 +1417,21 @@ void refresh_static_fields(
   }
   require_finite_static_fields(output_static);
   report.changed_static_template_points = changed_static_points(template_static, output_static);
+  append_timeline_event(
+      report,
+      "static_refresh",
+      {
+          timeline_field("overlap_cells", report.static_refresh.overlap_cell_count),
+          timeline_field("exposed_cells", report.static_refresh.exposed_cell_count),
+          timeline_field(
+              "coord_extrapolated_cells",
+              report.static_refresh.coordinate_extrapolated_cell_count),
+          timeline_field(
+              "hgt_parent_interpolated_cells",
+              report.static_refresh.parent_hgt_interpolated_cell_count),
+          timeline_field("changed_template_points", report.changed_static_template_points),
+          timeline_field("uses_reference_end", "false"),
+      });
 
   const auto layout = output_static.xlat.layout();
   const auto center_i = layout.i_begin() + layout.active_nx() / 2;
@@ -1441,6 +1640,20 @@ void stamp_gate_metadata(
       file,
       "TYWRF_PARENT_INTERPOLATED_STATE_VARIABLES",
       join_variables(parent_interpolation_variable_names()));
+  write_text_attr(file, "TYWRF_SELECTED_FIELD_TIMELINE_VERSION", "runtime_v0");
+  write_text_attr(file, "TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY", "true");
+  write_int_attr(
+      file,
+      "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT",
+      static_cast<std::int32_t>(report.timeline.size()));
+  write_text_attr(
+      file,
+      "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES",
+      join_timeline_event_names(report.timeline));
+  write_text_attr(
+      file,
+      "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS",
+      join_timeline_events(report.timeline));
   write_text_attr(file, "TYWRF_FROM_PARENT_START", std::to_string(options.from_parent_start.i_parent_start) + "," + std::to_string(options.from_parent_start.j_parent_start));
   write_text_attr(file, "TYWRF_TO_PARENT_START", std::to_string(options.to_parent_start.i_parent_start) + "," + std::to_string(options.to_parent_start.j_parent_start));
   write_int_attr(file, "I_PARENT_START", options.to_parent_start.i_parent_start);
@@ -1925,6 +2138,24 @@ void print_report(
       std::cout,
       "parent_interpolated_state_variables",
       join_variables(parent_interpolation_variable_names()),
+      true,
+      pretty);
+  write_json_number(
+      std::cout,
+      "selected_field_timeline_event_count",
+      static_cast<double>(report.timeline.size()),
+      true,
+      pretty);
+  write_json_string(
+      std::cout,
+      "selected_field_timeline_event_names",
+      join_timeline_event_names(report.timeline),
+      true,
+      pretty);
+  write_json_string(
+      std::cout,
+      "selected_field_timeline_events",
+      join_timeline_events(report.timeline),
       report.pressure_refresh.has_value(),
       pretty);
   if (report.pressure_refresh.has_value()) {
@@ -2140,7 +2371,41 @@ int run(Options options) {
       require_pressure_refresh_ready_for_compute(report);
     }
     apply_pressure_refresh(options, candidate, output_static, report);
+  } else {
+    append_timeline_event(
+        report,
+        "pressure_refresh_readiness",
+        {
+            timeline_field("opt_in", "false"),
+            timeline_field("ready", "not_applicable"),
+            timeline_field("status", "skipped"),
+        });
+    append_timeline_event(
+        report,
+        "pressure_refresh_apply",
+        {
+            timeline_field("opt_in", "false"),
+            timeline_field("applied", "false"),
+            timeline_field("status", "skipped"),
+        });
   }
+  append_timeline_event(
+      report,
+      "cycle_end",
+      {
+          timeline_field("cycle_start", options.cycle_start),
+          timeline_field("cycle_end", options.cycle_end),
+      });
+  append_timeline_event(
+      report,
+      "output_write_preparation",
+      {
+          timeline_field("time_index", static_cast<std::uint64_t>(options.output_time_index)),
+          timeline_field("variable_count", static_cast<std::uint64_t>(options.variables.size())),
+          timeline_field("times", options.times_value),
+          timeline_field("state_write", "pending"),
+          timeline_field("metadata_write", "pending"),
+      });
 
   tywrf::io::write_wrf_state(
       options.output_path,

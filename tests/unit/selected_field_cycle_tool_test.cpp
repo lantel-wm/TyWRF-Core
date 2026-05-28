@@ -470,6 +470,148 @@ void expect_close(const float actual, const float expected, const std::string_vi
   return false;
 }
 
+void assert_contains_in_order(
+    const std::string& value,
+    const std::vector<std::string_view>& markers) {
+  std::size_t search_begin = 0;
+  for (const auto marker : markers) {
+    const auto found = value.find(marker, search_begin);
+    assert(found != std::string::npos);
+    search_begin = found + marker.size();
+  }
+}
+
+[[nodiscard]] std::string timeline_field_value(
+    const std::string& events,
+    const std::string_view event_name,
+    const std::string_view field_name) {
+  const std::string event_marker = ":" + std::string(event_name) + "(";
+  const auto event_begin = events.find(event_marker);
+  assert(event_begin != std::string::npos);
+  const auto fields_begin = event_begin + event_marker.size();
+  const auto event_end = events.find(')', fields_begin);
+  assert(event_end != std::string::npos);
+  const std::string field_marker = std::string(field_name) + "=";
+  const auto field_begin = events.find(field_marker, fields_begin);
+  assert(field_begin != std::string::npos);
+  assert(field_begin < event_end);
+  const auto value_begin = field_begin + field_marker.size();
+  auto value_end = events.find(',', value_begin);
+  if (value_end == std::string::npos || value_end > event_end) {
+    value_end = event_end;
+  }
+  assert(value_end > value_begin);
+  return events.substr(value_begin, value_end - value_begin);
+}
+
+[[nodiscard]] std::uint64_t timeline_u64_field(
+    const std::string& events,
+    const std::string_view event_name,
+    const std::string_view field_name) {
+  return static_cast<std::uint64_t>(
+      std::stoull(timeline_field_value(events, event_name, field_name)));
+}
+
+void assert_selected_field_timeline_attrs(
+    const int file_id,
+    const bool pressure_refresh,
+    const bool experimental_pressure_refresh) {
+  constexpr std::string_view expected_names =
+      "cycle_start,move_from_to_parent_start,overlap_remap,exchange_plan_build,"
+      "parent_interpolation,selected_field_change_summary,static_refresh,"
+      "pressure_refresh_readiness,pressure_refresh_apply,cycle_end,"
+      "output_write_preparation";
+  assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_VERSION") == "runtime_v0");
+  assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY") == "true");
+  assert(read_int_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT") == 11);
+  assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES") == expected_names);
+  const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
+  assert_contains_in_order(
+      events,
+      {
+          ":cycle_start(",
+          ":move_from_to_parent_start(",
+          ":overlap_remap(",
+          ":exchange_plan_build(",
+          ":parent_interpolation(",
+          ":selected_field_change_summary(",
+          ":static_refresh(",
+          ":pressure_refresh_readiness(",
+          ":pressure_refresh_apply(",
+          ":cycle_end(",
+          ":output_write_preparation(",
+      });
+  assert(timeline_field_value(events, "cycle_start", "cycle_start") == kCycleStart);
+  assert(timeline_field_value(events, "cycle_start", "cycle_end") == kTenMinuteEnd);
+  assert(timeline_field_value(events, "cycle_end", "cycle_start") == kCycleStart);
+  assert(timeline_field_value(events, "cycle_end", "cycle_end") == kTenMinuteEnd);
+  assert(timeline_field_value(events, "move_from_to_parent_start", "from_i") == "2");
+  assert(timeline_field_value(events, "move_from_to_parent_start", "from_j") == "2");
+  assert(timeline_field_value(events, "move_from_to_parent_start", "to_i") == "3");
+  assert(timeline_field_value(events, "move_from_to_parent_start", "to_j") == "2");
+  assert(timeline_field_value(events, "move_from_to_parent_start", "parent_grid_ratio") == "5");
+  assert(timeline_field_value(events, "move_from_to_parent_start", "child_delta_i") == "5");
+  assert(timeline_field_value(events, "move_from_to_parent_start", "child_delta_j") == "0");
+  assert(
+      timeline_u64_field(events, "selected_field_change_summary", "changed_points") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_SELECTED_FIELD_CHANGED_POINTS")));
+  assert(
+      timeline_u64_field(events, "exchange_plan_build", "exchange_points") ==
+      static_cast<std::uint64_t>(read_double_attr(file_id, "TYWRF_EXPOSED_EXCHANGE_POINTS")));
+  assert(
+      timeline_u64_field(events, "parent_interpolation", "interpolated_points") ==
+      static_cast<std::uint64_t>(read_double_attr(file_id, "TYWRF_INTERPOLATED_POINTS")));
+  assert(
+      timeline_u64_field(events, "static_refresh", "overlap_cells") ==
+      static_cast<std::uint64_t>(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_OVERLAP_CELLS")));
+  assert(
+      timeline_u64_field(events, "static_refresh", "exposed_cells") ==
+      static_cast<std::uint64_t>(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_EXPOSED_CELLS")));
+  assert(
+      timeline_u64_field(events, "static_refresh", "hgt_parent_interpolated_cells") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_STATIC_REFRESH_HGT_PARENT_INTERPOLATED_CELLS")));
+  assert(timeline_field_value(events, "static_refresh", "uses_reference_end") == "false");
+  assert(timeline_field_value(events, "output_write_preparation", "times") == kTenMinuteEnd);
+  assert(timeline_u64_field(events, "output_write_preparation", "variable_count") > 0);
+  if (pressure_refresh) {
+    assert(timeline_field_value(events, "pressure_refresh_readiness", "opt_in") == "true");
+    assert(timeline_field_value(events, "pressure_refresh_readiness", "ready") == "true");
+    assert(timeline_field_value(events, "pressure_refresh_apply", "opt_in") == "true");
+    assert(timeline_field_value(events, "pressure_refresh_apply", "applied") == "true");
+    assert(
+        timeline_u64_field(events, "pressure_refresh_apply", "refreshed_points") ==
+        static_cast<std::uint64_t>(
+            read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_REFRESHED_POINT_COUNT")));
+    assert(
+        timeline_u64_field(events, "pressure_refresh_apply", "synced_pb_points") ==
+        static_cast<std::uint64_t>(
+            read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PB_POINTS")));
+    assert(
+        timeline_u64_field(events, "pressure_refresh_apply", "synced_mub_points") ==
+        static_cast<std::uint64_t>(
+            read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_MUB_POINTS")));
+    assert(
+        timeline_u64_field(events, "pressure_refresh_apply", "synced_phb_points") ==
+        static_cast<std::uint64_t>(
+            read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_SYNCED_PHB_POINTS")));
+    assert(
+        timeline_u64_field(events, "pressure_refresh_apply", "changed_p_points") ==
+        static_cast<std::uint64_t>(
+            read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_P_POINTS")));
+  } else {
+    assert(timeline_field_value(events, "pressure_refresh_readiness", "opt_in") == "false");
+    assert(timeline_field_value(events, "pressure_refresh_readiness", "status") == "skipped");
+    assert(timeline_field_value(events, "pressure_refresh_apply", "opt_in") == "false");
+    assert(timeline_field_value(events, "pressure_refresh_apply", "applied") == "false");
+    assert(timeline_field_value(events, "pressure_refresh_apply", "status") == "skipped");
+  }
+  assert(
+      timeline_field_value(events, "output_write_preparation", "metadata_write") == "pending");
+  (void)experimental_pressure_refresh;
+}
+
 void assert_pressure_refresh_readiness_attrs(const int file_id) {
   assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_READINESS_READY") == "true");
   assert(
@@ -622,6 +764,7 @@ void assert_successful_candidate(
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN"));
     assert(!has_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_APPLIED"));
   }
+  assert_selected_field_timeline_attrs(file_id, pressure_refresh, experimental_pressure_refresh);
   const auto state_variables = read_text_attr(file_id, "TYWRF_STATE_VARIABLES");
   assert(contains_csv_value(state_variables, "PB"));
   assert(contains_csv_value(state_variables, "PHB"));

@@ -1183,6 +1183,52 @@ for attribution. They must not generate candidates, patch candidate fields,
 tune formulas from reference-end truth, use diagnostic/probe/hidden-seam output
 as gate evidence, lower d02 below `2 km`, or introduce best-track nudging.
 
+## Round D60 Formula-Term and Runtime Timeline Direction
+
+D59 commit `957c3d6` (`Audit pressure inputs and selected-field timeline`)
+preserves the same compatibility state after full validation: CMake build
+passed, CTest passed `29/29`, pytest passed `175/175`, and push to
+`origin/main` succeeded. This remains codebase validation, not a
+WRF-compatible numerical pass. The strict d02 `2025-07-26_00:10:00` gate
+remains failed, and no `00:20` progression is compatible until that endpoint
+passes.
+
+The D59 pressure formula/input audit
+`build/validation/r59_pressure_formula_inputs_audit.json` remains
+diagnostic-only. It reported status `computed_with_flags` with six risk flags.
+The target-region normalized RMSE for `P` is `10.335362`, with target mean
+difference `-805.058863 Pa`. The low-level pressure error remains concentrated
+at mass level `0`, where `P` mean difference is `-4167.790767 Pa` and RMSE is
+`4170.444038 Pa`; `P + PB` at the same level inherits almost the same bias with
+mean difference `-4166.786671 Pa`. Companion fields are not large enough to
+explain this by themselves: target normalized RMSE is `8.76e-05` for `PB`,
+`0.000878` for `MU + MUB`, `0.000805` for `PH + PHB`, `0.012115` for `T`, and
+`0.016169` for `QVAPOR`. `HGT` target normalized RMSE is `0.495197`, but its
+mean difference is only `-0.085612 m`, so this remains diagnostic evidence
+rather than a candidate-repair path.
+
+The D59 selected-field timeline audit
+`build/validation/r59_selected_field_timeline_audit.json` is also
+diagnostic-only. It reported status `computed_with_flags` with six risk flags.
+The movement child delta is `{i:60,j:35}` and is classified as a large
+movement. `P` is not listed as parent-interpolated, the changed/interpolated
+count mismatch flag is true, and target fractions remain about `0.407583` for
+`U` and `V`, and `0.404762` for `T`, `PH`, `MU`, `P`, and `QVAPOR`.
+
+D60 compatibility work should remain observation/telemetry-only:
+
+- add a per-column pressure formula-term probe for worst low-level target
+  columns, isolating terms such as `theta/T`, `PH + PHB`, `MU + MUB`,
+  coefficients, `ALB`, and `PB` subtraction without patching fields;
+- emit selected-field runtime schedule/timeline metadata around movement,
+  parent fill, exposed-cell interpolation, static refresh, pressure refresh,
+  and output timestamps/counts.
+
+D60 telemetry may explain producer timing and formula-term attribution, but it
+must not patch fields, tune formulas from reference-end truth, generate
+candidate files from oracle data, use diagnostic/probe/hidden-seam output as
+gate evidence, lower d02 below `2 km`, or introduce best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
