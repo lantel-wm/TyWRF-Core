@@ -1233,6 +1233,21 @@ closure. It cannot patch `U`, `V`, `MU`, or `P`, cannot hide their RMSE
 failures, cannot repair the failed TC center diagnostic, and cannot promote any
 diagnostic artifact into a strict `00:10` pass.
 
+D80 is complete, passed focused and full validation, passed the real `00:10`
+metadata check, and was pushed at commit `765bd06`
+(`Make pressure-refresh production metadata gate-safe`). The accepted
+`candidate_metadata` result is not a closure result and not a field pass: the
+real d02 `2025-07-26_00:10:00` gate still fails overall, first on `U`
+normalized RMSE `0.11787539215928292`. Closure and validation work must not
+advance to `00:20`.
+
+D81 wind-failure audit work is outside diagnostic closures. It may read only
+reference/candidate `U` and `V` to decompose the failed wind metrics, and any
+output must be diagnostic-only with `gate_evidence=false`. A D81 audit must not
+write candidate fields, change thresholds, patch wind errors, borrow positive
+metadata, or prove a strict `00:10` pass. It also must not handle `P`, `MU`,
+physics, best-track nudging, or any d02 resolution change below `2 km`.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

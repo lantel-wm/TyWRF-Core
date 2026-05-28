@@ -1684,6 +1684,24 @@ WRF-compatible integrator output. The metadata repair must keep the real
 numerical failures visible: failed `U`, `V`, `MU`, `P` RMSE and the failed TC
 center diagnostic remain blockers until a real strict `00:10` gate passes.
 
+D80 is complete, passed focused and full validation, passed the real `00:10`
+metadata check with `candidate_metadata` accepted, and was pushed at commit
+`765bd06` (`Make pressure-refresh production metadata gate-safe`). This commit
+records a metadata-eligibility repair for the normal pressure-refresh
+production path only. It does not prove numerical compatibility: the real d02
+`2025-07-26_00:10:00` gate still fails overall, with first failed field `U`
+normalized RMSE `0.11787539215928292`. Validation must remain stopped at
+`00:10` and must not advance to `00:20`.
+
+D81 wind-failure audit scope is read-only compatibility diagnosis. It may read
+the reference and candidate `U`/`V` fields and decompose the observed wind
+errors by region, level, staggered layout, remap/exposed-cell mask, and
+metadata provenance. Its output must remain diagnostic-only with
+`gate_evidence=false`: it must not write candidate files or candidate fields,
+change thresholds, relax metadata rejection, or be described as proof that the
+`00:10` gate passed. D81 must not handle `P`, `MU`, physics, or best-track
+nudging, and d02 must remain `2 km`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

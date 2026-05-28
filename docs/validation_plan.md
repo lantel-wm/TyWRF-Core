@@ -1451,6 +1451,23 @@ TC center diagnostic. Metadata eligibility fixes cannot hide those failures,
 cannot convert helper or diagnostic artifacts into candidates, and cannot allow
 progression beyond the failed `2025-07-26_00:10:00` endpoint.
 
+D80 is complete at commit `765bd06`
+(`Make pressure-refresh production metadata gate-safe`). It passed focused
+validation, full validation, the real `00:10` metadata check, and was pushed.
+The current real `00:10` gate state is therefore split deliberately:
+`candidate_metadata` passes, but the overall gate still fails numerically. The
+first failed field remains `U`, with normalized RMSE
+`0.11787539215928292`; validation must stop at
+`2025-07-26_00:10:00` and must not proceed to `00:20`.
+
+D81 may run only a U/V wind-failure audit. The audit may read reference and
+candidate `U`/`V` at the failed `00:10` endpoint and break down the error by
+diagnostic categories, but every report or artifact from that audit must be
+diagnostic-only and carry `gate_evidence=false`. D81 must not write a
+candidate, modify thresholds, change gate metadata, count as `00:10` pass
+proof, or advance the validation sequence. It also must not handle `P`, `MU`,
+physics, or best-track nudging, and d02 must remain at `2 km`.
+
 Example:
 
 ```bash
