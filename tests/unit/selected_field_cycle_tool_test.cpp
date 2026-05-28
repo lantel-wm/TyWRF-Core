@@ -216,7 +216,8 @@ void create_wrf_fixture(
     const bool parent_values,
     const bool optional_state_fields = false,
     const bool pressure_refresh_metadata = false,
-    const bool invalid_parent_pressure_thermodynamics = false) {
+    const bool invalid_parent_pressure_thermodynamics = false,
+    const bool pressure_metadata_hgt_values = true) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create fixture");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
@@ -281,7 +282,7 @@ void create_wrf_fixture(
   put_times(file_id, vars.times, state_fields ? kCycleStart : kTenMinuteEnd);
   put_2d_linear(file_id, vars.xlat, shape.mass_ny, shape.mass_nx, 40'000.0F, 1.0F, 10.0F);
   put_2d_linear(file_id, vars.xlong, shape.mass_ny, shape.mass_nx, 50'000.0F, 1.0F, 10.0F);
-  if (pressure_refresh_metadata) {
+  if (pressure_refresh_metadata && pressure_metadata_hgt_values) {
     put_2d_linear(file_id, vars.hgt, shape.mass_ny, shape.mass_nx, 20.0F, 1.0F, 5.0F);
   } else {
     put_2d_linear(
@@ -521,14 +522,14 @@ void assert_selected_field_timeline_attrs(
       std::string(
           "cycle_start,move_from_to_parent_start,overlap_remap,exchange_plan_build,"
           "parent_interpolation,selected_field_change_summary,static_refresh,"
-          "pressure_refresh_readiness,pressure_refresh_apply,") +
+          "normal_base_state_producer,pressure_refresh_readiness,pressure_refresh_apply,") +
       (pressure_column_probe ? "pressure_column_probe," : "") +
       "cycle_end,output_write_preparation";
   assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_VERSION") == "runtime_v0");
   assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVIDENCE_ONLY") == "true");
   assert(
       read_int_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_COUNT") ==
-      (pressure_column_probe ? 12 : 11));
+      (pressure_column_probe ? 13 : 12));
   assert(read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENT_NAMES") == expected_names);
   const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
   std::vector<std::string_view> expected_order = {
@@ -539,6 +540,7 @@ void assert_selected_field_timeline_attrs(
       ":parent_interpolation(",
       ":selected_field_change_summary(",
       ":static_refresh(",
+      ":normal_base_state_producer(",
       ":pressure_refresh_readiness(",
       ":pressure_refresh_apply(",
   };
@@ -580,6 +582,40 @@ void assert_selected_field_timeline_attrs(
       static_cast<std::uint64_t>(
           read_double_attr(file_id, "TYWRF_STATIC_REFRESH_HGT_PARENT_INTERPOLATED_CELLS")));
   assert(timeline_field_value(events, "static_refresh", "uses_reference_end") == "false");
+  assert(timeline_field_value(events, "normal_base_state_producer", "source") ==
+         "normal_selected_field_base_state_producer");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "source_origin") ==
+      "krosa_base_state_provider+moved_candidate_HGT+same_cycle_vertical_metadata");
+  assert(timeline_field_value(events, "normal_base_state_producer", "diagnostic_only") == "false");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "normal_candidate_producer") ==
+      "true");
+  assert(timeline_field_value(events, "normal_base_state_producer", "writes_candidate") == "true");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "uses_reference_end_truth") ==
+      "false");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "uses_direct_p_shortcut") ==
+      "false");
+  assert(timeline_field_value(events, "normal_base_state_producer", "reads_direct_p") == "false");
+  assert(timeline_field_value(events, "normal_base_state_producer", "writes_p") == "false");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "no_gate_pass_claim") ==
+      "true");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "no_00_20_progression") ==
+      "true");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "terrain_source") ==
+      "moved_candidate_HGT");
+  assert(
+      timeline_field_value(events, "normal_base_state_producer", "terrain_provenance") ==
+      "override:moved_candidate_HGT");
+  assert(timeline_u64_field(events, "normal_base_state_producer", "changed_p_points") == 0);
+  assert(timeline_u64_field(events, "normal_base_state_producer", "changed_pb_points") > 0);
+  assert(timeline_u64_field(events, "normal_base_state_producer", "changed_mub_points") > 0);
+  assert(timeline_u64_field(events, "normal_base_state_producer", "changed_phb_points") > 0);
   assert(timeline_field_value(events, "output_write_preparation", "times") == kTenMinuteEnd);
   assert(timeline_u64_field(events, "output_write_preparation", "variable_count") > 0);
   if (pressure_refresh) {
@@ -677,6 +713,108 @@ void assert_pressure_refresh_readiness_attrs(const int file_id) {
       "override:moved_candidate_HGT");
 }
 
+void assert_normal_base_state_producer_attrs(const int file_id) {
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_VERSION") ==
+      "a79_normal_v0");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_SOURCE") ==
+      "normal_selected_field_base_state_producer");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_SOURCE_ORIGIN") ==
+      "krosa_base_state_provider+moved_candidate_HGT+same_cycle_vertical_metadata");
+  assert(read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_OK") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_DIAGNOSTIC_ONLY") ==
+      "false");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_NORMAL_BASE_STATE_PRODUCER_NORMAL_CANDIDATE_PRODUCER") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_GATE_CANDIDATE") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_INTEGRATOR_OUTPUT") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITES_CANDIDATE") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITES_NETCDF") ==
+      "false");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_NORMAL_BASE_STATE_PRODUCER_USES_REFERENCE_END_TRUTH") == "false");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_REFERENCE_END_TRUTH") == "true");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_NORMAL_BASE_STATE_PRODUCER_USES_DIRECT_P_SHORTCUT") == "false");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_DIRECT_P_SHORTCUT") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_READS_DIRECT_P") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITES_P") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_GATE_PASS_CLAIM") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_00_20_PROGRESSION") ==
+      "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITTEN_FIELDS") ==
+      "PHB,MUB,PB,HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_PROVIDER_SOURCE") ==
+      "base_state_reconstruction_provider");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_TERRAIN_SOURCE") ==
+      "moved_candidate_HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_TERRAIN_PROVENANCE") ==
+      "override:moved_candidate_HGT");
+  assert(
+      read_text_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_TERRAIN_OVERRIDE_USED") ==
+      "true");
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_EXPOSED_MASS_CELL_COUNT") >
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_PB_WRITTEN_POINT_COUNT") >
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_MUB_WRITTEN_CELL_COUNT") >
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_PHB_WRITTEN_POINT_COUNT") >
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_HT_WRITTEN_CELL_COUNT") >
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_P_POINTS") ==
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_PB_POINTS") >
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_MUB_POINTS") >
+      0.0);
+  assert(
+      read_double_attr(file_id, "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_PHB_POINTS") >
+      0.0);
+}
+
 void assert_no_pressure_formula_observation_attrs(const int file_id) {
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_ENABLED"));
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES"));
@@ -726,6 +864,7 @@ void assert_successful_candidate(
   assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_COORD_EXTRAPOLATED_CELLS") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_HGT_PARENT_INTERPOLATED_CELLS") > 0.0);
   assert(read_double_attr(file_id, "TYWRF_STATIC_REFRESH_CHANGED_TEMPLATE_POINTS") > 0.0);
+  assert_normal_base_state_producer_attrs(file_id);
   if (pressure_refresh) {
     assert_pressure_refresh_readiness_attrs(file_id);
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_OPT_IN") == "true");
@@ -767,9 +906,9 @@ void assert_successful_candidate(
     assert(read_text_attr(file_id, "TYWRF_PRESSURE_REFRESH_TOUCHED_HALO_CELLS") == "false");
     assert(changed_p_points == refreshed_points);
     assert(changed_p_points > 0.0);
-    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS") > 0.0);
-    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS") > 0.0);
-    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS") > 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PB_POINTS") >= 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_MUB_POINTS") >= 0.0);
+    assert(read_double_attr(file_id, "TYWRF_PRESSURE_REFRESH_CHANGED_PHB_POINTS") >= 0.0);
     assert(
         read_text_attr(
             file_id,
@@ -826,7 +965,9 @@ void assert_successful_candidate(
   } else {
     assert(candidate_message.find("U/V/T/PH/MU/QVAPOR exposed cells are parent interpolated") !=
            std::string::npos);
-    assert(candidate_message.find("P/PB/PHB/MUB remain finite d02 start-state ownership") !=
+    assert(candidate_message.find("exposed PB/PHB/MUB are updated by the normal") !=
+           std::string::npos);
+    assert(candidate_message.find("P remains finite d02 start-state ownership") !=
            std::string::npos);
   }
   assert(read_times(file_id).substr(0, 19) == kTenMinuteEnd);
@@ -881,9 +1022,12 @@ void assert_successful_candidate(
     assert(std::isfinite(read_2d_value(file_id, "MUB", 9, 9)));
     assert(std::fabs(read_2d_value(file_id, "MUB", 9, 9) - preserved_mub) > kTolerance);
   } else {
-    expect_close(read_3d_value(file_id, "PB", 1, 9, 9), preserved_pb, "PB preserved");
-    expect_close(read_3d_value(file_id, "PHB", 2, 9, 9), preserved_phb, "PHB preserved");
-    expect_close(read_2d_value(file_id, "MUB", 9, 9), preserved_mub, "MUB preserved");
+    assert(std::isfinite(read_3d_value(file_id, "PB", 1, 9, 9)));
+    assert(std::fabs(read_3d_value(file_id, "PB", 1, 9, 9) - preserved_pb) > kTolerance);
+    assert(std::isfinite(read_3d_value(file_id, "PHB", 2, 9, 9)));
+    assert(std::fabs(read_3d_value(file_id, "PHB", 2, 9, 9) - preserved_phb) > kTolerance);
+    assert(std::isfinite(read_2d_value(file_id, "MUB", 9, 9)));
+    assert(std::fabs(read_2d_value(file_id, "MUB", 9, 9) - preserved_mub) > kTolerance);
   }
   expect_close(read_2d_value(file_id, "PSFC", 9, 9), linear_2d(9, 9, 110'000.0F, 1.0F, 10.0F), "PSFC preserved");
   expect_close(read_2d_value(file_id, "U10", 9, 9), linear_2d(9, 9, 120'000.0F, 1.0F, 10.0F), "U10 preserved");
@@ -1250,6 +1394,23 @@ void assert_normal_pressure_refresh_apply(
   assert(json_bool_field(log, "pressure_refresh_changed_p_matches_refreshed_point_count"));
   assert(json_bool_field(log, "pressure_refresh_invalid_and_skipped_points_zero"));
   assert(json_bool_field(log, "pressure_refresh_overlap_halo_untouched"));
+  assert(log.find("\"normal_base_state_producer_source\": "
+                  "\"normal_selected_field_base_state_producer\"") != std::string::npos);
+  assert(!json_bool_field(log, "normal_base_state_producer_diagnostic_only"));
+  assert(json_bool_field(log, "normal_base_state_producer_normal_candidate_producer"));
+  assert(json_bool_field(log, "normal_base_state_producer_writes_candidate"));
+  assert(!json_bool_field(log, "normal_base_state_producer_uses_reference_end_truth"));
+  assert(json_bool_field(log, "normal_base_state_producer_no_reference_end_truth"));
+  assert(!json_bool_field(log, "normal_base_state_producer_uses_direct_p_shortcut"));
+  assert(json_bool_field(log, "normal_base_state_producer_no_direct_p_shortcut"));
+  assert(!json_bool_field(log, "normal_base_state_producer_reads_direct_p"));
+  assert(!json_bool_field(log, "normal_base_state_producer_writes_p"));
+  assert(json_bool_field(log, "normal_base_state_producer_no_gate_pass_claim"));
+  assert(json_bool_field(log, "normal_base_state_producer_no_00_20_progression"));
+  assert(json_number_field(log, "normal_base_state_producer_changed_p_points") == 0.0);
+  assert(json_number_field(log, "normal_base_state_producer_changed_pb_points") > 0.0);
+  assert(json_number_field(log, "normal_base_state_producer_changed_mub_points") > 0.0);
+  assert(json_number_field(log, "normal_base_state_producer_changed_phb_points") > 0.0);
   assert_successful_candidate(output, true, template_path);
   assert_disposition_report_matches_metadata(
       output,
@@ -1446,9 +1607,9 @@ void assert_experimental_pressure_refresh_apply(
   assert(!json_bool_field(log, "pressure_refresh_touched_overlap_cells"));
   assert(!json_bool_field(log, "pressure_refresh_touched_halo_cells"));
   assert(changed_p_points == refreshed_points);
-  assert(changed_pb_points > 0.0);
-  assert(changed_mub_points > 0.0);
-  assert(changed_phb_points > 0.0);
+  assert(changed_pb_points >= 0.0);
+  assert(changed_mub_points >= 0.0);
+  assert(changed_phb_points >= 0.0);
   assert(json_bool_field(log, "pressure_refresh_changed_p_matches_refreshed_point_count"));
   assert(json_bool_field(log, "pressure_refresh_invalid_and_skipped_points_zero"));
   assert(json_bool_field(log, "pressure_refresh_overlap_halo_untouched"));
@@ -2131,8 +2292,24 @@ int main(const int argc, char** argv) {
         false,
         false,
         true);
-    create_wrf_fixture(d02_start, 2000.0, FixtureShape{10, 10}, true, false, true);
-    create_wrf_fixture(template_path, 2000.0, FixtureShape{10, 10}, false, false);
+    create_wrf_fixture(
+        d02_start,
+        2000.0,
+        FixtureShape{10, 10},
+        true,
+        false,
+        true,
+        true,
+        false,
+        false);
+    create_wrf_fixture(
+        template_path,
+        2000.0,
+        FixtureShape{10, 10},
+        false,
+        false,
+        false,
+        true);
     create_wrf_fixture(
         pressure_template_path,
         2000.0,

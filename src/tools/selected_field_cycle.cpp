@@ -2,6 +2,7 @@
 #include "tywrf/dynamics/pressure_refresh_hook.hpp"
 #include "tywrf/io/pressure_refresh_io.hpp"
 #include "tywrf/io/wrf_state_io.hpp"
+#include "tywrf/nest/base_state_exchange.hpp"
 #include "tywrf/nest/base_state_exchange_adapter.hpp"
 #include "tywrf/nest/base_state_source_staging.hpp"
 #include "tywrf/nest/parent_child_interpolation.hpp"
@@ -188,6 +189,10 @@ struct CandidateReport {
   tywrf::nest::ParentChildInterpolationReport interpolation;
   tywrf::nest::MovingNestStaticRefreshReport static_refresh;
   std::optional<tywrf::dynamics::KrosaBaseStateProviderReport>
+      normal_base_state_provider_source;
+  std::optional<tywrf::nest::NormalCandidateBaseStateExchangeReport>
+      normal_base_state_producer;
+  std::optional<tywrf::dynamics::KrosaBaseStateProviderReport>
       pressure_refresh_provider_probe;
   std::optional<tywrf::dynamics::KrosaPressureRefreshHookReport>
       pressure_refresh_dry_run_contract;
@@ -205,6 +210,13 @@ struct CandidateReport {
   std::size_t diagnostic_adapter_metadata_time_index = 0;
   std::filesystem::path pressure_refresh_metadata_source;
   std::size_t pressure_refresh_metadata_time_index = 0;
+  std::filesystem::path normal_base_state_metadata_source;
+  std::size_t normal_base_state_metadata_time_index = 0;
+  std::uint64_t normal_base_state_changed_p_points = 0;
+  std::uint64_t normal_base_state_changed_pb_points = 0;
+  std::uint64_t normal_base_state_changed_mub_points = 0;
+  std::uint64_t normal_base_state_changed_phb_points = 0;
+  std::uint64_t normal_base_state_changed_hgt_points = 0;
   std::uint64_t pressure_refresh_changed_p_points = 0;
   std::uint64_t pressure_refresh_changed_pb_points = 0;
   std::uint64_t pressure_refresh_changed_mub_points = 0;
@@ -2140,6 +2152,193 @@ diagnostic_adapter_provider_source_views(
       output_static.hgt.view()};
 }
 
+[[nodiscard]] tywrf::nest::NormalCandidateBaseStateSourceViews<const float>
+normal_base_state_source_views(
+    const tywrf::dynamics::KrosaBaseStateProvider& provider,
+    const StaticFieldSet& output_static) {
+  const auto provider_views = provider.views();
+  return {
+      provider_views.phb,
+      provider_views.mub,
+      provider_views.pb,
+      output_static.hgt.view()};
+}
+
+[[nodiscard]] tywrf::nest::NormalCandidateBaseStateTargetViews<float>
+normal_base_state_target_views(
+    tywrf::State<float>& candidate,
+    StaticFieldSet& output_static) {
+  return {
+      candidate.phb.view(),
+      candidate.mub.view(),
+      candidate.pb.view(),
+      output_static.hgt.view()};
+}
+
+void run_normal_base_state_producer(
+    const Options& options,
+    tywrf::State<float>& candidate,
+    StaticFieldSet& output_static,
+    CandidateReport& report) {
+  tywrf::FieldStorage3D<float> metadata_alb(candidate.grid.mass_layout());
+  const auto metadata = tywrf::io::read_krosa_pressure_refresh_inputs(
+      options.d02_start_state_path,
+      candidate.grid,
+      metadata_alb,
+      {.time_index = options.d02_time_index});
+  require_pressure_refresh_inputs_ready(metadata);
+
+  tywrf::dynamics::KrosaBaseStateProvider provider;
+  const auto terrain_override =
+      make_moved_candidate_hgt_terrain_override(output_static);
+  auto provider_report = provider.reconstruct(
+      candidate.grid,
+      metadata.metadata,
+      terrain_override);
+
+  const bool terrain_ok =
+      provider_report.terrain_override_used &&
+      provider_report.terrain_source_name == "moved_candidate_HGT" &&
+      provider_report.terrain_provenance == "override:moved_candidate_HGT";
+  if (!provider_report.ok() || !provider_report.allocated_buffers ||
+      !provider_report.wrote_pb || !provider_report.wrote_mub ||
+      !provider_report.wrote_phb || !terrain_ok) {
+    std::ostringstream message;
+    message << "normal_base_state_provider_source_failed";
+    if (provider_report.result.message != nullptr &&
+        provider_report.result.message[0] != '\0') {
+      message << ": " << provider_report.result.message;
+    }
+    message << "; provider_ok=" << (provider_report.ok() ? "true" : "false")
+            << "; allocated_buffers="
+            << (provider_report.allocated_buffers ? "true" : "false")
+            << "; wrote_pb=" << (provider_report.wrote_pb ? "true" : "false")
+            << "; wrote_mub=" << (provider_report.wrote_mub ? "true" : "false")
+            << "; wrote_phb=" << (provider_report.wrote_phb ? "true" : "false")
+            << "; terrain_override_used="
+            << (provider_report.terrain_override_used ? "true" : "false")
+            << "; terrain_source=" << provider_report.terrain_source_name
+            << "; terrain_provenance=" << provider_report.terrain_provenance;
+    throw std::runtime_error(message.str());
+  }
+
+  const std::vector<float> p_before(
+      candidate.p.data(), candidate.p.data() + candidate.p.size());
+  const std::vector<float> pb_before(
+      candidate.pb.data(), candidate.pb.data() + candidate.pb.size());
+  const std::vector<float> mub_before(
+      candidate.mub.data(), candidate.mub.data() + candidate.mub.size());
+  const std::vector<float> phb_before(
+      candidate.phb.data(), candidate.phb.data() + candidate.phb.size());
+  const std::vector<float> hgt_before(
+      output_static.hgt.data(), output_static.hgt.data() + output_static.hgt.size());
+
+  const auto producer_report =
+      tywrf::nest::apply_normal_candidate_base_state_exchange(
+          report.remap_plan,
+          normal_base_state_source_views(provider, output_static),
+          normal_base_state_target_views(candidate, output_static));
+  if (!producer_report.ok()) {
+    std::ostringstream message;
+    message << "normal_base_state_producer_failed";
+    if (producer_report.result.message != nullptr &&
+        producer_report.result.message[0] != '\0') {
+      message << ": " << producer_report.result.message;
+    }
+    throw std::runtime_error(message.str());
+  }
+
+  report.normal_base_state_provider_source = provider_report;
+  report.normal_base_state_producer = producer_report;
+  report.normal_base_state_metadata_source = options.d02_start_state_path;
+  report.normal_base_state_metadata_time_index = options.d02_time_index;
+  report.normal_base_state_changed_p_points = changed_points(p_before, candidate.p);
+  report.normal_base_state_changed_pb_points = changed_points(pb_before, candidate.pb);
+  report.normal_base_state_changed_mub_points = changed_points(mub_before, candidate.mub);
+  report.normal_base_state_changed_phb_points = changed_points(phb_before, candidate.phb);
+  report.normal_base_state_changed_hgt_points = changed_points(hgt_before, output_static.hgt);
+
+  if (report.normal_base_state_changed_p_points != 0) {
+    throw std::runtime_error("normal base-state producer unexpectedly changed P");
+  }
+  require_finite_storage("normal base-state PB", candidate.pb);
+  require_finite_storage("normal base-state PHB", candidate.phb);
+  require_finite_storage("normal base-state MUB", candidate.mub);
+  require_finite_static_fields(output_static);
+
+  append_timeline_event(
+      report,
+      "normal_base_state_producer",
+      {
+          timeline_field("source", std::string(producer_report.source)),
+          timeline_field(
+              "source_origin",
+              std::string(producer_report.source_origin)),
+          timeline_field("ok", std::string(bool_text(producer_report.ok()))),
+          timeline_field(
+              "diagnostic_only",
+              std::string(bool_text(producer_report.diagnostic_only))),
+          timeline_field(
+              "normal_candidate_producer",
+              std::string(bool_text(producer_report.normal_candidate_producer))),
+          timeline_field(
+              "writes_candidate",
+              std::string(bool_text(producer_report.writes_candidate))),
+          timeline_field(
+              "uses_reference_end_truth",
+              std::string(bool_text(producer_report.uses_reference_end_truth))),
+          timeline_field(
+              "uses_direct_p_shortcut",
+              std::string(bool_text(producer_report.uses_direct_p_shortcut))),
+          timeline_field(
+              "reads_direct_p",
+              std::string(bool_text(producer_report.reads_direct_p))),
+          timeline_field(
+              "writes_p",
+              std::string(bool_text(producer_report.writes_p))),
+          timeline_field(
+              "no_gate_pass_claim",
+              std::string(bool_text(producer_report.no_gate_pass_claim))),
+          timeline_field(
+              "no_00_20_progression",
+              std::string(bool_text(producer_report.no_00_20_progression))),
+          timeline_field(
+              "terrain_source",
+              provider_report.terrain_source_name),
+          timeline_field(
+              "terrain_provenance",
+              provider_report.terrain_provenance),
+          timeline_field("metadata_source", options.d02_start_state_path.string()),
+          timeline_field(
+              "exposed_mass_cells",
+              producer_report.exposed_mass_cell_count),
+          timeline_field(
+              "pb_written_points",
+              producer_report.pb_written_point_count),
+          timeline_field(
+              "mub_written_cells",
+              producer_report.mub_written_cell_count),
+          timeline_field(
+              "phb_written_points",
+              producer_report.phb_written_point_count),
+          timeline_field(
+              "ht_written_cells",
+              producer_report.ht_written_cell_count),
+          timeline_field(
+              "changed_p_points",
+              report.normal_base_state_changed_p_points),
+          timeline_field(
+              "changed_pb_points",
+              report.normal_base_state_changed_pb_points),
+          timeline_field(
+              "changed_mub_points",
+              report.normal_base_state_changed_mub_points),
+          timeline_field(
+              "changed_phb_points",
+              report.normal_base_state_changed_phb_points),
+      });
+}
+
 struct DiagnosticAdapterExposedRegionSet {
   std::array<tywrf::nest::RemapWindow, 4> regions{};
   std::uint8_t count = 0;
@@ -3049,6 +3248,161 @@ void write_pressure_formula_observation_attrs(
       pressure_formula_observation_values(report.pressure_formula_observations));
 }
 
+void write_normal_base_state_producer_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (!report.normal_base_state_producer.has_value()) {
+    return;
+  }
+
+  const auto& producer = *report.normal_base_state_producer;
+  const auto* provider = report.normal_base_state_provider_source.has_value()
+                             ? &*report.normal_base_state_provider_source
+                             : nullptr;
+  write_text_attr(file, "TYWRF_NORMAL_BASE_STATE_PRODUCER_VERSION", "a79_normal_v0");
+  write_text_attr(file, "TYWRF_NORMAL_BASE_STATE_PRODUCER_SOURCE", producer.source);
+  write_text_attr(file, "TYWRF_NORMAL_BASE_STATE_PRODUCER_DISPOSITION", producer.disposition);
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_SOURCE_ORIGIN",
+      producer.source_origin);
+  write_text_attr(file, "TYWRF_NORMAL_BASE_STATE_PRODUCER_OK", bool_text(producer.ok()));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_DIAGNOSTIC_ONLY",
+      bool_text(producer.diagnostic_only));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_NORMAL_CANDIDATE_PRODUCER",
+      bool_text(producer.normal_candidate_producer));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_GATE_CANDIDATE",
+      bool_text(producer.gate_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_INTEGRATOR_OUTPUT",
+      bool_text(producer.integrator_output));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITES_CANDIDATE",
+      bool_text(producer.writes_candidate));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITES_NETCDF",
+      bool_text(producer.writes_netcdf));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_USES_REFERENCE_END_TRUTH",
+      bool_text(producer.uses_reference_end_truth));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_REFERENCE_END_TRUTH",
+      bool_text(!producer.uses_reference_end_truth));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_USES_DIRECT_P_SHORTCUT",
+      bool_text(producer.uses_direct_p_shortcut));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_DIRECT_P_SHORTCUT",
+      bool_text(!producer.uses_direct_p_shortcut));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_READS_DIRECT_P",
+      bool_text(producer.reads_direct_p));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITES_P",
+      bool_text(producer.writes_p));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_GATE_PASS_CLAIM",
+      bool_text(producer.no_gate_pass_claim));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_NO_00_20_PROGRESSION",
+      bool_text(producer.no_00_20_progression));
+  write_text_attr(
+      file, "TYWRF_NORMAL_BASE_STATE_PRODUCER_WRITTEN_FIELDS", producer.written_fields);
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_METADATA_SOURCE",
+      report.normal_base_state_metadata_source.string());
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_METADATA_TIME_INDEX",
+      static_cast<double>(report.normal_base_state_metadata_time_index));
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_PROVIDER_SOURCE",
+      provider == nullptr ? "" : provider->source);
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_TERRAIN_SOURCE",
+      provider == nullptr ? "" : provider->terrain_source_name);
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_TERRAIN_PROVENANCE",
+      provider == nullptr ? "" : provider->terrain_provenance);
+  write_text_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_TERRAIN_OVERRIDE_USED",
+      bool_text(provider != nullptr && provider->terrain_override_used));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_EXPOSED_MASS_CELL_COUNT",
+      static_cast<double>(producer.exposed_mass_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_EXPOSED_SURFACE_CELL_COUNT",
+      static_cast<double>(producer.exposed_surface_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_EXPOSED_W_FULL_COLUMN_COUNT",
+      static_cast<double>(producer.exposed_w_full_column_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_PB_WRITTEN_POINT_COUNT",
+      static_cast<double>(producer.pb_written_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_MUB_WRITTEN_CELL_COUNT",
+      static_cast<double>(producer.mub_written_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_PHB_WRITTEN_POINT_COUNT",
+      static_cast<double>(producer.phb_written_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_HT_WRITTEN_CELL_COUNT",
+      static_cast<double>(producer.ht_written_cell_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_DIRECT_WRITE_POINT_COUNT",
+      static_cast<double>(producer.direct_write_point_count));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_P_POINTS",
+      static_cast<double>(report.normal_base_state_changed_p_points));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_PB_POINTS",
+      static_cast<double>(report.normal_base_state_changed_pb_points));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_MUB_POINTS",
+      static_cast<double>(report.normal_base_state_changed_mub_points));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_PHB_POINTS",
+      static_cast<double>(report.normal_base_state_changed_phb_points));
+  write_double_attr(
+      file,
+      "TYWRF_NORMAL_BASE_STATE_PRODUCER_CHANGED_HGT_POINTS",
+      static_cast<double>(report.normal_base_state_changed_hgt_points));
+}
+
 void write_diagnostic_adapter_provider_source_attrs(
     const NetcdfHandle& file,
     const CandidateReport& report) {
@@ -3838,6 +4192,7 @@ void stamp_gate_metadata(
   }
   write_pressure_column_probe_attrs(file, options, report);
   write_pressure_formula_observation_attrs(file, report);
+  write_normal_base_state_producer_attrs(file, report);
   write_diagnostic_adapter_attrs(file, report);
   if (options.diagnostic_adapter_report) {
     write_text_attr(
@@ -3866,7 +4221,8 @@ void stamp_gate_metadata(
         "TYWRF_CANDIDATE_MESSAGE",
         "Selected-field moving-nest candidate from start states only; U/V/T/PH/MU/QVAPOR "
         "exposed cells are parent interpolated, XLAT/XLONG/HGT are refreshed from "
-        "start-state pose data, and P/PB/PHB/MUB remain finite d02 start-state ownership.");
+        "start-state pose data, exposed PB/PHB/MUB are updated by the normal "
+        "non-oracle base-state producer, and P remains finite d02 start-state ownership.");
   }
   file.check(nc_enddef(file.id()), "leave define mode");
 }
@@ -4149,6 +4505,234 @@ void write_pressure_column_probe_json(
       stream,
       "pressure_column_probe_values",
       pressure_column_probe_values(report.pressure_column_observations),
+      comma,
+      pretty);
+}
+
+void write_normal_base_state_producer_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool comma,
+    const bool pretty) {
+  const auto& producer = *report.normal_base_state_producer;
+  const auto* provider = report.normal_base_state_provider_source.has_value()
+                             ? &*report.normal_base_state_provider_source
+                             : nullptr;
+  write_json_string(
+      stream, "normal_base_state_producer_version", "a79_normal_v0", true, pretty);
+  write_json_string(
+      stream, "normal_base_state_producer_source", producer.source, true, pretty);
+  write_json_string(
+      stream,
+      "normal_base_state_producer_disposition",
+      producer.disposition,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "normal_base_state_producer_source_origin",
+      producer.source_origin,
+      true,
+      pretty);
+  write_json_bool(stream, "normal_base_state_producer_ok", producer.ok(), true, pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_diagnostic_only",
+      producer.diagnostic_only,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_normal_candidate_producer",
+      producer.normal_candidate_producer,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_gate_candidate",
+      producer.gate_candidate,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_integrator_output",
+      producer.integrator_output,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_writes_candidate",
+      producer.writes_candidate,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_writes_netcdf",
+      producer.writes_netcdf,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_uses_reference_end_truth",
+      producer.uses_reference_end_truth,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_no_reference_end_truth",
+      !producer.uses_reference_end_truth,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_uses_direct_p_shortcut",
+      producer.uses_direct_p_shortcut,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_no_direct_p_shortcut",
+      !producer.uses_direct_p_shortcut,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_reads_direct_p",
+      producer.reads_direct_p,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "normal_base_state_producer_writes_p", producer.writes_p, true, pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_no_gate_pass_claim",
+      producer.no_gate_pass_claim,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_no_00_20_progression",
+      producer.no_00_20_progression,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "normal_base_state_producer_written_fields",
+      producer.written_fields,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "normal_base_state_producer_metadata_source",
+      report.normal_base_state_metadata_source.string(),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_metadata_time_index",
+      static_cast<double>(report.normal_base_state_metadata_time_index),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "normal_base_state_producer_provider_source",
+      provider == nullptr ? "" : provider->source,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "normal_base_state_producer_terrain_source",
+      provider == nullptr ? "" : provider->terrain_source_name,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "normal_base_state_producer_terrain_provenance",
+      provider == nullptr ? "" : provider->terrain_provenance,
+      true,
+      pretty);
+  write_json_bool(
+      stream,
+      "normal_base_state_producer_terrain_override_used",
+      provider != nullptr && provider->terrain_override_used,
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_exposed_mass_cell_count",
+      static_cast<double>(producer.exposed_mass_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_exposed_surface_cell_count",
+      static_cast<double>(producer.exposed_surface_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_exposed_w_full_column_count",
+      static_cast<double>(producer.exposed_w_full_column_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_pb_written_point_count",
+      static_cast<double>(producer.pb_written_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_mub_written_cell_count",
+      static_cast<double>(producer.mub_written_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_phb_written_point_count",
+      static_cast<double>(producer.phb_written_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_ht_written_cell_count",
+      static_cast<double>(producer.ht_written_cell_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_direct_write_point_count",
+      static_cast<double>(producer.direct_write_point_count),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_changed_p_points",
+      static_cast<double>(report.normal_base_state_changed_p_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_changed_pb_points",
+      static_cast<double>(report.normal_base_state_changed_pb_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_changed_mub_points",
+      static_cast<double>(report.normal_base_state_changed_mub_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_changed_phb_points",
+      static_cast<double>(report.normal_base_state_changed_phb_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "normal_base_state_producer_changed_hgt_points",
+      static_cast<double>(report.normal_base_state_changed_hgt_points),
       comma,
       pretty);
 }
@@ -5037,6 +5621,8 @@ void print_report(
       selected_field_candidate_disposition(options, report, pressure_refresh_readiness);
   const bool experimental_pressure_refresh_apply =
       disposition.experimental_pressure_refresh_apply;
+  const bool has_normal_base_state_producer =
+      report.normal_base_state_producer.has_value();
   const bool has_diagnostic_adapter = report.diagnostic_adapter.has_value();
   const bool has_pressure_column_probe = !report.pressure_column_observations.empty();
   const bool has_pressure_formula_observation =
@@ -5121,9 +5707,18 @@ void print_report(
       std::cout,
       "selected_field_timeline_events",
       join_timeline_events(report.timeline),
-      has_diagnostic_adapter || report.pressure_refresh.has_value() ||
+      has_normal_base_state_producer || has_diagnostic_adapter ||
+          report.pressure_refresh.has_value() ||
           has_pressure_column_probe,
       pretty);
+  if (has_normal_base_state_producer) {
+    write_normal_base_state_producer_json(
+        std::cout,
+        report,
+        has_diagnostic_adapter || report.pressure_refresh.has_value() ||
+            has_pressure_column_probe || has_pressure_formula_observation,
+        pretty);
+  }
   if (report.pressure_refresh.has_value()) {
     const auto& pressure = *report.pressure_refresh;
     const auto parity = pressure_refresh_report_parity(report, pressure);
@@ -5345,6 +5940,9 @@ int run(Options options) {
       d01_start_hgt,
       output_static,
       report);
+  if (!options.diagnostic_adapter_report) {
+    run_normal_base_state_producer(options, candidate, output_static, report);
+  }
   capture_pressure_column_observations(
       options, "post_static_refresh", candidate, output_static, report);
   if (options.diagnostic_adapter_report) {

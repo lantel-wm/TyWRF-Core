@@ -83,6 +83,16 @@ tywrf::nest::ExposedBaseStateViews<const float> source_views(
   return views(storage);
 }
 
+tywrf::nest::NormalCandidateBaseStateSourceViews<const float>
+normal_source_views(const BaseStateStorage& storage) {
+  return {storage.phb.view(), storage.mub.view(), storage.pb.view(), storage.ht.view()};
+}
+
+tywrf::nest::NormalCandidateBaseStateTargetViews<float>
+normal_target_views(BaseStateStorage& storage) {
+  return {storage.phb.view(), storage.mub.view(), storage.pb.view(), storage.ht.view()};
+}
+
 template <typename Storage>
 void fill_storage(Storage& storage, const float base) {
   for (std::size_t index = 0; index < storage.size(); ++index) {
@@ -204,6 +214,34 @@ void expect_diagnostic_only_report(
   assert(!report.enables_selected_field_numerics);
 }
 
+void expect_normal_candidate_report(
+    const tywrf::nest::NormalCandidateBaseStateExchangeReport& report) {
+  assert(report.source == "normal_selected_field_base_state_producer");
+  assert(
+      report.disposition ==
+      "non_oracle_candidate_base_state_fields_only_no_direct_p_no_gate_claim");
+  assert(
+      report.source_origin ==
+      "krosa_base_state_provider+moved_candidate_HGT+same_cycle_vertical_metadata");
+  assert(report.written_fields == "PHB,MUB,PB,HGT");
+  assert(!report.diagnostic_only);
+  assert(report.normal_candidate_producer);
+  assert(!report.gate_candidate);
+  assert(!report.integrator_output);
+  assert(report.writes_candidate);
+  assert(!report.writes_netcdf);
+  assert(report.selected_field_numerics_enabled);
+  assert(!report.enables_selected_field_numerics);
+  assert(!report.uses_reference_end_truth);
+  assert(!report.uses_direct_p_shortcut);
+  assert(!report.reads_direct_p);
+  assert(!report.writes_p);
+  assert(report.no_gate_pass_claim);
+  assert(report.no_00_20_progression);
+  assert(std::string_view(report.source_origin).find("d77") == std::string_view::npos);
+  assert(std::string_view(report.source_origin).find("hidden") == std::string_view::npos);
+}
+
 void test_rebalance_false_writes_only_exposed_phb_mub_ht_and_marks_recompute() {
   const auto grid = make_child_grid();
   BaseStateStorage source(grid);
@@ -259,6 +297,96 @@ void test_rebalance_false_writes_only_exposed_phb_mub_ht_and_marks_recompute() {
   expect_storage_unchanged(child.pb, pb_before, "PB");
   expect_storage_unchanged(child.t_init, t_init_before, "T_INIT");
   expect_storage_unchanged(child.alb, alb_before, "ALB");
+}
+
+void test_normal_candidate_writes_only_exposed_normal_base_state_fields() {
+  const auto grid = make_child_grid();
+  BaseStateStorage source(grid);
+  BaseStateStorage child(grid);
+  tywrf::FieldStorage3D<float> perturbation_p(grid.mass_layout());
+  fill_base_state(source, 40'000.0F);
+  fill_base_state(child, -40'000.0F);
+  fill_storage(perturbation_p, 90'000.0F);
+
+  const auto phb_before = snapshot(child.phb);
+  const auto mub_before = snapshot(child.mub);
+  const auto pb_before = snapshot(child.pb);
+  const auto t_init_before = snapshot(child.t_init);
+  const auto alb_before = snapshot(child.alb);
+  const auto ht_before = snapshot(child.ht);
+  const auto p_before = snapshot(perturbation_p);
+
+  const auto remap = make_remap_plan(
+      {1, 1, tywrf::nest::IndexBase::one_based},
+      {2, 1, tywrf::nest::IndexBase::one_based});
+  assert(remap.ok());
+
+  const auto report = tywrf::nest::apply_normal_candidate_base_state_exchange(
+      remap, normal_source_views(source), normal_target_views(child));
+  assert(report.ok());
+  expect_normal_candidate_report(report);
+  assert(report.exposed_region_count == 3);
+  assert(report.exposed_mass_cell_count == 3);
+  assert(report.exposed_surface_cell_count == 3);
+  assert(report.exposed_w_full_column_count == 3);
+  assert(!report.wrote_overlap);
+  assert(!report.wrote_halo);
+  assert(report.wrote_phb);
+  assert(report.wrote_mub);
+  assert(report.wrote_pb);
+  assert(report.wrote_ht);
+  assert(!report.wrote_t_init);
+  assert(!report.wrote_alb);
+  assert(report.phb_written_point_count == 9);
+  assert(report.mub_written_cell_count == 3);
+  assert(report.pb_written_point_count == 6);
+  assert(report.ht_written_cell_count == 3);
+  assert(report.direct_write_point_count == 21);
+
+  expect_3d_exposed_copy_only(
+      source.phb, child.phb, phb_before, remap.w_full, "normal PHB");
+  expect_2d_exposed_copy_only(
+      source.mub, child.mub, mub_before, remap.surface, "normal MUB");
+  expect_3d_exposed_copy_only(
+      source.pb, child.pb, pb_before, remap.mass, "normal PB");
+  expect_2d_exposed_copy_only(
+      source.ht, child.ht, ht_before, remap.surface, "normal HT");
+  expect_storage_unchanged(child.t_init, t_init_before, "normal T_INIT");
+  expect_storage_unchanged(child.alb, alb_before, "normal ALB");
+  expect_storage_unchanged(perturbation_p, p_before, "normal P");
+}
+
+void test_normal_candidate_no_move_has_no_writes() {
+  const auto grid = make_child_grid();
+  BaseStateStorage source(grid);
+  BaseStateStorage child(grid);
+  fill_base_state(source, 50'000.0F);
+  fill_base_state(child, -50'000.0F);
+
+  const auto phb_before = snapshot(child.phb);
+  const auto mub_before = snapshot(child.mub);
+  const auto pb_before = snapshot(child.pb);
+  const auto ht_before = snapshot(child.ht);
+
+  const auto remap = make_remap_plan(
+      {1, 1, tywrf::nest::IndexBase::one_based},
+      {1, 1, tywrf::nest::IndexBase::one_based});
+  assert(remap.ok());
+
+  const auto report = tywrf::nest::apply_normal_candidate_base_state_exchange(
+      remap, normal_source_views(source), normal_target_views(child));
+  assert(report.ok());
+  expect_normal_candidate_report(report);
+  assert(report.exposed_region_count == 0);
+  assert(report.direct_write_point_count == 0);
+  assert(!report.wrote_phb);
+  assert(!report.wrote_mub);
+  assert(!report.wrote_pb);
+  assert(!report.wrote_ht);
+  expect_storage_unchanged(child.phb, phb_before, "normal no-move PHB");
+  expect_storage_unchanged(child.mub, mub_before, "normal no-move MUB");
+  expect_storage_unchanged(child.pb, pb_before, "normal no-move PB");
+  expect_storage_unchanged(child.ht, ht_before, "normal no-move HT");
 }
 
 void test_no_move_has_no_writes_or_recompute_marks() {
@@ -348,6 +476,8 @@ int main() {
           tywrf::nest::ExposedBaseStateViews<float>>);
 
   test_rebalance_false_writes_only_exposed_phb_mub_ht_and_marks_recompute();
+  test_normal_candidate_writes_only_exposed_normal_base_state_fields();
+  test_normal_candidate_no_move_has_no_writes();
   test_no_move_has_no_writes_or_recompute_marks();
   test_rebalance_option_is_blocked_without_selected_field_numerics();
   return 0;

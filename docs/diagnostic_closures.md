@@ -1186,13 +1186,33 @@ be described as WRF rebalance semantics, must not be treated as a candidate
 `PHB` producer, and must not be used to close pressure-refresh or base-state
 validation.
 
-D78 may add a diagnostic Python audit tool for provider/source-staging/
-source-child-delta attributes. The audit may summarize those attributes and
-identify the largest deltas for debugging, but it cannot write candidate
-fields, refresh candidate `P`, change pressure-refresh behavior, relax strict
-gate metadata, produce closure candidates, advance validation to `00:20`,
-reduce d02 below `2 km`, or introduce best-track nudging. A closure must not
-convert any D78 audit output into strict-gate evidence or `00:10` pass proof.
+D78 is complete, verified, pushed, and synchronized at commit `d7ecd11`. It
+added the diagnostic adapter provider-source audit CLI for provider-source,
+source-staging, and source-child-delta attributes. The audit is diagnostic-only
+and fail-closed: it may summarize those attributes and identify the largest
+deltas for debugging, but it cannot write candidate fields, refresh candidate `P`,
+change pressure-refresh behavior, relax strict gate metadata, produce closure
+candidates, advance validation to `00:20`, reduce d02 below `2 km`, or
+introduce best-track nudging. A closure must not convert any D78 audit output
+into strict-gate evidence or `00:10` pass proof.
+
+D79 may add a normal selected-field exposed base-state producer, but that path
+is not a diagnostic closure and cannot borrow closure or hidden-adapter
+privileges. It may write only legitimate candidate base-state fields from
+current cycle-start state, d01-derived parent data, and same-time KROSA
+metadata/constants. It must not use D77 hidden diagnostic adapter NetCDF
+attributes, reference-end truth, WRF end-state deltas, a direct `P` shortcut,
+gate metadata relaxation, a `PSFC`-as-`SLP` proxy, or diagnostic artifact
+promotion.
+
+D79 must not directly patch perturbation `P`; pressure refresh remains
+separately guarded and outside direct base-state production. A closure must not
+reinterpret D79 output, D77 hidden metadata, or D78 audit summaries as evidence
+that the strict `2025-07-26_00:10:00` gate passed. The current first failure
+remains `U` normalized RMSE `0.117875`, and validation must not advance to
+`00:20` until real gate output proves a pass. Any `PHB` reconstruction remains
+limited by documented provider semantics and must not be described as WRF
+rebalance equivalence.
 
 ## Hard Prohibitions
 

@@ -1639,14 +1639,33 @@ provider-derived hidden source path remains diagnostic evidence about provider
 staging only, not WRF rebalance semantics and not proof that candidate `PHB`,
 `P`, or pressure refresh is physically produced.
 
-D78 may add a Python audit tool for these hidden diagnostic attributes. That
-tool may summarize provider-source, source-staging, and source-child-delta
-attributes, and may identify the largest deltas for debugging. It must not write
-candidate fields, refresh candidate `P`, change pressure-refresh behavior,
-relax strict gate metadata, generate oracle candidates, advance validation to
-`00:20`, reduce d02 below `2 km`, or introduce best-track nudging. Any D78
-audit output is diagnostic-only and cannot be used as strict-gate evidence or
-as proof that the failed `00:10` endpoint passed.
+D78 is complete, verified, pushed, and synchronized at commit `d7ecd11`. It
+added the diagnostic adapter provider-source audit CLI for provider-source,
+source-staging, and source-child-delta metadata. The audit path is
+diagnostic-only and fail-closed: it may summarize hidden diagnostic attributes
+and identify the largest deltas for debugging, but it must not write candidate
+fields, refresh candidate `P`, change pressure-refresh behavior, relax strict
+gate metadata, generate oracle candidates, advance validation to `00:20`,
+reduce d02 below `2 km`, or introduce best-track nudging. D78 audit output is
+not strict-gate evidence and is not proof that the failed `00:10` endpoint
+passed.
+
+D79 may add a normal-path selected-field exposed base-state producer, but its
+source boundary is narrower than the D77 hidden diagnostic adapter path. The
+producer may write only legitimate candidate base-state fields derived from the
+current cycle-start state, d01-derived parent data, and same-time KROSA
+metadata/constants. It must not use D77 hidden diagnostic adapter NetCDF
+attributes, reference-end truth, WRF end-state deltas, a direct `P` shortcut,
+gate-metadata relaxation, a `PSFC`-as-`SLP` proxy, or promotion of diagnostic
+artifacts into compatibility evidence.
+
+D79 must not directly patch perturbation `P`; pressure refresh remains a
+separately guarded producer. It also must not claim the strict
+`2025-07-26_00:10:00` gate passed or proceed to `00:20`; the current first
+failure remains `U` normalized RMSE `0.117875` until a real strict-gate output
+proves otherwise. Any `PHB` reconstruction in this normal-path base-state
+producer remains limited by the documented provider semantics and must not be
+described as WRF rebalance equivalence.
 
 ## Physics Bridge Compatibility Notes
 

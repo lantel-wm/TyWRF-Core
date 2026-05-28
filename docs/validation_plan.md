@@ -1404,14 +1404,31 @@ diagnostic evidence only. It is not WRF rebalance semantics, not a validated
 candidate `PHB` producer, and not a substitute for a normal pressure-refresh or
 base-state producer.
 
-D78 may add a diagnostic Python audit tool for provider/source-staging/
-source-child-delta attributes. The audit may summarize those attributes and
-identify the largest deltas for debugging only. It must not write candidate
-fields, refresh candidate `P`, change pressure-refresh behavior, relax strict
-metadata rejection, produce gate candidates, proceed to `00:20`, reduce d02
-below `2 km`, or introduce best-track nudging. D78 audit output must not be
-used as strict gate evidence or as proof that the failed `00:10` endpoint
-passed.
+D78 is complete, verified, pushed, and synchronized at commit `d7ecd11`. It
+added the diagnostic adapter provider-source audit CLI for provider-source,
+source-staging, and source-child-delta attributes. The audit is diagnostic-only
+and fail-closed: it may summarize those attributes and identify the largest
+deltas for debugging only. It must not write candidate fields, refresh candidate `P`,
+change pressure-refresh behavior, relax strict metadata rejection, produce gate
+candidates, proceed to `00:20`, reduce d02 below `2 km`, or introduce
+best-track nudging. D78 audit output must not be used as strict gate evidence
+or as proof that the failed `00:10` endpoint passed.
+
+D79 may add a normal selected-field exposed base-state producer for legitimate
+candidate base-state fields. Validation may accept only sources from the
+current cycle-start state, d01-derived parent data, and same-time KROSA
+metadata/constants. The D79 path must not use D77 hidden diagnostic adapter
+NetCDF attributes, reference-end truth, WRF end-state deltas, a direct `P`
+shortcut, gate metadata relaxation, a `PSFC`-as-`SLP` proxy, or diagnostic
+artifact promotion.
+
+D79 must not directly patch perturbation `P`; pressure refresh remains
+separately guarded and must keep its own readiness/reporting checks. D79 also
+must not claim a strict `2025-07-26_00:10:00` pass or allow validation to
+advance to `00:20`. The current first failure remains `U` normalized RMSE
+`0.117875` until real strict-gate output proves otherwise. Any `PHB`
+reconstruction remains limited by documented provider semantics and must not be
+reported as WRF rebalance equivalence.
 
 Example:
 

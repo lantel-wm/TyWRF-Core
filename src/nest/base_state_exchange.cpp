@@ -261,6 +261,68 @@ template <typename Real>
   return ok_result();
 }
 
+[[nodiscard]] NestResult validate_normal_candidate_views(
+    const RemapPlan& remap_plan,
+    const NormalCandidateBaseStateSourceViews<const float>& source,
+    const NormalCandidateBaseStateTargetViews<float>& target) noexcept {
+  if (!valid_canonical_view(source.phb) || !valid_canonical_view(target.phb) ||
+      !valid_canonical_view(source.mub) || !valid_canonical_view(target.mub) ||
+      !valid_canonical_view(source.pb) || !valid_canonical_view(target.pb) ||
+      !valid_canonical_view(source.ht) || !valid_canonical_view(target.ht)) {
+    return result(
+        NestStatus::invalid_contract,
+        "normal candidate base-state exchange requires non-null canonical views");
+  }
+
+  if (!same_active_shape(source.phb, target.phb) ||
+      !same_active_shape(source.mub, target.mub) ||
+      !same_active_shape(source.pb, target.pb) ||
+      !same_active_shape(source.ht, target.ht)) {
+    return result(
+        NestStatus::invalid_contract,
+        "normal candidate base-state source and target views must share active shapes");
+  }
+
+  if (!same_horizontal_active_shape(target.pb, target.mub) ||
+      !same_horizontal_active_shape(target.pb, target.ht) ||
+      !same_horizontal_active_shape(target.pb, target.phb)) {
+    return result(
+        NestStatus::invalid_contract,
+        "normal candidate base-state target views must share mass-grid horizontal shape");
+  }
+
+  if (const auto validation = validate_window(
+          remap_plan.w_full,
+          target.phb,
+          "normal candidate PHB remap window is outside child active extents");
+      !validation.ok()) {
+    return validation;
+  }
+  if (const auto validation = validate_window(
+          remap_plan.surface,
+          target.mub,
+          "normal candidate MUB remap window is outside child active extents");
+      !validation.ok()) {
+    return validation;
+  }
+  if (const auto validation = validate_window(
+          remap_plan.surface,
+          target.ht,
+          "normal candidate HT remap window is outside child active extents");
+      !validation.ok()) {
+    return validation;
+  }
+  if (const auto validation = validate_window(
+          remap_plan.mass,
+          target.pb,
+          "normal candidate PB remap window is outside child active extents");
+      !validation.ok()) {
+    return validation;
+  }
+
+  return ok_result();
+}
+
 void copy_exposed_3d(
     const ExposedRegionSet& regions,
     const FieldView3D<const float>& source,
@@ -388,6 +450,80 @@ ExposedBaseStateExchangeReport apply_exposed_base_state_exchange(
       report.pb_recompute_mark_count + report.t_init_recompute_mark_count +
       report.alb_recompute_mark_count;
 
+  return report;
+}
+
+NormalCandidateBaseStateExchangeReport apply_normal_candidate_base_state_exchange(
+    const RemapPlan& remap_plan,
+    const NormalCandidateBaseStateSourceViews<const float>& source_base_state,
+    const NormalCandidateBaseStateTargetViews<float>& candidate_base_state) noexcept {
+  NormalCandidateBaseStateExchangeReport report{};
+
+  if (!remap_plan.ok()) {
+    report.result = remap_plan.result;
+    return report;
+  }
+
+  if (const auto validation =
+          validate_normal_candidate_views(
+              remap_plan, source_base_state, candidate_base_state);
+      !validation.ok()) {
+    report.result = validation;
+    return report;
+  }
+
+  const auto mass_regions = exposed_regions_from_overlap(
+      remap_plan.mass,
+      active_nx(candidate_base_state.pb),
+      active_ny(candidate_base_state.pb));
+  const auto surface_regions = exposed_regions_from_overlap(
+      remap_plan.surface,
+      active_nx(candidate_base_state.mub),
+      active_ny(candidate_base_state.mub));
+  const auto w_full_regions = exposed_regions_from_overlap(
+      remap_plan.w_full,
+      active_nx(candidate_base_state.phb),
+      active_ny(candidate_base_state.phb));
+
+  report.result = ok_result();
+  report.exposed_region_count = static_cast<std::uint32_t>(
+      mass_regions.count + surface_regions.count + w_full_regions.count);
+  report.exposed_mass_cell_count = mass_regions.horizontal_cell_count;
+  report.exposed_surface_cell_count = surface_regions.horizontal_cell_count;
+  report.exposed_w_full_column_count = w_full_regions.horizontal_cell_count;
+
+  if (w_full_regions.horizontal_cell_count != 0) {
+    copy_exposed_3d(
+        w_full_regions, source_base_state.phb, candidate_base_state.phb);
+    report.wrote_phb = true;
+    report.phb_written_point_count =
+        w_full_regions.horizontal_cell_count *
+        static_cast<std::uint64_t>(active_nz(candidate_base_state.phb));
+  }
+
+  if (surface_regions.horizontal_cell_count != 0) {
+    copy_exposed_2d(
+        surface_regions, source_base_state.mub, candidate_base_state.mub);
+    copy_exposed_2d(
+        surface_regions, source_base_state.ht, candidate_base_state.ht);
+    report.wrote_mub = true;
+    report.wrote_ht = true;
+    report.mub_written_cell_count = surface_regions.horizontal_cell_count;
+    report.ht_written_cell_count = surface_regions.horizontal_cell_count;
+  }
+
+  if (mass_regions.horizontal_cell_count != 0) {
+    copy_exposed_3d(
+        mass_regions, source_base_state.pb, candidate_base_state.pb);
+    report.wrote_pb = true;
+    report.pb_written_point_count =
+        mass_regions.horizontal_cell_count *
+        static_cast<std::uint64_t>(active_nz(candidate_base_state.pb));
+  }
+
+  report.direct_write_point_count =
+      report.phb_written_point_count + report.mub_written_cell_count +
+      report.ht_written_cell_count + report.pb_written_point_count;
   return report;
 }
 
