@@ -1513,6 +1513,37 @@ used as a diagnostic closure, oracle correction, or validation pass claim. D93
 must not advance to `00:20`, must not lower d02 below `2 km`, and must not use
 reference-end/oracle data for model updates.
 
+D93 is complete, committed, and pushed as commit `1180cd5`
+(`Add pressure-gradient wind opt-in plumbing`). The real KROSA `00:10` smoke
+confirmed metadata and the `U`/`V`-only write boundary, but the strict gate
+still failed. With constant-alpha pressure-gradient wind forcing,
+`alpha=1e-4` reported `U` normalized RMSE `0.126278408` and `V` normalized
+RMSE `0.134375126`; `alpha=1e-3` reported `U` normalized RMSE `0.126278114`
+and `V` normalized RMSE `0.134374690`. `P` and `MU` still fail, and the SLP
+storm-center error remains `43.4827156063485 km`, above the `20 km`
+threshold. D93 metadata is gate-eligible evidence for a selected-field
+candidate boundary only; it is not a validation pass claim, not closure
+evidence, and not permission to advance to `00:20`.
+
+Round D94 diagnostic direction is a mass/pressure blocker audit only. Its
+report contract must remain:
+
+```text
+diagnostic_only=true
+uses_reference_end_truth=true
+uses_oracle_for_model_update=false
+advances_00_20=false
+gate_evidence=false
+no_gate_pass_claim=true
+```
+
+Reference-end truth is allowed only for post-run blocker measurement and
+decomposition. It must not update a candidate, tune constant-alpha wind forcing,
+repair `P`/`MU`, move the SLP minimum, patch storm-center metrics, or feed a
+diagnostic closure. D94 outputs are diagnostic reports only; they must not
+write gate-eligible NetCDF state, lower d02 below `2 km`, introduce best-track
+nudging, or claim that the failed `2025-07-26_00:10:00` gate passed.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

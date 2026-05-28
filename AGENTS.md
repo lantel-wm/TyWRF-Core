@@ -168,6 +168,25 @@ First-stage goal:
 
 This project does not require bitwise identity with WRF.
 
+## Current Development Direction
+
+- Starting with the next development round after the D94 mass/pressure blocker
+  closure, prioritize the system integrator instead of additional isolated
+  sensitivity probes.
+- Split the work into four coordinated tracks:
+  - integrator orchestration and domain/time-step scheduling;
+  - forcing ingestion, boundary forcing, and spectral nudging staging;
+  - WRF physics bridge staging and call-order scaffolding;
+  - moving nested domain, parent-child interpolation, and feedback.
+- Use WRF v4.6.1/PGWRF behavior as the compatibility reference, but do not copy
+  monolithic Fortran control flow directly into hot paths.
+- Decompose modules around CUDA-ready kernel boundaries: POD views, explicit
+  staging buffers, explicit halo/boundary operations, no NetCDF/logging/hidden
+  allocation inside kernels, and CPU/OpenMP implementations that can later map
+  to CUDA kernels.
+- Keep early integrator slices default-off or non-gate until their metadata,
+  non-oracle data dependencies, and `00:10` validation behavior are verified.
+
 ## v1 Functional Boundary
 
 Required v1 inputs:

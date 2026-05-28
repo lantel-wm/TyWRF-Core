@@ -15,6 +15,7 @@ add_library(tywrf_core STATIC
   src/dynamics/base_state_provider.cpp
   src/dynamics/cycle_schedule.cpp
   src/dynamics/dynamics_loop.cpp
+  src/dynamics/mass_continuity_tendency.cpp
   src/dynamics/pressure_gradient_wind_tendency.cpp
   src/dynamics/pressure_refresh.cpp
   src/dynamics/pressure_refresh_hook.cpp
@@ -145,6 +146,14 @@ if(BUILD_TESTING)
   add_test(
     NAME tywrf_pressure_gradient_wind_tendency_test
     COMMAND tywrf_pressure_gradient_wind_tendency_test)
+
+  add_executable(
+    tywrf_mass_continuity_tendency_test
+    tests/unit/mass_continuity_tendency_test.cpp)
+  target_link_libraries(tywrf_mass_continuity_tendency_test PRIVATE TyWRF::Core)
+  add_test(
+    NAME tywrf_mass_continuity_tendency_test
+    COMMAND tywrf_mass_continuity_tendency_test)
 
   add_executable(tywrf_state_stepper_test tests/unit/state_stepper_test.cpp)
   target_link_libraries(tywrf_state_stepper_test PRIVATE TyWRF::Core)

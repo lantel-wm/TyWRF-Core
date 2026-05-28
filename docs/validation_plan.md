@@ -1742,6 +1742,38 @@ opt-in wiring to pressure refresh or physics. Any D93 metadata, report, or
 candidate output is evidence about guarded wiring and failed/sensitivity
 behavior only until the normal strict `2025-07-26_00:10:00` gate passes.
 
+D93 is complete, committed, and pushed as commit `1180cd5`
+(`Add pressure-gradient wind opt-in plumbing`). Its real KROSA `00:10` smoke
+passed metadata and the `U`/`V`-only write-boundary check, but the strict gate
+still failed and validation remains stopped at `00:10`. The constant-alpha
+pressure-gradient opt-in is default-off sensitivity evidence only:
+`alpha=1e-4` reported `U` normalized RMSE `0.126278408` and `V` normalized
+RMSE `0.134375126`, while `alpha=1e-3` reported `U` normalized RMSE
+`0.126278114` and `V` normalized RMSE `0.134374690`. These are not pass
+metrics because `P` and `MU` still fail and the SLP storm-center error remains
+`43.4827156063485 km`, above the `20 km` threshold. Gate-eligible metadata is
+only evidence that the candidate can be tested by the strict gate; it is not a
+gate pass.
+
+D94 validation work should be a diagnostic-only mass/pressure blocker audit.
+Any report from that audit must carry this contract:
+
+```text
+diagnostic_only=true
+uses_reference_end_truth=true
+uses_oracle_for_model_update=false
+advances_00_20=false
+gate_evidence=false
+no_gate_pass_claim=true
+```
+
+The audit may use reference-end truth only to measure and localize the failed
+`P`, `MU`, and storm-center blockers after a candidate exists. It must not use
+that truth for candidate updates, oracle tendencies, pressure repair, SLP
+center correction, or constant-alpha tuning. Its output is not gate evidence,
+must not be promoted to candidate metadata, and cannot justify a `00:20`
+validation attempt.
+
 Example:
 
 ```bash

@@ -1977,6 +1977,37 @@ advance validation to `00:20`, must not use reference-end/oracle data for
 model updates, must not lower d02 below `2 km`, and must not introduce
 best-track nudging.
 
+D93 is complete, committed, and pushed as commit `1180cd5`
+(`Add pressure-gradient wind opt-in plumbing`). The real KROSA `00:10` smoke
+verified compatibility metadata and the `U`/`V`-only write boundary for the
+default-off opt-in, but the strict gate remains failed. Constant-alpha
+pressure-gradient sensitivity reported `U`/`V` normalized RMSE values of
+`0.126278408`/`0.134375126` for `alpha=1e-4` and
+`0.126278114`/`0.134374690` for `alpha=1e-3`. Those results are gate-eligible
+candidate evidence only, not compatibility acceptance: `P` and `MU` still fail,
+and the SLP storm-center error remains `43.4827156063485 km`, above the
+`20 km` threshold. The option remains default-off and must not be represented
+as a pressure, mass, storm-center, physics, or closure fix.
+
+D94 compatibility direction is diagnostic reporting for the mass/pressure
+blockers, not a new WRF-compatible producer. The audit contract is:
+
+```text
+diagnostic_only=true
+uses_reference_end_truth=true
+uses_oracle_for_model_update=false
+advances_00_20=false
+gate_evidence=false
+no_gate_pass_claim=true
+```
+
+This permits reference-end truth only in post-run audit comparisons. It does
+not permit oracle updates, pressure or mass repairs, SLP center correction,
+best-track nudging, d02 resolution changes, pressure-refresh promotion, or
+rewriting selected-field candidate metadata. Any D94 artifact is compatibility
+context for the failed `00:10` gate and must not be documented as a pass or as
+permission to run the `00:20` gate.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The
