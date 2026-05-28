@@ -18,6 +18,22 @@ enum class StateExchangeField : std::uint8_t {
   ph,
 };
 
+struct WrfMovingNestBaseStateExchangeCandidate {
+  std::string_view wrf_name;
+  bool state_backed = false;
+  bool static_or_provider_backed = false;
+  bool selected_field_interpolated = false;
+};
+
+struct WrfMovingNestBaseStateExchangeContractReport {
+  std::array<StateExchangeField, 6> active_selected_fields{};
+  std::uint8_t active_selected_field_count = 0;
+  std::array<WrfMovingNestBaseStateExchangeCandidate, 7> base_state_candidates{};
+  std::uint8_t base_state_candidate_count = 0;
+  bool diagnostic_only = true;
+  bool enables_selected_field_numerics = false;
+};
+
 struct ExposedChildRegion {
   HorizontalStagger stagger = HorizontalStagger::mass;
   std::int32_t child_i_begin = 0;
@@ -101,5 +117,14 @@ struct StateExchangePlan {
 
 [[nodiscard]] std::string_view state_exchange_field_name(
     StateExchangeField field) noexcept;
+
+[[nodiscard]] std::array<StateExchangeField, 6>
+selected_state_exchange_fields() noexcept;
+
+[[nodiscard]] std::array<WrfMovingNestBaseStateExchangeCandidate, 7>
+wrf_moving_nest_base_state_exchange_candidates() noexcept;
+
+[[nodiscard]] WrfMovingNestBaseStateExchangeContractReport
+describe_wrf_moving_nest_base_state_exchange_contract() noexcept;
 
 }  // namespace tywrf::nest

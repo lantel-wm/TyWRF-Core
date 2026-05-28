@@ -949,6 +949,37 @@ reference-end or oracle candidates, convert audit/probe/hidden-seam output into
 gate evidence, advance validation to `00:20`, reduce d02 below `2 km`, or
 introduce best-track nudging.
 
+Round D65 is complete but remains outside closure scope:
+
+- Commit `07908b1` (`Add pressure formula sensitivity audit`) is pushed to
+  `origin/main`.
+- Full validation passed CTest `29/29`, pytest `197/197`, and
+  `git diff --check`.
+- This is diagnostic-only completion, not a strict d02 gate pass.
+- The real audit
+  `build/validation/r65_pressure_formula_sensitivity_audit.json` reports
+  `25` sensitivity records.
+- The `PB - total_pressure` gap ranges from `3593.9011` to `4174.8731 Pa`,
+  with mean `3904.1623 Pa`.
+- The approximate fractional total-pressure increase needed ranges from
+  `0.0389068` to `0.0436995`, with mean `0.0414497`.
+- All `25` records require a large total-pressure increase.
+
+A closure must not treat the D65 sensitivity result as authority to rescale
+total pressure, remove `PB` subtraction, tune formula terms from the
+`00:10` reference, or write a patched gate candidate. The strict d02 `00:10`
+gate remains failed, so validation must not advance to `00:20`.
+
+Round D66 remains a provenance and mask-semantics audit direction, not a
+closure or selected-field numerical opening. B65 concluded that WRF's broad
+base-state interpolation includes `PHB`, `MUB`, `PB`, `ALB`, `T_INIT`, and
+`HT`, while TyWRF's selected-field path currently interpolates only `U`, `V`,
+`T`, `PH`, `MU`, and `QVAPOR`. D66 may document and audit the exposed d02
+base-field provenance contract and WRF generated interpolation mask semantics,
+but it must not generate reference-end or oracle candidates, convert
+audit/probe/hidden-seam output into gate evidence, reduce d02 below `2 km`, or
+introduce best-track nudging.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

@@ -1178,6 +1178,35 @@ fields, tune formulas from reference-end truth, promote audit/probe/
 hidden-seam output to gate evidence, advance validation to `00:20`, reduce d02
 below `2 km`, or add best-track nudging.
 
+D65 is complete, synchronized, and still not a gate pass. Commit `07908b1`
+(`Add pressure formula sensitivity audit`) is pushed to `origin/main`; the D65
+full validation passed CTest `29/29`, pytest `197/197`, and
+`git diff --check`.
+
+The D65 real audit
+`build/validation/r65_pressure_formula_sensitivity_audit.json` is
+diagnostic-only. It reports `25` sensitivity records, a `PB - total_pressure`
+gap range of `3593.9011` to `4174.8731 Pa` with mean `3904.1623 Pa`, and an
+approximate fractional total-pressure increase needed of `0.0389068` to
+`0.0436995` with mean `0.0414497`. All `25` records require a large
+total-pressure increase. These numbers are pressure-attribution evidence, not
+permission to tune the pressure formula, patch fields, or accept an
+audit-derived candidate.
+
+B65's WRF call-path audit found that the broad WRF base-state interpolation
+coverage includes `PHB`, `MUB`, `PB`, `ALB`, `T_INIT`, and `HT`; the TyWRF
+selected-field path currently interpolates only `U`, `V`, `T`, `PH`, `MU`, and
+`QVAPOR`. D66 validation direction is to expose a d02 base-field provenance
+contract and audit, plus WRF generated interpolation mask semantics, so reports
+can state whether newly exposed d02 base fields came from overlap remap,
+parent/base-state interpolation, generated-field staging, or remained missing.
+This must not open the selected-field numerical path yet.
+
+The strict d02 `2025-07-26_00:10:00` gate remains failed. Validation must not
+advance to `00:20`, must not generate reference-end/oracle candidates, must not
+promote audit/probe/hidden-seam output to gate evidence, must not reduce d02
+below `2 km`, and must not add best-track nudging.
+
 Example:
 
 ```bash

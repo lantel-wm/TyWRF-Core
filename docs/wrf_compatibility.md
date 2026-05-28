@@ -1411,6 +1411,32 @@ correction. D65 must not patch formulas, generate reference-end or oracle
 candidates, use audit/probe/hidden-seam output as gate evidence, advance to
 `00:20`, reduce d02 below `2 km`, or introduce best-track nudging.
 
+D65 is complete and synchronized, but remains diagnostic-only rather than a
+compatibility gate pass. Commit `07908b1`
+(`Add pressure formula sensitivity audit`) has been pushed to `origin/main`,
+with full validation passing CTest `29/29`, pytest `197/197`, and
+`git diff --check`.
+
+The real sensitivity audit
+`build/validation/r65_pressure_formula_sensitivity_audit.json` records `25`
+sensitivity records. The `PB - total_pressure` gap ranges from `3593.9011` to
+`4174.8731 Pa`, with mean `3904.1623 Pa`. The approximate fractional
+total-pressure increase needed ranges from `0.0389068` to `0.0436995`, with
+mean `0.0414497`; all `25` records require a large total-pressure increase.
+This explains the scale of the pressure mismatch but does not authorize a
+formula patch or validation shortcut. The strict d02 `00:10` gate still fails,
+so no `00:20` progression is compatible.
+
+B65 concluded that WRF's broad base-state interpolation path includes
+`PHB`, `MUB`, `PB`, `ALB`, `T_INIT`, and `HT`, while TyWRF's selected-field path
+currently interpolates only `U`, `V`, `T`, `PH`, `MU`, and `QVAPOR`. D66
+compatibility direction is therefore to expose a d02 base-field provenance
+contract and audit for newly exposed cells, including WRF generated
+interpolation-mask semantics. This is a contract/audit step only: it must not
+open the selected-field numerical path yet, generate reference-end or oracle
+candidates, treat audit/probe/hidden-seam output as gate evidence, reduce d02
+below `2 km`, or introduce best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

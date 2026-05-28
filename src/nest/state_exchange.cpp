@@ -304,4 +304,43 @@ std::string_view state_exchange_field_name(const StateExchangeField field) noexc
   return "unknown";
 }
 
+std::array<StateExchangeField, 6> selected_state_exchange_fields() noexcept {
+  return {
+      StateExchangeField::u,
+      StateExchangeField::v,
+      StateExchangeField::mu,
+      StateExchangeField::qvapor,
+      StateExchangeField::t,
+      StateExchangeField::ph,
+  };
+}
+
+std::array<WrfMovingNestBaseStateExchangeCandidate, 7>
+wrf_moving_nest_base_state_exchange_candidates() noexcept {
+  return {
+      WrfMovingNestBaseStateExchangeCandidate{"PHB", true, false, false},
+      WrfMovingNestBaseStateExchangeCandidate{"MUB", true, false, false},
+      WrfMovingNestBaseStateExchangeCandidate{"PB", true, false, false},
+      WrfMovingNestBaseStateExchangeCandidate{"ALB", false, true, false},
+      WrfMovingNestBaseStateExchangeCandidate{"T_INIT", false, true, false},
+      WrfMovingNestBaseStateExchangeCandidate{"HT", false, true, false},
+      WrfMovingNestBaseStateExchangeCandidate{"HGT", false, true, false},
+  };
+}
+
+WrfMovingNestBaseStateExchangeContractReport
+describe_wrf_moving_nest_base_state_exchange_contract() noexcept {
+  WrfMovingNestBaseStateExchangeContractReport report{};
+  report.active_selected_fields = selected_state_exchange_fields();
+  report.active_selected_field_count =
+      static_cast<std::uint8_t>(report.active_selected_fields.size());
+  report.base_state_candidates =
+      wrf_moving_nest_base_state_exchange_candidates();
+  report.base_state_candidate_count =
+      static_cast<std::uint8_t>(report.base_state_candidates.size());
+  report.diagnostic_only = true;
+  report.enables_selected_field_numerics = false;
+  return report;
+}
+
 }  // namespace tywrf::nest

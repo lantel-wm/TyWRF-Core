@@ -89,6 +89,89 @@ void expect_unchanged(
   }
 }
 
+bool contains_base_state_candidate(
+    const tywrf::nest::WrfMovingNestBaseStateExchangeContractReport& report,
+    const std::string_view wrf_name) {
+  for (std::uint8_t index = 0; index < report.base_state_candidate_count; ++index) {
+    if (report.base_state_candidates[index].wrf_name == wrf_name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const tywrf::nest::WrfMovingNestBaseStateExchangeCandidate* find_base_state_candidate(
+    const tywrf::nest::WrfMovingNestBaseStateExchangeContractReport& report,
+    const std::string_view wrf_name) {
+  for (std::uint8_t index = 0; index < report.base_state_candidate_count; ++index) {
+    if (report.base_state_candidates[index].wrf_name == wrf_name) {
+      return &report.base_state_candidates[index];
+    }
+  }
+  return nullptr;
+}
+
+bool selected_field_name_equals_base_state_candidate(
+    const tywrf::nest::WrfMovingNestBaseStateExchangeContractReport& report) {
+  for (std::uint8_t selected_index = 0;
+       selected_index < report.active_selected_field_count;
+       ++selected_index) {
+    const auto active_name = tywrf::nest::state_exchange_field_name(
+        report.active_selected_fields[selected_index]);
+    if (contains_base_state_candidate(report, active_name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void test_base_state_exchange_contract_is_diagnostic_only() {
+  const auto selected = tywrf::nest::selected_state_exchange_fields();
+  assert(selected.size() == 6);
+  assert(selected[0] == tywrf::nest::StateExchangeField::u);
+  assert(selected[1] == tywrf::nest::StateExchangeField::v);
+  assert(selected[2] == tywrf::nest::StateExchangeField::mu);
+  assert(selected[3] == tywrf::nest::StateExchangeField::qvapor);
+  assert(selected[4] == tywrf::nest::StateExchangeField::t);
+  assert(selected[5] == tywrf::nest::StateExchangeField::ph);
+
+  const auto report =
+      tywrf::nest::describe_wrf_moving_nest_base_state_exchange_contract();
+  assert(report.active_selected_field_count == selected.size());
+  assert(report.base_state_candidate_count == 7);
+  assert(report.diagnostic_only);
+  assert(!report.enables_selected_field_numerics);
+
+  assert(contains_base_state_candidate(report, "PHB"));
+  assert(contains_base_state_candidate(report, "MUB"));
+  assert(contains_base_state_candidate(report, "PB"));
+  assert(contains_base_state_candidate(report, "ALB"));
+  assert(contains_base_state_candidate(report, "T_INIT"));
+  assert(contains_base_state_candidate(report, "HT"));
+  assert(contains_base_state_candidate(report, "HGT"));
+  assert(!contains_base_state_candidate(report, "P"));
+
+  assert(!selected_field_name_equals_base_state_candidate(report));
+  for (std::uint8_t index = 0; index < report.base_state_candidate_count; ++index) {
+    assert(!report.base_state_candidates[index].selected_field_interpolated);
+  }
+
+  const auto* phb = find_base_state_candidate(report, "PHB");
+  const auto* mub = find_base_state_candidate(report, "MUB");
+  const auto* pb = find_base_state_candidate(report, "PB");
+  const auto* alb = find_base_state_candidate(report, "ALB");
+  const auto* t_init = find_base_state_candidate(report, "T_INIT");
+  const auto* ht = find_base_state_candidate(report, "HT");
+  const auto* hgt = find_base_state_candidate(report, "HGT");
+  assert(phb != nullptr && phb->state_backed && !phb->static_or_provider_backed);
+  assert(mub != nullptr && mub->state_backed && !mub->static_or_provider_backed);
+  assert(pb != nullptr && pb->state_backed && !pb->static_or_provider_backed);
+  assert(alb != nullptr && !alb->state_backed && alb->static_or_provider_backed);
+  assert(t_init != nullptr && !t_init->state_backed && t_init->static_or_provider_backed);
+  assert(ht != nullptr && !ht->state_backed && ht->static_or_provider_backed);
+  assert(hgt != nullptr && !hgt->state_backed && hgt->static_or_provider_backed);
+}
+
 void test_exposed_strip_accounting() {
   tywrf::State<float> child(make_child_grid());
   fill_state(child);
@@ -267,6 +350,7 @@ void test_diagonal_move_decomposes_exposed_cells_without_overlap_or_halo() {
 }  // namespace
 
 int main() {
+  test_base_state_exchange_contract_is_diagnostic_only();
   test_exposed_strip_accounting();
   test_full_overlap_has_no_exchange_work();
   test_diagonal_move_decomposes_exposed_cells_without_overlap_or_halo();
