@@ -38,6 +38,64 @@ WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR = (
 WIND_TENDENCY_ADVECTING_COLLOCATION_ATTR = (
     "TYWRF_WIND_TENDENCY_ADVECTING_COLLOCATION"
 )
+PRESSURE_GRADIENT_WIND_TENDENCY_ATTRS = {
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_OPT_IN": "true",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_APPLIED": "true",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE": "true",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": "true",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE": "first_order_constant_alpha",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND": (
+        "candidate_state_pressure_gradient"
+    ),
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS": "m s-2",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND": (
+        "constant_specific_volume"
+    ),
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE": 1.0,
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS": "m3 kg-1",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS": "ok",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT": 25,
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT": 25,
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT": 0,
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT": 0,
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY": "false",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE": "false",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "false",
+}
+PRESSURE_GRADIENT_WIND_TENDENCY_REQUIRED_GROUPS = {
+    "switches": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_OPT_IN",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_APPLIED",
+    ),
+    "mode": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND",
+    ),
+    "status": ("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS",),
+    "evidence": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE",
+    ),
+    "counts": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT",
+    ),
+    "units": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS",
+    ),
+    "alpha": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE",
+    ),
+    "safety": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH",
+    ),
+}
 
 
 def _wind_tendency_advecting_collocation(advecting_components: str) -> str:
@@ -73,6 +131,18 @@ def _wind_tendency_evidence_attrs(
                 str(attrs[WIND_TENDENCY_ADVECTING_COMPONENTS_ATTR])
             )
         )
+    return attrs
+
+
+def _pressure_gradient_wind_tendency_evidence_attrs(
+    overrides: dict[str, object] | None = None,
+    *,
+    omit: tuple[str, ...] = (),
+) -> dict[str, object]:
+    attrs = dict(PRESSURE_GRADIENT_WIND_TENDENCY_ATTRS)
+    for name in omit:
+        attrs.pop(name)
+    attrs.update(overrides or {})
     return attrs
 
 
@@ -144,6 +214,23 @@ def _write_10min_progressive_pair(
     for file_name in (END_0010_FILE, END_0020_FILE):
         _write_wrfout(reference_dir / file_name)
         _write_wrfout(candidate_dir / file_name, attrs=candidate_attrs)
+    return reference_dir, candidate_dir
+
+
+def _write_0010_pair(
+    tmp_path: Path,
+    *,
+    candidate_attrs: dict[str, object],
+    field_offset: float = 0.0,
+) -> tuple[Path, Path]:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    _write_wrfout(reference_dir / END_0010_FILE)
+    _write_wrfout(
+        candidate_dir / END_0010_FILE,
+        attrs=candidate_attrs,
+        field_offset=field_offset,
+    )
     return reference_dir, candidate_dir
 
 
@@ -585,6 +672,346 @@ def test_cycle_gate_self_advection_subcycling_metadata_enters_normal_field_gate(
     } == {"passed"}
     assert payload["first_failure"]["field"] == "U"
     assert payload["first_failure"]["diagnostic"] is None
+
+
+def test_cycle_gate_no_pressure_gradient_metadata_keeps_default_path_at_0010(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_0010_pair(
+        tmp_path,
+        candidate_attrs=_production_attrs(),
+        field_offset=1.0,
+    )
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END_0010,
+        interval_minutes=10,
+    )
+    payload = json.loads(report_to_json(report))
+    cycle = report.cycles[0]
+    diagnostics = {metric.name: metric for metric in cycle.diagnostics}
+    fields = {field.variable: field for field in cycle.fields}
+
+    with netCDF4.Dataset(candidate_dir / END_0010_FILE) as dataset:
+        assert not any(
+            name.startswith("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY")
+            for name in dataset.ncattrs()
+        )
+
+    assert report.status == "failed"
+    assert report.summary == {"total": 1, "passed": 0, "failed": 1}
+    assert diagnostics["candidate_metadata"].status == "passed"
+    assert fields["U"].status == "failed"
+    assert fields["U"].source_status == "threshold_exceeded"
+    assert payload["first_failure"]["end_time"] == END_0010
+    assert payload["first_failure"]["field"] == "U"
+    assert payload["first_failure"]["diagnostic"] is None
+
+
+def test_cycle_gate_pressure_gradient_wind_tendency_metadata_enters_normal_field_gate_at_0010(
+    tmp_path: Path,
+) -> None:
+    pressure_gradient_attrs = _pressure_gradient_wind_tendency_evidence_attrs()
+    attrs = _production_attrs(_wind_tendency_evidence_attrs(pressure_gradient_attrs))
+    reference_dir, candidate_dir = _write_0010_pair(
+        tmp_path,
+        candidate_attrs=attrs,
+        field_offset=1.0,
+    )
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END_0010,
+        interval_minutes=10,
+    )
+    payload = json.loads(report_to_json(report))
+    cycle = report.cycles[0]
+    diagnostics = {metric.name: metric for metric in cycle.diagnostics}
+    fields = {field.variable: field for field in cycle.fields}
+
+    with netCDF4.Dataset(candidate_dir / END_0010_FILE) as dataset:
+        assert dataset.getncattr("TYWRF_WIND_TENDENCY_OPT_IN") == "true"
+        assert (
+            dataset.getncattr("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE")
+            == "first_order_constant_alpha"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND"
+            )
+            == "candidate_state_pressure_gradient"
+        )
+        assert (
+            dataset.getncattr("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS")
+            == "m s-2"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND"
+            )
+            == "constant_specific_volume"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE"
+            )
+            == 1.0
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS"
+            )
+            == "m3 kg-1"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE"
+            )
+            == "true"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE"
+            )
+            == "true"
+        )
+        assert (
+            dataset.getncattr("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS")
+            == "ok"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT"
+            )
+            == 25
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT"
+            )
+            == 25
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT"
+            )
+            == 0
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT"
+            )
+            == 0
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE"
+            )
+            == "false"
+        )
+        assert (
+            dataset.getncattr(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH"
+            )
+            == "false"
+        )
+
+    assert report.status == "failed"
+    assert cycle.status == "failed"
+    assert diagnostics["candidate_metadata"].status == "passed"
+    assert fields["U"].status == "failed"
+    assert fields["U"].source_status == "threshold_exceeded"
+    assert {
+        metric.status
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
+    assert payload["first_failure"]["field"] == "U"
+    assert payload["first_failure"]["diagnostic"] is None
+
+
+@pytest.mark.parametrize(
+    ("missing_group", "omitted_attrs"),
+    tuple(PRESSURE_GRADIENT_WIND_TENDENCY_REQUIRED_GROUPS.items()),
+)
+def test_cycle_gate_rejects_pressure_gradient_wind_tendency_missing_metadata_at_0010(
+    tmp_path: Path,
+    missing_group: str,
+    omitted_attrs: tuple[str, ...],
+) -> None:
+    attrs = _production_attrs(
+        _pressure_gradient_wind_tendency_evidence_attrs(omit=omitted_attrs)
+    )
+    reference_dir, candidate_dir = _write_0010_pair(
+        tmp_path,
+        candidate_attrs=attrs,
+    )
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END_0010,
+        interval_minutes=10,
+    )
+    payload = json.loads(report_to_json(report))
+    cycle = report.cycles[0]
+    diagnostics = {metric.name: metric for metric in cycle.diagnostics}
+    metadata = diagnostics["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert report.summary == {"total": 1, "passed": 0, "failed": 1}
+    assert metadata.status == "failed"
+    assert "pressure-gradient wind tendency" in (metadata.message or "")
+    assert missing_group in (metadata.message or "")
+    for omitted_attr in omitted_attrs:
+        assert omitted_attr in (metadata.message or "")
+    assert {field.status for field in cycle.fields} == {"passed"}
+    assert {
+        metric.status
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
+    assert payload["first_failure"]["end_time"] == END_0010
+    assert payload["first_failure"]["field"] is None
+    assert payload["first_failure"]["diagnostic"] == "candidate_metadata"
+
+
+@pytest.mark.parametrize(
+    ("pressure_gradient_attrs", "expected_message"),
+    (
+        (
+            {
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY": (
+                    "true"
+                )
+            },
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY=true",
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE": "true"},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE=true",
+        ),
+        (
+            {
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": (
+                    "true"
+                )
+            },
+            (
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH"
+                "=true"
+            ),
+        ),
+        (
+            {
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND": (
+                    "reference_end_truth"
+                )
+            },
+            (
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND="
+                "reference_end_truth"
+            ),
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS": "failed"},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS=failed",
+        ),
+        (
+            {
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE": (
+                    "constant_alpha"
+                )
+            },
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE=constant_alpha",
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE": "nan"},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE=nan",
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND": "constant"},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND=constant",
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS": "1"},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS=1",
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT": -1},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT=-1",
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT": 1.5},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT=1.5",
+        ),
+        (
+            {"TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE": "false"},
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE=false",
+        ),
+        (
+            {
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": (
+                    "false"
+                )
+            },
+            (
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE"
+                "=false"
+            ),
+        ),
+    ),
+)
+def test_cycle_gate_rejects_pressure_gradient_wind_tendency_blocking_metadata_at_0010(
+    tmp_path: Path,
+    pressure_gradient_attrs: dict[str, object],
+    expected_message: str,
+) -> None:
+    attrs = _production_attrs(
+        _pressure_gradient_wind_tendency_evidence_attrs(pressure_gradient_attrs)
+    )
+    reference_dir, candidate_dir = _write_0010_pair(
+        tmp_path,
+        candidate_attrs=attrs,
+    )
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END_0010,
+        interval_minutes=10,
+    )
+    payload = json.loads(report_to_json(report))
+    cycle = report.cycles[0]
+    diagnostics = {metric.name: metric for metric in cycle.diagnostics}
+    metadata = diagnostics["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert report.summary == {"total": 1, "passed": 0, "failed": 1}
+    assert metadata.status == "failed"
+    assert expected_message in (metadata.message or "")
+    assert {field.status for field in cycle.fields} == {"passed"}
+    assert {
+        metric.status
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
+    assert payload["first_failure"]["end_time"] == END_0010
+    assert payload["first_failure"]["field"] is None
+    assert payload["first_failure"]["diagnostic"] == "candidate_metadata"
 
 
 def test_cycle_gate_reports_first_failure_for_10_min_progressive_run(tmp_path: Path) -> None:

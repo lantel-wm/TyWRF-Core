@@ -1719,6 +1719,29 @@ delta, so D90/D91 parent-ratio-scaled decompositions must pass the scaled width
 directly with `--child-delta`. This audit is not gate evidence and cannot
 justify `00:20` progression.
 
+D92 is complete, fully verified, and pushed at commit `979e409`
+(`Add wind tendency decomposition and pressure gradient skeleton`). Full
+validation for that integrated state reported pytest `264/264` and CTest
+`34/34`. The D92 real audit smoke remains diagnostic-only: the `U` and `V`
+residual normalized RMSE values were about `0.1679774` and `0.1601626`,
+respectively, and cannot be used as gate evidence or as support for advancing
+past the failed `00:10` endpoint.
+
+D93 validation scope is limited to selected-field, default-off
+pressure-gradient wind-tendency opt-in wiring. The opt-in may write only `U`
+and `V`; the default `none` path must preserve existing output, and D93 must
+not write `P`, `MU`, `PB`, or `PHB`. This pressure-gradient option is
+sensitivity/staging only. A constant-alpha, first-order pressure-gradient
+approximation is not WRF-exact and must not be described as closing the WRF
+dynamics or pressure producer gap.
+
+D93 must not claim a validation pass, must not advance to `00:20`, must not use
+reference-end/oracle data for any model update, must not reduce d02 below
+`2 km`, must not introduce best-track nudging, and must not connect this
+opt-in wiring to pressure refresh or physics. Any D93 metadata, report, or
+candidate output is evidence about guarded wiring and failed/sensitivity
+behavior only until the normal strict `2025-07-26_00:10:00` gate passes.
+
 Example:
 
 ```bash

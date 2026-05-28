@@ -217,7 +217,8 @@ void create_wrf_fixture(
     const bool optional_state_fields = false,
     const bool pressure_refresh_metadata = false,
     const bool invalid_parent_pressure_thermodynamics = false,
-    const bool pressure_metadata_hgt_values = true) {
+    const bool pressure_metadata_hgt_values = true,
+    const bool invalid_total_pressure = false) {
   int file_id = -1;
   check_nc(nc_create(path.string().c_str(), NC_CLOBBER, &file_id), "create fixture");
   check_nc(nc_put_att_double(file_id, NC_GLOBAL, "DX", NC_DOUBLE, 1, &dx), "write DX");
@@ -316,7 +317,16 @@ void create_wrf_fixture(
       put_3d_linear(file_id, vars.qvapor, shape.mass_nz, shape.mass_ny, shape.mass_nx, 70'000.0F, 1.0F, 10.0F, 100.0F);
     }
     if (optional_state_fields) {
-      put_3d_linear(file_id, vars.pb, shape.mass_nz, shape.mass_ny, shape.mass_nx, 80'000.0F, 1.0F, 10.0F, 100.0F);
+      put_3d_linear(
+          file_id,
+          vars.pb,
+          shape.mass_nz,
+          shape.mass_ny,
+          shape.mass_nx,
+          invalid_total_pressure ? -100'000.0F : 80'000.0F,
+          1.0F,
+          10.0F,
+          100.0F);
       put_3d_linear(file_id, vars.phb, shape.full_nz, shape.mass_ny, shape.mass_nx, 90'000.0F, 1.0F, 10.0F, 100.0F);
       put_2d_linear(file_id, vars.mub, shape.mass_ny, shape.mass_nx, 100'000.0F, 1.0F, 10.0F);
       put_2d_linear(file_id, vars.psfc, shape.mass_ny, shape.mass_nx, 110'000.0F, 1.0F, 10.0F);
@@ -931,6 +941,39 @@ void assert_no_wind_tendency_attrs(const int file_id) {
   assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_CHANGED_V_POINTS"));
 }
 
+void assert_no_pressure_gradient_wind_tendency_attrs(const int file_id) {
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_OPT_IN"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_APPLIED"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS"));
+  assert(!has_text_attr(
+      file_id,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CONSTANT_SPECIFIC_VOLUME_M3_PER_KG"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE"));
+  assert(!has_text_attr(
+      file_id,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_U_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_V_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_U_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_V_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CHANGED_U_POINTS"));
+  assert(!has_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CHANGED_V_POINTS"));
+}
+
 void assert_successful_candidate(
     const std::filesystem::path& output,
     const bool pressure_refresh = false,
@@ -1051,6 +1094,7 @@ void assert_successful_candidate(
     assert_no_pressure_formula_observation_attrs(file_id);
   }
   assert_no_wind_tendency_attrs(file_id);
+  assert_no_pressure_gradient_wind_tendency_attrs(file_id);
   assert_selected_field_timeline_attrs(
       file_id, pressure_refresh, experimental_pressure_refresh, pressure_column_probe);
   const auto state_variables = read_text_attr(file_id, "TYWRF_STATE_VARIABLES");
@@ -1669,6 +1713,11 @@ void assert_hidden_apply_flag_absent_from_help(
   assert(help.find("--wind-tendency-advecting-velocity") != std::string::npos);
   assert(help.find("--wind-tendency-advecting-components") != std::string::npos);
   assert(help.find("--wind-tendency-advection-form") != std::string::npos);
+  assert(help.find("--wind-tendency-pressure-gradient") != std::string::npos);
+  assert(
+      help.find(
+          "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg") !=
+      std::string::npos);
   assert(help.find("--pressure-refresh") != std::string::npos);
   assert(help.find("--pressure-column-probe") != std::string::npos);
   assert(help.find("--pressure-column-levels") != std::string::npos);
@@ -2283,6 +2332,15 @@ void assert_nonwind_fields_match(
   }
 }
 
+void assert_all_candidate_fields_match(
+    const int expected_file_id,
+    const int actual_file_id,
+    const std::string_view label) {
+  assert_nonwind_fields_match(expected_file_id, actual_file_id, label);
+  expect_float_variable_match(actual_file_id, expected_file_id, "U", label);
+  expect_float_variable_match(actual_file_id, expected_file_id, "V", label);
+}
+
 void assert_wind_tendency_opt_in_output(
     const std::filesystem::path& baseline_output,
     const std::filesystem::path& output,
@@ -2513,6 +2571,293 @@ void assert_wind_tendency_opt_in_output(
     assert(log.find("wind_tendency_advecting_collocation") == std::string::npos);
     assert(log.find("wind_tendency_advection_form") == std::string::npos);
   }
+}
+
+void assert_pressure_gradient_wind_tendency_output(
+    const std::filesystem::path& baseline_output,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path,
+    const double alpha) {
+  int baseline_file_id = -1;
+  int file_id = -1;
+  check_nc(
+      nc_open(baseline_output.string().c_str(), NC_NOWRITE, &baseline_file_id),
+      "open pressure-gradient baseline");
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open pressure-gradient output");
+
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_OPT_IN") == "true");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_APPLIED") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE") ==
+      "d92_standalone_pressure_gradient_skeleton");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND") ==
+      "candidate_state_pressure_gradient");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE") ==
+      "first_order_constant_alpha");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS") == "ok");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS") == "m s-2");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND") ==
+      "constant_specific_volume");
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE") == alpha);
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS") ==
+      "m3 kg-1");
+  assert(
+      read_double_attr(
+          file_id,
+          "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CONSTANT_SPECIFIC_VOLUME_M3_PER_KG") ==
+      alpha);
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SPECIFIC_VOLUME_UNITS") ==
+      "m3 kg-1");
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DX_M") == 2000.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DY_M") == 2000.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DT_SECONDS") == 8.0);
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_WRITTEN_FIELDS") == "U,V");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY") ==
+      "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_CLOSURE") ==
+      "false");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ORACLE") == "false");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH") == "false");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE") ==
+      "true");
+  assert(
+      read_text_attr(
+          file_id,
+          "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE") == "true");
+  assert(
+      read_text_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_NO_GATE_PASS_CLAIM") ==
+      "true");
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ACTIVE_U_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ACTIVE_V_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_U_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_V_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_U_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_V_POINTS") > 0.0);
+  const auto changed_u =
+      read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CHANGED_U_POINTS");
+  const auto changed_v =
+      read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CHANGED_V_POINTS");
+  assert(changed_u > 0.0);
+  assert(changed_v > 0.0);
+  assert(
+      std::fabs(
+          read_3d_value(file_id, "U", 1, 2, 1) -
+          read_3d_value(baseline_file_id, "U", 1, 2, 1)) > kTolerance);
+  assert(
+      std::fabs(
+          read_3d_value(file_id, "V", 1, 1, 9) -
+          read_3d_value(baseline_file_id, "V", 1, 1, 9)) > kTolerance);
+  expect_close(
+      read_3d_value(file_id, "U", 1, 2, 0),
+      read_3d_value(baseline_file_id, "U", 1, 2, 0),
+      "pressure-gradient outer U face unchanged");
+  expect_close(
+      read_3d_value(file_id, "V", 1, 0, 9),
+      read_3d_value(baseline_file_id, "V", 1, 0, 9),
+      "pressure-gradient outer V face unchanged");
+  assert_nonwind_fields_match(baseline_file_id, file_id, "pressure-gradient first-order");
+
+  const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
+  assert_contains_in_order(
+      events,
+      {
+          ":parent_interpolation(",
+          ":pressure_gradient_wind_tendency_apply(",
+          ":selected_field_change_summary(",
+      });
+  assert(timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "opt_in") == "true");
+  assert(timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "applied") == "true");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "source") ==
+      "d92_standalone_pressure_gradient_skeleton");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "source_kind") ==
+      "candidate_state_pressure_gradient");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "mode") ==
+      "first_order_constant_alpha");
+  assert(timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "status") == "ok");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "units") ==
+      "m_s-2");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "alpha_kind") ==
+      "constant_specific_volume");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "alpha_units") ==
+      "m3_kg-1");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "fields") ==
+      "U_V");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "diagnostic_only") ==
+      "false");
+  assert(
+      timeline_field_value(
+          events, "pressure_gradient_wind_tendency_apply", "diagnostic_closure") == "false");
+  assert(
+      timeline_field_value(
+          events, "pressure_gradient_wind_tendency_apply", "uses_reference_end_truth") ==
+      "false");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "oracle") ==
+      "false");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "uses_oracle") ==
+      "false");
+  assert(
+      timeline_field_value(events, "pressure_gradient_wind_tendency_apply", "gate_evidence") ==
+      "true");
+  assert(
+      timeline_field_value(
+          events, "pressure_gradient_wind_tendency_apply", "validation_gate_evidence") ==
+      "true");
+  assert(
+      timeline_field_value(
+          events, "pressure_gradient_wind_tendency_apply", "no_gate_pass_claim") == "true");
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "u_updated_count") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT")));
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "v_updated_count") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT")));
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "u_skipped_count") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT")));
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "v_skipped_count") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT")));
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "updated_u_points") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_U_POINTS")));
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "updated_v_points") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_V_POINTS")));
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "skipped_u_points") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_U_POINTS")));
+  assert(
+      timeline_u64_field(events, "pressure_gradient_wind_tendency_apply", "skipped_v_points") ==
+      static_cast<std::uint64_t>(
+          read_double_attr(file_id, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_V_POINTS")));
+
+  check_nc(nc_close(file_id), "close pressure-gradient output");
+  check_nc(nc_close(baseline_file_id), "close pressure-gradient baseline");
+
+  const auto log = read_file(log_path);
+  assert(log.find("\"pressure_gradient_wind_tendency_opt_in\": true") != std::string::npos);
+  assert(log.find("\"pressure_gradient_wind_tendency_applied\": true") != std::string::npos);
+  assert(
+      log.find(
+          "\"pressure_gradient_wind_tendency_source\": "
+          "\"d92_standalone_pressure_gradient_skeleton\"") != std::string::npos);
+  assert(
+      log.find(
+          "\"pressure_gradient_wind_tendency_source_kind\": "
+          "\"candidate_state_pressure_gradient\"") != std::string::npos);
+  assert(
+      log.find(
+          "\"pressure_gradient_wind_tendency_mode\": \"first_order_constant_alpha\"") !=
+      std::string::npos);
+  assert(log.find("\"pressure_gradient_wind_tendency_status\": \"ok\"") != std::string::npos);
+  assert(log.find("\"pressure_gradient_wind_tendency_units\": \"m s-2\"") != std::string::npos);
+  assert(
+      log.find(
+          "\"pressure_gradient_wind_tendency_alpha_kind\": "
+          "\"constant_specific_volume\"") != std::string::npos);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_alpha_value") == alpha);
+  assert(
+      log.find("\"pressure_gradient_wind_tendency_alpha_units\": \"m3 kg-1\"") !=
+      std::string::npos);
+  assert(
+      json_number_field(
+          log,
+          "pressure_gradient_wind_tendency_constant_specific_volume_m3_per_kg") == alpha);
+  assert(
+      log.find("\"pressure_gradient_wind_tendency_specific_volume_units\": \"m3 kg-1\"") !=
+      std::string::npos);
+  assert(!json_bool_field(log, "pressure_gradient_wind_tendency_diagnostic_only"));
+  assert(!json_bool_field(log, "pressure_gradient_wind_tendency_diagnostic_closure"));
+  assert(!json_bool_field(log, "pressure_gradient_wind_tendency_uses_oracle"));
+  assert(!json_bool_field(log, "pressure_gradient_wind_tendency_oracle"));
+  assert(!json_bool_field(log, "pressure_gradient_wind_tendency_uses_reference_end_truth"));
+  assert(json_bool_field(log, "pressure_gradient_wind_tendency_gate_evidence"));
+  assert(json_bool_field(log, "pressure_gradient_wind_tendency_validation_gate_evidence"));
+  assert(json_bool_field(log, "pressure_gradient_wind_tendency_no_gate_pass_claim"));
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_u_updated_count") > 0.0);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_v_updated_count") > 0.0);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_u_skipped_count") > 0.0);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_v_skipped_count") > 0.0);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_updated_u_points") > 0.0);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_updated_v_points") > 0.0);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_skipped_u_points") > 0.0);
+  assert(json_number_field(log, "pressure_gradient_wind_tendency_skipped_v_points") > 0.0);
+}
+
+void assert_pressure_gradient_wind_tendency_paths(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& baseline_output,
+    const std::filesystem::path& root) {
+  const auto explicit_none_output = root / "tywrf_selected_field_pressure_gradient_none";
+  const auto first_order_output = root / "tywrf_selected_field_pressure_gradient_first_order";
+  const auto explicit_none_log = root / "pressure_gradient_none.log";
+  const auto first_order_log = root / "pressure_gradient_first_order.log";
+  constexpr double alpha = 0.8;
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, explicit_none_output) +
+      " --wind-tendency-pressure-gradient none >" + shell_quote(explicit_none_log) +
+      " 2>&1");
+  int baseline_file_id = -1;
+  int none_file_id = -1;
+  check_nc(
+      nc_open(baseline_output.string().c_str(), NC_NOWRITE, &baseline_file_id),
+      "open pressure-gradient none baseline");
+  check_nc(
+      nc_open(explicit_none_output.string().c_str(), NC_NOWRITE, &none_file_id),
+      "open explicit pressure-gradient none");
+  assert_no_pressure_gradient_wind_tendency_attrs(none_file_id);
+  assert_all_candidate_fields_match(
+      baseline_file_id, none_file_id, "explicit pressure-gradient none");
+  check_nc(nc_close(none_file_id), "close explicit pressure-gradient none");
+  check_nc(nc_close(baseline_file_id), "close pressure-gradient none baseline");
+  assert(read_file(explicit_none_log).find("pressure_gradient_wind_tendency") == std::string::npos);
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, first_order_output) +
+      " --wind-tendency-pressure-gradient first_order_constant_alpha"
+      " --wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg 0.8 >" +
+      shell_quote(first_order_log) + " 2>&1");
+  assert_pressure_gradient_wind_tendency_output(
+      baseline_output, first_order_output, first_order_log, alpha);
 }
 
 void assert_wind_tendency_paths(
@@ -3005,6 +3350,80 @@ void run_rejection_tests(
   assert(no_change_status != 0);
   assert(!std::filesystem::exists(no_change_output));
 
+  const std::vector<std::string> bad_pressure_gradient_options = {
+      "--wind-tendency-pressure-gradient bogus "
+      "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg 0.8",
+      "--wind-tendency-pressure-gradient first_order_constant_alpha",
+      "--wind-tendency-pressure-gradient first_order_constant_alpha "
+      "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg 0",
+      "--wind-tendency-pressure-gradient first_order_constant_alpha "
+      "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg -1",
+      "--wind-tendency-pressure-gradient first_order_constant_alpha "
+      "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg nan",
+      "--wind-tendency-pressure-gradient none "
+      "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg 0.8",
+  };
+  for (std::size_t index = 0; index < bad_pressure_gradient_options.size(); ++index) {
+    const auto output = root / ("bad_pressure_gradient_option_" + std::to_string(index));
+    const auto status = run_command_status(
+        base_command(executable, d01_start, d02_start, template_path, output) + " " +
+        bad_pressure_gradient_options[index] + " >/dev/null 2>&1");
+    assert(status != 0);
+    assert(!std::filesystem::exists(output));
+  }
+
+  const auto missing_pb_d02 = root / "wrfout_d02_missing_pb_2025-07-26_00:00:00";
+  create_wrf_fixture(
+      missing_pb_d02,
+      2000.0,
+      FixtureShape{10, 10},
+      true,
+      false,
+      false,
+      true);
+  const auto missing_pb_output = root / "pressure_gradient_missing_pb_output";
+  const auto missing_pb_log = root / "pressure_gradient_missing_pb.log";
+  const auto missing_pb_status = run_command_status(
+      base_command(executable, d01_start, missing_pb_d02, template_path, missing_pb_output) +
+      " --wind-tendency-pressure-gradient first_order_constant_alpha"
+      " --wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg 0.8 >" +
+      shell_quote(missing_pb_log) + " 2>&1");
+  assert(missing_pb_status != 0);
+  assert(!std::filesystem::exists(missing_pb_output));
+  assert(read_file(missing_pb_log).find("requires input variable PB") != std::string::npos);
+
+  const auto invalid_pressure_d02 =
+      root / "wrfout_d02_invalid_total_pressure_2025-07-26_00:00:00";
+  create_wrf_fixture(
+      invalid_pressure_d02,
+      2000.0,
+      FixtureShape{10, 10},
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true);
+  const auto invalid_pressure_gradient_output =
+      root / "pressure_gradient_invalid_total_pressure_output";
+  const auto invalid_pressure_gradient_log = root / "pressure_gradient_invalid_total_pressure.log";
+  const auto invalid_pressure_gradient_status = run_command_status(
+      base_command(
+          executable,
+          d01_start,
+          invalid_pressure_d02,
+          template_path,
+          invalid_pressure_gradient_output) +
+      " --wind-tendency-pressure-gradient first_order_constant_alpha"
+      " --wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg 0.8 >" +
+      shell_quote(invalid_pressure_gradient_log) + " 2>&1");
+  assert(invalid_pressure_gradient_status != 0);
+  assert(!std::filesystem::exists(invalid_pressure_gradient_output));
+  assert(
+      read_file(invalid_pressure_gradient_log).find("invalid_pressure_value") !=
+      std::string::npos);
+
   const auto hidden_without_pressure_output = root / "hidden_without_pressure_output";
   const auto hidden_without_pressure_log = root / "hidden_without_pressure.log";
   const auto hidden_without_pressure_status = run_command_status(
@@ -3214,6 +3633,13 @@ int main(const int argc, char** argv) {
         default_log,
         {false, true, true, "selected_field_integrator_v0"});
     assert_wind_tendency_paths(
+        executable,
+        d01_start,
+        d02_start,
+        template_path,
+        output,
+        root);
+    assert_pressure_gradient_wind_tendency_paths(
         executable,
         d01_start,
         d02_start,

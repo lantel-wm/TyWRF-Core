@@ -1956,6 +1956,27 @@ delta, so D90/D91 parent-ratio-scaled decompositions must pass the scaled width
 directly with `--child-delta`. This audit is not gate evidence and cannot
 justify `00:20` progression.
 
+D92 is complete, fully verified, and pushed at commit `979e409`
+(`Add wind tendency decomposition and pressure gradient skeleton`). Full
+validation for that integrated state reported pytest `264/264` and CTest
+`34/34`. The D92 real audit smoke is diagnostic-only: the `U` and `V` residual
+normalized RMSE values were about `0.1679774` and `0.1601626`, respectively,
+and cannot be treated as compatibility pass evidence.
+
+D93 compatibility scope is only selected-field, default-off pressure-gradient
+wind-tendency opt-in wiring. The opt-in may update only `U` and `V`; default
+`none` must keep existing selected-field output unchanged. D93 must not write
+or repair `P`, `MU`, `PB`, or `PHB`, and it must not connect this option to
+pressure refresh, physics, or any broader pressure-state update.
+
+The D93 opt-in is a sensitivity/staging path, not a WRF-exact dynamics
+implementation. A constant-alpha, first-order pressure-gradient approximation
+may help isolate wind residual behavior, but it is not proof of WRF-compatible
+pressure-gradient forcing. D93 must not claim a validation pass, must not
+advance validation to `00:20`, must not use reference-end/oracle data for
+model updates, must not lower d02 below `2 km`, and must not introduce
+best-track nudging.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

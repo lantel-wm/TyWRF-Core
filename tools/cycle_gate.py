@@ -74,6 +74,52 @@ WIND_TENDENCY_TRUE_BLOCKER_ATTRS = (
     "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH",
     "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY",
 )
+PRESSURE_GRADIENT_WIND_TENDENCY_PREFIX = (
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY"
+)
+PRESSURE_GRADIENT_WIND_TENDENCY_REQUIRED_GROUPS = {
+    "switches": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_OPT_IN",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_APPLIED",
+    ),
+    "mode": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND",
+    ),
+    "status": ("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS",),
+    "evidence": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE",
+    ),
+    "counts": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT",
+    ),
+    "units": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS",
+    ),
+    "alpha": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE",
+    ),
+    "safety": (
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE",
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH",
+    ),
+}
+PRESSURE_GRADIENT_WIND_TENDENCY_FALSE_EVIDENCE_ATTRS = (
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE",
+)
+PRESSURE_GRADIENT_WIND_TENDENCY_TRUE_BLOCKER_ATTRS = (
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE",
+    "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH",
+)
 
 
 @dataclass(frozen=True)
@@ -368,6 +414,140 @@ def _read_metadata_bool(value: object) -> bool | None:
     return None
 
 
+def _read_metadata_float(value: object) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _read_metadata_int(value: object) -> int | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric) or not numeric.is_integer():
+        return None
+    return int(numeric)
+
+
+def _pressure_gradient_wind_tendency_metadata_disqualifiers(
+    attrs: dict[str, object],
+) -> list[str]:
+    if not any(
+        name.startswith(PRESSURE_GRADIENT_WIND_TENDENCY_PREFIX)
+        for name in attrs
+    ):
+        return []
+
+    disqualifiers: list[str] = []
+    for group, names in PRESSURE_GRADIENT_WIND_TENDENCY_REQUIRED_GROUPS.items():
+        missing = [name for name in names if name not in attrs]
+        if missing:
+            disqualifiers.append(
+                "pressure-gradient wind tendency missing "
+                f"{group} metadata: {', '.join(missing)}"
+            )
+
+    mode = attrs.get("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE")
+    if (
+        mode is not None
+        and _metadata_token_text(mode) != "first_order_constant_alpha"
+    ):
+        disqualifiers.append(
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE="
+            f"{_metadata_text(mode)}"
+        )
+
+    for name in PRESSURE_GRADIENT_WIND_TENDENCY_REQUIRED_GROUPS["switches"]:
+        value = attrs.get(name)
+        if value is not None and _read_metadata_bool(value) is not True:
+            disqualifiers.append(f"{name}={_metadata_text(value)}")
+
+    source_kind = attrs.get(
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND"
+    )
+    if source_kind is not None:
+        source_kind_text = _metadata_token_text(source_kind)
+        if any(
+            token in source_kind_text
+            for token in WIND_TENDENCY_SOURCE_KIND_BLOCKING_TOKENS
+        ):
+            disqualifiers.append(
+                "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND="
+                f"{_metadata_text(source_kind)}"
+            )
+
+    units = attrs.get("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS")
+    if units is not None and _metadata_text(units).lower() != "m s-2":
+        disqualifiers.append(
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS="
+            f"{_metadata_text(units)}"
+        )
+
+    alpha_units = attrs.get(
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS"
+    )
+    if (
+        alpha_units is not None
+        and _metadata_text(alpha_units).lower() != "m3 kg-1"
+    ):
+        disqualifiers.append(
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS="
+            f"{_metadata_text(alpha_units)}"
+        )
+
+    alpha_kind = attrs.get(
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND"
+    )
+    if (
+        alpha_kind is not None
+        and _metadata_token_text(alpha_kind) != "constant_specific_volume"
+    ):
+        disqualifiers.append(
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND="
+            f"{_metadata_text(alpha_kind)}"
+        )
+
+    alpha_value = attrs.get(
+        "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE"
+    )
+    if (
+        alpha_value is not None
+        and _read_metadata_float(alpha_value) is None
+    ):
+        disqualifiers.append(
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE="
+            f"{_metadata_text(alpha_value)}"
+        )
+
+    status = attrs.get("TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS")
+    if status is not None and _metadata_token_text(status) != "ok":
+        disqualifiers.append(
+            "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS="
+            f"{_metadata_text(status)}"
+        )
+
+    for name in PRESSURE_GRADIENT_WIND_TENDENCY_REQUIRED_GROUPS["counts"]:
+        value = attrs.get(name)
+        count = _read_metadata_int(value) if value is not None else None
+        if value is not None and (count is None or count < 0):
+            disqualifiers.append(f"{name}={_metadata_text(value)}")
+
+    for name in PRESSURE_GRADIENT_WIND_TENDENCY_FALSE_EVIDENCE_ATTRS:
+        value = attrs.get(name)
+        if value is not None and _read_metadata_bool(value) is not True:
+            disqualifiers.append(f"{name}={_metadata_text(value)}")
+
+    for name in PRESSURE_GRADIENT_WIND_TENDENCY_TRUE_BLOCKER_ATTRS:
+        value = attrs.get(name)
+        if value is not None and _read_metadata_bool(value) is not False:
+            disqualifiers.append(f"{name}={_metadata_text(value)}")
+
+    return disqualifiers
+
+
 def _candidate_metadata_gate(
     candidate_path: Path,
     *,
@@ -410,6 +590,9 @@ def _candidate_metadata_gate(
     if kind and any(token in kind for token in BLOCKING_CANDIDATE_KIND_TOKENS):
         disqualifiers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
     disqualifiers.extend(_wind_tendency_metadata_disqualifiers(attrs))
+    disqualifiers.extend(
+        _pressure_gradient_wind_tendency_metadata_disqualifiers(attrs)
+    )
     disqualifiers.extend(
         _related_metadata_disqualifiers(
             attrs,

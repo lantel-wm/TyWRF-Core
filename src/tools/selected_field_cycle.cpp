@@ -1,4 +1,5 @@
 #include "tywrf/dynamics/base_state_provider.hpp"
+#include "tywrf/dynamics/pressure_gradient_wind_tendency.hpp"
 #include "tywrf/dynamics/pressure_refresh_hook.hpp"
 #include "tywrf/dynamics/wind_tendency.hpp"
 #include "tywrf/io/pressure_refresh_io.hpp"
@@ -126,6 +127,11 @@ enum class WindTendencyAdvectionForm {
   upwind,
 };
 
+enum class WindTendencyPressureGradientMode {
+  none,
+  first_order_constant_alpha,
+};
+
 struct Options {
   std::filesystem::path d01_start_state_path;
   std::filesystem::path d02_start_state_path;
@@ -152,11 +158,16 @@ struct Options {
       WindTendencyAdvectingComponents::same_component;
   WindTendencyAdvectionForm wind_tendency_advection_form =
       WindTendencyAdvectionForm::centered;
+  WindTendencyPressureGradientMode wind_tendency_pressure_gradient =
+      WindTendencyPressureGradientMode::none;
   std::size_t wind_tendency_substeps = kDefaultWindTendencySubsteps;
+  double wind_tendency_pressure_gradient_constant_specific_volume_m3_per_kg =
+      0.0;
   bool has_wind_tendency_advecting_velocity_mode = false;
   bool has_wind_tendency_advecting_components = false;
   bool has_wind_tendency_advection_form = false;
   bool has_wind_tendency_substeps = false;
+  bool has_wind_tendency_pressure_gradient_constant_specific_volume = false;
   bool pretty = false;
   std::vector<std::string> variables;
   std::vector<std::pair<std::int32_t, std::int32_t>> pressure_column_probe_columns;
@@ -232,6 +243,18 @@ struct WindTendencyOptInReport {
   std::uint64_t changed_v_points = 0;
 };
 
+struct PressureGradientWindTendencyOptInReport {
+  WindTendencyPressureGradientMode mode =
+      WindTendencyPressureGradientMode::none;
+  tywrf::dynamics::PressureGradientWindTendencyReport kernel;
+  double constant_specific_volume_m3_per_kg = 0.0;
+  double dx_m = kD02TargetDxMeters;
+  double dy_m = kD02TargetDxMeters;
+  double dt_seconds = kWindTendencySubstepSeconds;
+  std::uint64_t changed_u_points = 0;
+  std::uint64_t changed_v_points = 0;
+};
+
 struct CandidateReport {
   std::uint64_t changed_selected_points = 0;
   std::uint64_t changed_static_template_points = 0;
@@ -260,6 +283,8 @@ struct CandidateReport {
   std::optional<DiagnosticAdapterSourceChildDeltaReport>
       diagnostic_adapter_source_child_delta;
   std::optional<WindTendencyOptInReport> wind_tendency;
+  std::optional<PressureGradientWindTendencyOptInReport>
+      pressure_gradient_wind_tendency;
   std::filesystem::path diagnostic_adapter_metadata_source;
   std::size_t diagnostic_adapter_metadata_time_index = 0;
   std::filesystem::path pressure_refresh_metadata_source;
@@ -328,6 +353,11 @@ struct DiagnosticAdapterProviderSource {
   return kind != WindTendencySourceKind::none;
 }
 
+[[nodiscard]] constexpr bool pressure_gradient_wind_tendency_enabled(
+    const WindTendencyPressureGradientMode mode) noexcept {
+  return mode != WindTendencyPressureGradientMode::none;
+}
+
 [[nodiscard]] std::string_view wind_tendency_source_name(
     const WindTendencySourceKind kind) noexcept {
   switch (kind) {
@@ -339,6 +369,17 @@ struct DiagnosticAdapterProviderSource {
       return "identity";
     case WindTendencySourceKind::self_advection:
       return "self_advection";
+  }
+  return "none";
+}
+
+[[nodiscard]] std::string_view pressure_gradient_wind_tendency_mode_name(
+    const WindTendencyPressureGradientMode mode) noexcept {
+  switch (mode) {
+    case WindTendencyPressureGradientMode::none:
+      return "none";
+    case WindTendencyPressureGradientMode::first_order_constant_alpha:
+      return "first_order_constant_alpha";
   }
   return "none";
 }
@@ -403,6 +444,39 @@ kernel_wind_tendency_advection_form(const WindTendencyAdvectionForm form) noexce
   return tywrf::dynamics::WindTendencyAdvectionForm::centered;
 }
 
+[[nodiscard]] std::string_view pressure_gradient_wind_tendency_status_name(
+    const tywrf::dynamics::PressureGradientWindTendencyStatus status) noexcept {
+  switch (status) {
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::ok:
+      return "ok";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::null_target:
+      return "null_target";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::null_pressure:
+      return "null_pressure";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::
+        invalid_pressure_value:
+      return "invalid_pressure_value";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::invalid_config:
+      return "invalid_config";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::invalid_layout:
+      return "invalid_layout";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::insufficient_halo:
+      return "insufficient_halo";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::
+        mismatched_pressure_layout:
+      return "mismatched_pressure_layout";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::
+        mismatched_target_layout:
+      return "mismatched_target_layout";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::
+        unsupported_config:
+      return "unsupported_config";
+    case tywrf::dynamics::PressureGradientWindTendencyStatus::not_implemented:
+      return "not_implemented";
+  }
+  return "unknown";
+}
+
 [[nodiscard]] constexpr bool wind_tendency_zero_or_identity_only(
     const WindTendencySourceKind kind) noexcept {
   return kind == WindTendencySourceKind::zero || kind == WindTendencySourceKind::identity;
@@ -436,6 +510,32 @@ kernel_wind_tendency_advection_form(const WindTendencyAdvectionForm form) noexce
   }
   throw std::invalid_argument(
       std::string(option) + " expects one of: none, zero, identity, self-advection");
+}
+
+[[nodiscard]] WindTendencyPressureGradientMode parse_wind_tendency_pressure_gradient_mode(
+    const std::string& value,
+    const std::string_view option) {
+  auto trimmed = value;
+  trimmed.erase(
+      trimmed.begin(),
+      std::find_if(trimmed.begin(), trimmed.end(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }));
+  trimmed.erase(
+      std::find_if(trimmed.rbegin(), trimmed.rend(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }).base(),
+      trimmed.end());
+  if (trimmed == "none") {
+    return WindTendencyPressureGradientMode::none;
+  }
+  if (trimmed == "first_order_constant_alpha" ||
+      trimmed == "first-order-constant-alpha") {
+    return WindTendencyPressureGradientMode::first_order_constant_alpha;
+  }
+  throw std::invalid_argument(
+      std::string(option) +
+      " expects one of: none, first_order_constant_alpha");
 }
 
 [[nodiscard]] WindTendencyAdvectingVelocityMode parse_wind_tendency_advecting_velocity_mode(
@@ -752,6 +852,14 @@ Options:
   --wind-tendency-advection-form FORM
                                   self_advection-only horizontal advection form.
                                   FORM is centered or upwind; default centered.
+  --wind-tendency-pressure-gradient MODE
+                                  Opt in to selected-field U/V pressure-gradient tendency.
+                                  MODE is none or first_order_constant_alpha; default none.
+                                  This is not diagnostic closure, oracle evidence, or validation
+                                  gate evidence.
+  --wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg VALUE
+                                  Required positive finite alpha in m3 kg-1 when pressure-gradient
+                                  MODE is first_order_constant_alpha.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
@@ -794,6 +902,21 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       }).base(),
       token.end());
   return token;
+}
+
+[[nodiscard]] double parse_positive_finite_double(
+    const std::string& value,
+    const std::string_view option) {
+  const auto trimmed = trim_copy(value);
+  if (trimmed.empty()) {
+    throw std::invalid_argument(std::string(option) + " expects a positive finite number");
+  }
+  std::size_t parsed_chars = 0;
+  const auto parsed = std::stod(trimmed, &parsed_chars);
+  if (parsed_chars != trimmed.size() || !std::isfinite(parsed) || parsed <= 0.0) {
+    throw std::invalid_argument(std::string(option) + " expects a positive finite number");
+  }
+  return parsed;
 }
 
 [[nodiscard]] std::size_t parse_positive_bounded_size(
@@ -1035,6 +1158,32 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
               arg.substr(std::string("--wind-tendency-advection-form=").size()),
               "--wind-tendency-advection-form");
       options.has_wind_tendency_advection_form = true;
+    } else if (arg == "--wind-tendency-pressure-gradient") {
+      options.wind_tendency_pressure_gradient =
+          parse_wind_tendency_pressure_gradient_mode(require_value(arg), arg);
+    } else if (arg.rfind("--wind-tendency-pressure-gradient=", 0) == 0) {
+      options.wind_tendency_pressure_gradient =
+          parse_wind_tendency_pressure_gradient_mode(
+              arg.substr(std::string("--wind-tendency-pressure-gradient=").size()),
+              "--wind-tendency-pressure-gradient");
+    } else if (
+        arg ==
+        "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg") {
+      options.wind_tendency_pressure_gradient_constant_specific_volume_m3_per_kg =
+          parse_positive_finite_double(require_value(arg), arg);
+      options.has_wind_tendency_pressure_gradient_constant_specific_volume = true;
+    } else if (
+        arg.rfind(
+            "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg=",
+            0) == 0) {
+      options.wind_tendency_pressure_gradient_constant_specific_volume_m3_per_kg =
+          parse_positive_finite_double(
+              arg.substr(
+                  std::string(
+                      "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg=")
+                      .size()),
+              "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg");
+      options.has_wind_tendency_pressure_gradient_constant_specific_volume = true;
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
     } else if (arg == "--diagnostic-base-state-adapter-report") {
@@ -1105,6 +1254,18 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
         "--wind-tendency-advection-form is only valid with "
         "--wind-tendency-source self_advection");
   }
+  if (pressure_gradient_wind_tendency_enabled(options.wind_tendency_pressure_gradient) &&
+      !options.has_wind_tendency_pressure_gradient_constant_specific_volume) {
+    throw std::invalid_argument(
+        "--wind-tendency-pressure-gradient first_order_constant_alpha requires "
+        "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg");
+  }
+  if (!pressure_gradient_wind_tendency_enabled(options.wind_tendency_pressure_gradient) &&
+      options.has_wind_tendency_pressure_gradient_constant_specific_volume) {
+    throw std::invalid_argument(
+        "--wind-tendency-pressure-gradient-constant-specific-volume-m3-per-kg is only "
+        "valid with --wind-tendency-pressure-gradient first_order_constant_alpha");
+  }
   if (options.experimental_pressure_refresh_apply && !options.pressure_refresh) {
     throw std::invalid_argument(
         "--experimental-pressure-refresh-apply requires --pressure-refresh");
@@ -1152,6 +1313,28 @@ void require_output_variables(const std::vector<std::string>& variables) {
   }
   file.check(status, "inquire variable");
   return false;
+}
+
+void require_variable(
+    const NetcdfHandle& file,
+    const std::string_view name,
+    const std::string_view context) {
+  if (has_variable(file, name)) {
+    return;
+  }
+  throw std::runtime_error(
+      std::string(context) + " requires input variable " + std::string(name));
+}
+
+void require_pressure_gradient_wind_tendency_inputs(
+    const Options& options) {
+  if (!pressure_gradient_wind_tendency_enabled(
+          options.wind_tendency_pressure_gradient)) {
+    return;
+  }
+  const NetcdfHandle file(options.d02_start_state_path, NetcdfHandle::Mode::read);
+  require_variable(file, "P", "pressure-gradient wind tendency");
+  require_variable(file, "PB", "pressure-gradient wind tendency");
 }
 
 [[nodiscard]] std::vector<std::string> available_optional_preserved_variables(
@@ -1774,6 +1957,139 @@ void apply_selected_field_wind_tendency(
   timeline_fields.push_back(timeline_field("changed_u_points", wind_report.changed_u_points));
   timeline_fields.push_back(timeline_field("changed_v_points", wind_report.changed_v_points));
   append_timeline_event(report, "wind_tendency_apply", std::move(timeline_fields));
+}
+
+void apply_selected_field_pressure_gradient_wind_tendency(
+    const tywrf::nest::ParentChildDescriptor& descriptor,
+    const Options& options,
+    tywrf::State<float>& candidate,
+    CandidateReport& report) {
+  if (!pressure_gradient_wind_tendency_enabled(
+          options.wind_tendency_pressure_gradient)) {
+    return;
+  }
+
+  const auto u_before = candidate.u;
+  const auto v_before = candidate.v;
+  const auto child_dx_m = static_cast<float>(descriptor.child.grid_spacing_m);
+  const auto child_dy_m = child_dx_m;
+  PressureGradientWindTendencyOptInReport pressure_report;
+  pressure_report.mode = options.wind_tendency_pressure_gradient;
+  pressure_report.constant_specific_volume_m3_per_kg =
+      options.wind_tendency_pressure_gradient_constant_specific_volume_m3_per_kg;
+  pressure_report.dx_m = child_dx_m;
+  pressure_report.dy_m = child_dy_m;
+  pressure_report.dt_seconds = kWindTendencySubstepSeconds;
+
+  const tywrf::State<float>& pressure_source = candidate;
+  pressure_report.kernel =
+      tywrf::dynamics::apply_horizontal_pressure_gradient_wind_tendency(
+          tywrf::dynamics::PressureGradientWindTendencyViews<float>{
+              candidate.u.view(),
+              candidate.v.view(),
+              pressure_source.p.view(),
+              pressure_source.pb.view()},
+          tywrf::dynamics::PressureGradientWindTendencyConfig<float>{
+              .dt_seconds = kWindTendencySubstepSeconds,
+              .dx_m = child_dx_m,
+              .dy_m = child_dy_m,
+              .constant_specific_volume_m3_per_kg =
+                  static_cast<float>(
+                      options
+                          .wind_tendency_pressure_gradient_constant_specific_volume_m3_per_kg),
+              .form = tywrf::dynamics::PressureGradientWindTendencyForm::
+                  first_order_constant_specific_volume,
+              .pressure_units =
+                  tywrf::dynamics::PressureGradientPressureUnits::pascal,
+              .specific_volume_units = tywrf::dynamics::
+                  PressureGradientSpecificVolumeUnits::cubic_meter_per_kilogram,
+              .enable_pressure_gradient = true,
+              .diagnostic_only = false,
+              .gate_candidate = false,
+              .validation_gate_evidence = false});
+  if (pressure_report.kernel.status !=
+      tywrf::dynamics::PressureGradientWindTendencyStatus::ok) {
+    throw std::runtime_error(
+        "selected-field pressure-gradient wind tendency failed: " +
+        std::string(
+            pressure_gradient_wind_tendency_status_name(
+                pressure_report.kernel.status)));
+  }
+
+  pressure_report.changed_u_points = changed_points(u_before, candidate.u);
+  pressure_report.changed_v_points = changed_points(v_before, candidate.v);
+  report.pressure_gradient_wind_tendency = pressure_report;
+  append_timeline_event(
+      report,
+      "pressure_gradient_wind_tendency_apply",
+      {
+          timeline_field("opt_in", "true"),
+          timeline_field("applied", "true"),
+          timeline_field("source", "d92_standalone_pressure_gradient_skeleton"),
+          timeline_field("source_kind", "candidate_state_pressure_gradient"),
+          timeline_field(
+              "mode",
+              std::string(pressure_gradient_wind_tendency_mode_name(
+                  pressure_report.mode))),
+          timeline_field(
+              "status",
+              std::string(pressure_gradient_wind_tendency_status_name(
+                  pressure_report.kernel.status))),
+          timeline_field(
+              "constant_specific_volume_m3_per_kg",
+              std::to_string(
+                  pressure_report.constant_specific_volume_m3_per_kg)),
+          timeline_field("units", "m_s-2"),
+          timeline_field("alpha_kind", "constant_specific_volume"),
+          timeline_field(
+              "alpha_value",
+              std::to_string(
+                  pressure_report.constant_specific_volume_m3_per_kg)),
+          timeline_field("alpha_units", "m3_kg-1"),
+          timeline_field("fields", "U_V"),
+          timeline_field("diagnostic_only", "false"),
+          timeline_field("diagnostic_closure", "false"),
+          timeline_field("uses_reference_end_truth", "false"),
+          timeline_field("uses_oracle", "false"),
+          timeline_field("oracle", "false"),
+          timeline_field("gate_evidence", "true"),
+          timeline_field("validation_gate_evidence", "true"),
+          timeline_field("no_gate_pass_claim", "true"),
+          timeline_field(
+              "u_updated_count",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.updated_u_points)),
+          timeline_field(
+              "v_updated_count",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.updated_v_points)),
+          timeline_field(
+              "u_skipped_count",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.skipped_u_points)),
+          timeline_field(
+              "v_skipped_count",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.skipped_v_points)),
+          timeline_field(
+              "updated_u_points",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.updated_u_points)),
+          timeline_field(
+              "updated_v_points",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.updated_v_points)),
+          timeline_field(
+              "skipped_u_points",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.skipped_u_points)),
+          timeline_field(
+              "skipped_v_points",
+              static_cast<std::uint64_t>(
+                  pressure_report.kernel.skipped_v_points)),
+          timeline_field("changed_u_points", pressure_report.changed_u_points),
+          timeline_field("changed_v_points", pressure_report.changed_v_points),
+      });
 }
 
 template <typename Storage>
@@ -3685,6 +4001,8 @@ void run_diagnostic_adapter_report(
       });
 
   apply_selected_field_wind_tendency(options, candidate, report);
+  apply_selected_field_pressure_gradient_wind_tendency(
+      descriptor, options, candidate, report);
 
   report.changed_selected_points = changed_selected_points(d02_start, candidate);
   if (report.changed_selected_points == 0) {
@@ -4821,6 +5139,117 @@ void write_wind_tendency_attrs(
       static_cast<double>(wind.changed_v_points));
 }
 
+void write_pressure_gradient_wind_tendency_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (!report.pressure_gradient_wind_tendency.has_value()) {
+    return;
+  }
+
+  const auto& pressure = *report.pressure_gradient_wind_tendency;
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_OPT_IN", "true");
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_APPLIED", "true");
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE",
+      "d92_standalone_pressure_gradient_skeleton");
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SOURCE_KIND",
+      "candidate_state_pressure_gradient");
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_MODE",
+      pressure_gradient_wind_tendency_mode_name(pressure.mode));
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_STATUS",
+      pressure_gradient_wind_tendency_status_name(pressure.kernel.status));
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UNITS", "m s-2");
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_KIND",
+      "constant_specific_volume");
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_VALUE",
+      pressure.constant_specific_volume_m3_per_kg);
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ALPHA_UNITS", "m3 kg-1");
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CONSTANT_SPECIFIC_VOLUME_M3_PER_KG",
+      pressure.constant_specific_volume_m3_per_kg);
+  write_text_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SPECIFIC_VOLUME_UNITS",
+      "m3 kg-1");
+  write_double_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DX_M", pressure.dx_m);
+  write_double_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DY_M", pressure.dy_m);
+  write_double_attr(
+      file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DT_SECONDS", pressure.dt_seconds);
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_WRITTEN_FIELDS", "U,V");
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_ONLY", "false");
+  write_text_attr(
+      file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_DIAGNOSTIC_CLOSURE", "false");
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_ORACLE", "false");
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ORACLE", "false");
+  write_text_attr(
+      file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_USES_REFERENCE_END_TRUTH", "false");
+  write_text_attr(file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_GATE_EVIDENCE", "true");
+  write_text_attr(
+      file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE", "true");
+  write_text_attr(
+      file, "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_NO_GATE_PASS_CLAIM", "true");
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ACTIVE_U_POINTS",
+      static_cast<double>(pressure.kernel.active_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_ACTIVE_V_POINTS",
+      static_cast<double>(pressure.kernel.active_v_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_UPDATED_COUNT",
+      static_cast<double>(pressure.kernel.updated_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_UPDATED_COUNT",
+      static_cast<double>(pressure.kernel.updated_v_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_U_SKIPPED_COUNT",
+      static_cast<double>(pressure.kernel.skipped_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_V_SKIPPED_COUNT",
+      static_cast<double>(pressure.kernel.skipped_v_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_U_POINTS",
+      static_cast<double>(pressure.kernel.updated_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_UPDATED_V_POINTS",
+      static_cast<double>(pressure.kernel.updated_v_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_U_POINTS",
+      static_cast<double>(pressure.kernel.skipped_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_SKIPPED_V_POINTS",
+      static_cast<double>(pressure.kernel.skipped_v_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CHANGED_U_POINTS",
+      static_cast<double>(pressure.changed_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_PRESSURE_GRADIENT_WIND_TENDENCY_CHANGED_V_POINTS",
+      static_cast<double>(pressure.changed_v_points));
+}
+
 void stamp_gate_metadata(
     const Options& options,
     const Resolution resolution,
@@ -5047,6 +5476,7 @@ void stamp_gate_metadata(
   write_normal_base_state_producer_attrs(file, report);
   write_diagnostic_adapter_attrs(file, report);
   write_wind_tendency_attrs(file, report);
+  write_pressure_gradient_wind_tendency_attrs(file, report);
   if (options.diagnostic_adapter_report) {
     write_text_attr(
         file,
@@ -5715,6 +6145,169 @@ void write_wind_tendency_json(
       stream,
       "wind_tendency_changed_v_points",
       static_cast<double>(wind.changed_v_points),
+      comma,
+      pretty);
+}
+
+void write_pressure_gradient_wind_tendency_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool comma,
+    const bool pretty) {
+  if (!report.pressure_gradient_wind_tendency.has_value()) {
+    return;
+  }
+
+  const auto& pressure = *report.pressure_gradient_wind_tendency;
+  write_json_bool(stream, "pressure_gradient_wind_tendency_opt_in", true, true, pretty);
+  write_json_bool(stream, "pressure_gradient_wind_tendency_applied", true, true, pretty);
+  write_json_string(
+      stream,
+      "pressure_gradient_wind_tendency_source",
+      "d92_standalone_pressure_gradient_skeleton",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_gradient_wind_tendency_source_kind",
+      "candidate_state_pressure_gradient",
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_gradient_wind_tendency_mode",
+      pressure_gradient_wind_tendency_mode_name(pressure.mode),
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_gradient_wind_tendency_status",
+      pressure_gradient_wind_tendency_status_name(pressure.kernel.status),
+      true,
+      pretty);
+  write_json_string(stream, "pressure_gradient_wind_tendency_units", "m s-2", true, pretty);
+  write_json_string(
+      stream,
+      "pressure_gradient_wind_tendency_alpha_kind",
+      "constant_specific_volume",
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_alpha_value",
+      pressure.constant_specific_volume_m3_per_kg,
+      true,
+      pretty);
+  write_json_string(
+      stream, "pressure_gradient_wind_tendency_alpha_units", "m3 kg-1", true, pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_constant_specific_volume_m3_per_kg",
+      pressure.constant_specific_volume_m3_per_kg,
+      true,
+      pretty);
+  write_json_string(
+      stream,
+      "pressure_gradient_wind_tendency_specific_volume_units",
+      "m3 kg-1",
+      true,
+      pretty);
+  write_json_number(stream, "pressure_gradient_wind_tendency_dx_m", pressure.dx_m, true, pretty);
+  write_json_number(stream, "pressure_gradient_wind_tendency_dy_m", pressure.dy_m, true, pretty);
+  write_json_number(
+      stream, "pressure_gradient_wind_tendency_dt_seconds", pressure.dt_seconds, true, pretty);
+  write_json_string(
+      stream, "pressure_gradient_wind_tendency_written_fields", "U,V", true, pretty);
+  write_json_bool(stream, "pressure_gradient_wind_tendency_diagnostic_only", false, true, pretty);
+  write_json_bool(
+      stream, "pressure_gradient_wind_tendency_diagnostic_closure", false, true, pretty);
+  write_json_bool(stream, "pressure_gradient_wind_tendency_uses_oracle", false, true, pretty);
+  write_json_bool(stream, "pressure_gradient_wind_tendency_oracle", false, true, pretty);
+  write_json_bool(
+      stream,
+      "pressure_gradient_wind_tendency_uses_reference_end_truth",
+      false,
+      true,
+      pretty);
+  write_json_bool(stream, "pressure_gradient_wind_tendency_gate_evidence", true, true, pretty);
+  write_json_bool(
+      stream,
+      "pressure_gradient_wind_tendency_validation_gate_evidence",
+      true,
+      true,
+      pretty);
+  write_json_bool(
+      stream, "pressure_gradient_wind_tendency_no_gate_pass_claim", true, true, pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_active_u_points",
+      static_cast<double>(pressure.kernel.active_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_active_v_points",
+      static_cast<double>(pressure.kernel.active_v_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_u_updated_count",
+      static_cast<double>(pressure.kernel.updated_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_v_updated_count",
+      static_cast<double>(pressure.kernel.updated_v_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_u_skipped_count",
+      static_cast<double>(pressure.kernel.skipped_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_v_skipped_count",
+      static_cast<double>(pressure.kernel.skipped_v_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_updated_u_points",
+      static_cast<double>(pressure.kernel.updated_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_updated_v_points",
+      static_cast<double>(pressure.kernel.updated_v_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_skipped_u_points",
+      static_cast<double>(pressure.kernel.skipped_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_skipped_v_points",
+      static_cast<double>(pressure.kernel.skipped_v_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_changed_u_points",
+      static_cast<double>(pressure.changed_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "pressure_gradient_wind_tendency_changed_v_points",
+      static_cast<double>(pressure.changed_v_points),
       comma,
       pretty);
 }
@@ -6607,6 +7200,8 @@ void print_report(
       report.normal_base_state_producer.has_value();
   const bool has_diagnostic_adapter = report.diagnostic_adapter.has_value();
   const bool has_wind_tendency = report.wind_tendency.has_value();
+  const bool has_pressure_gradient_wind_tendency =
+      report.pressure_gradient_wind_tendency.has_value();
   const bool has_pressure_column_probe = !report.pressure_column_observations.empty();
   const bool has_pressure_formula_observation =
       !report.pressure_formula_observations.empty();
@@ -6691,11 +7286,20 @@ void print_report(
       "selected_field_timeline_events",
       join_timeline_events(report.timeline),
       has_normal_base_state_producer || has_diagnostic_adapter ||
-          has_wind_tendency || report.pressure_refresh.has_value() ||
-          has_pressure_column_probe,
+          has_wind_tendency || has_pressure_gradient_wind_tendency ||
+          report.pressure_refresh.has_value() || has_pressure_column_probe,
       pretty);
   if (has_wind_tendency) {
     write_wind_tendency_json(std::cout, report, true, pretty);
+  }
+  if (has_pressure_gradient_wind_tendency) {
+    write_pressure_gradient_wind_tendency_json(
+        std::cout,
+        report,
+        has_normal_base_state_producer || has_diagnostic_adapter ||
+            report.pressure_refresh.has_value() || has_pressure_column_probe ||
+            has_pressure_formula_observation,
+        pretty);
   }
   if (has_normal_base_state_producer) {
     write_normal_base_state_producer_json(
@@ -6877,6 +7481,7 @@ int run(Options options) {
     options.variables = default_output_variables(options.d02_start_state_path);
   }
   require_output_variables(options.variables);
+  require_pressure_gradient_wind_tendency_inputs(options);
   if (options.output_path.has_parent_path()) {
     std::filesystem::create_directories(options.output_path.parent_path());
   }
