@@ -11,7 +11,11 @@ from tools.cycle_gate import evaluate_cycles, main as gate_main, report_to_json
 CORE_VARIABLES = ("U", "V", "T", "PH", "MU", "P", "QVAPOR")
 START = "2025-07-26_00:00:00"
 END = "2025-07-26_06:00:00"
+END_0010 = "2025-07-26_00:10:00"
+END_0020 = "2025-07-26_00:20:00"
 END_FILE = "wrfout_d02_2025-07-26_06:00:00"
+END_0010_FILE = "wrfout_d02_2025-07-26_00:10:00"
+END_0020_FILE = "wrfout_d02_2025-07-26_00:20:00"
 SELECTED_FIELD_INTEGRATOR_KIND = "selected_field_integrator_v0"
 SELECTED_FIELD_DIAGNOSTIC_ADAPTER_KIND = "selected_field_diagnostic_adapter_v0"
 PRODUCTION_CANDIDATE_ATTRS = {
@@ -83,6 +87,19 @@ def _write_pair(tmp_path: Path, **candidate_kwargs) -> tuple[Path, Path]:
     candidate_attrs = _production_attrs(candidate_kwargs.pop("attrs", None))
     _write_wrfout(reference_dir / END_FILE)
     _write_wrfout(candidate_dir / END_FILE, attrs=candidate_attrs, **candidate_kwargs)
+    return reference_dir, candidate_dir
+
+
+def _write_10min_progressive_pair(
+    tmp_path: Path,
+    *,
+    candidate_attrs: dict[str, object],
+) -> tuple[Path, Path]:
+    reference_dir = tmp_path / "reference"
+    candidate_dir = tmp_path / "candidate"
+    for file_name in (END_0010_FILE, END_0020_FILE):
+        _write_wrfout(reference_dir / file_name)
+        _write_wrfout(candidate_dir / file_name, attrs=candidate_attrs)
     return reference_dir, candidate_dir
 
 
@@ -323,6 +340,154 @@ def test_cycle_gate_allows_false_related_metadata_flags_for_integrator_candidate
     report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
 
     assert report.status == "passed"
+
+
+@pytest.mark.parametrize(
+    ("wind_attrs", "expected_message"),
+    (
+        (
+            {"TYWRF_WIND_TENDENCY_SOURCE_KIND": "zero_tendency"},
+            "TYWRF_WIND_TENDENCY_SOURCE_KIND=zero_tendency",
+        ),
+        (
+            {"TYWRF_WIND_TENDENCY_SOURCE_KIND": "identity_update"},
+            "TYWRF_WIND_TENDENCY_SOURCE_KIND=identity_update",
+        ),
+        (
+            {"TYWRF_WIND_TENDENCY_SOURCE_KIND": "oracle_reference_end_truth"},
+            "TYWRF_WIND_TENDENCY_SOURCE_KIND=oracle_reference_end_truth",
+        ),
+        (
+            {"TYWRF_WIND_TENDENCY_SOURCE_KIND": "reference-end truth"},
+            "TYWRF_WIND_TENDENCY_SOURCE_KIND=reference-end truth",
+        ),
+        (
+            {"TYWRF_WIND_TENDENCY_GATE_EVIDENCE": "false"},
+            "TYWRF_WIND_TENDENCY_GATE_EVIDENCE=false",
+        ),
+        (
+            {"TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": "false"},
+            "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE=false",
+        ),
+        (
+            {"TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "true"},
+            "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH=true",
+        ),
+        (
+            {"TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY": "true"},
+            "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY=true",
+        ),
+    ),
+)
+def test_cycle_gate_rejects_wind_tendency_placeholder_metadata_at_0010(
+    tmp_path: Path,
+    wind_attrs: dict[str, object],
+    expected_message: str,
+) -> None:
+    attrs = _production_attrs(
+        {
+            "TYWRF_WIND_TENDENCY_OPT_IN": "true",
+            "TYWRF_WIND_TENDENCY_APPLIED": "true",
+            **wind_attrs,
+        }
+    )
+    reference_dir, candidate_dir = _write_10min_progressive_pair(
+        tmp_path,
+        candidate_attrs=attrs,
+    )
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END_0020,
+        interval_minutes=10,
+    )
+    payload = json.loads(report_to_json(report))
+    cycle = report.cycles[0]
+    diagnostics = {metric.name: metric for metric in cycle.diagnostics}
+    metadata = diagnostics["candidate_metadata"]
+
+    assert report.status == "failed"
+    assert report.summary == {"total": 1, "passed": 0, "failed": 1}
+    assert len(report.cycles) == 1
+    assert cycle.end_time == END_0010
+    assert [item["end_time"] for item in payload["cycles"]] == [END_0010]
+    assert metadata.status == "failed"
+    assert expected_message in (metadata.message or "")
+    assert {field.status for field in cycle.fields} == {"passed"}
+    assert {
+        metric.status
+        for name, metric in diagnostics.items()
+        if name != "candidate_metadata"
+    } == {"passed"}
+    assert payload["first_failure"]["cycle_index"] == 1
+    assert payload["first_failure"]["end_time"] == END_0010
+    assert payload["first_failure"]["field"] is None
+    assert payload["first_failure"]["diagnostic"] == "candidate_metadata"
+
+
+def test_cycle_gate_rejects_wind_tendency_non_evidence_even_when_validation_gate_only_allowed(
+    tmp_path: Path,
+) -> None:
+    attrs = _production_attrs(
+        {
+            "TYWRF_VALIDATION_GATE_ONLY": "true",
+            "TYWRF_INTEGRATOR_OUTPUT": "false",
+            "TYWRF_WIND_TENDENCY_OPT_IN": "true",
+            "TYWRF_WIND_TENDENCY_APPLIED": "true",
+            "TYWRF_WIND_TENDENCY_GATE_EVIDENCE": "false",
+        }
+    )
+    reference_dir, candidate_dir = _write_10min_progressive_pair(
+        tmp_path,
+        candidate_attrs=attrs,
+    )
+
+    report = evaluate_cycles(
+        reference_dir,
+        candidate_dir,
+        START,
+        end=END_0020,
+        interval_minutes=10,
+        allow_validation_gate_only=True,
+    )
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "failed"
+    assert report.summary == {"total": 1, "passed": 0, "failed": 1}
+    assert metadata.status == "failed"
+    assert "TYWRF_WIND_TENDENCY_GATE_EVIDENCE=false" in (
+        metadata.message or ""
+    )
+    assert "TYWRF_VALIDATION_GATE_ONLY=true" not in (metadata.message or "")
+
+
+def test_cycle_gate_allows_wind_tendency_evidence_metadata(
+    tmp_path: Path,
+) -> None:
+    reference_dir, candidate_dir = _write_pair(
+        tmp_path,
+        attrs={
+            "TYWRF_WIND_TENDENCY_OPT_IN": "true",
+            "TYWRF_WIND_TENDENCY_APPLIED": "true",
+            "TYWRF_WIND_TENDENCY_SOURCE_KIND": "prognostic_dynamics_tendency",
+            "TYWRF_WIND_TENDENCY_GATE_EVIDENCE": "true",
+            "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE": "true",
+            "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH": "false",
+            "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY": "false",
+        },
+    )
+
+    report = evaluate_cycles(reference_dir, candidate_dir, START, end=END)
+    metadata = {metric.name: metric for metric in report.cycles[0].diagnostics}[
+        "candidate_metadata"
+    ]
+
+    assert report.status == "passed"
+    assert metadata.status == "passed"
 
 
 def test_cycle_gate_reports_first_failure_for_10_min_progressive_run(tmp_path: Path) -> None:

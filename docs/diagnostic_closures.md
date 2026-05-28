@@ -1304,6 +1304,24 @@ skeleton report is diagnostic/accounting context with no gate credit. The only
 acceptable proof is a later real strict `2025-07-26_00:10:00` d02 gate pass
 from positive integrator metadata and passing metrics.
 
+D84 is complete, validated, and pushed at commit `44c7fff`
+(`Add wind tendency core skeleton`). That completion remains outside diagnostic
+closure scope. The wind tendency report is not validation-gate evidence, and
+the core report fixes `validation_gate_evidence=false`; a closure must not
+reinterpret those reports as wind repairs, candidate output, or gate proof. The
+strict `2025-07-26_00:10:00` d02 gate still fails from prior real validation,
+validation must not advance to `00:20`, and d02 remains `2 km`.
+
+D85 selected-field `U`/`V` wind tendency work is limited to default-off opt-in
+plumbing. Zero or identity placeholder tendency sources may exist only to
+exercise wiring and must be strict-gate rejected as non-evidence. They cannot
+be hidden inside a diagnostic closure, used to patch winds, used to borrow
+selected-field candidate metadata, or reported as a strict-gate pass. D85 must
+not use reference-end truth, oracle/reference-copy data, or WRF end-state
+deltas; must not handle `P`, `MU`, `PB`, or `PHB`; must not invoke pressure
+refresh, physics, or best-track nudging; must not lower d02 below `2 km`; and
+must not run or report `00:20` as validation progress.
+
 ## Hard Prohibitions
 
 The following schemes are forbidden:

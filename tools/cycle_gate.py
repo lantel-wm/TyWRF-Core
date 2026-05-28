@@ -54,6 +54,26 @@ BLOCKING_RELATED_METADATA_TOKENS = (
     "staging",
     "experimental",
 )
+WIND_TENDENCY_SOURCE_KIND_BLOCKING_TOKENS = (
+    "zero",
+    "identity",
+    "oracle",
+    "reference_end",
+    "reference_end_truth",
+    "reference_truth",
+    "end_truth",
+    "placeholder",
+    "non_evidence",
+    "nonevidence",
+)
+WIND_TENDENCY_FALSE_EVIDENCE_ATTRS = (
+    "TYWRF_WIND_TENDENCY_GATE_EVIDENCE",
+    "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE",
+)
+WIND_TENDENCY_TRUE_BLOCKER_ATTRS = (
+    "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH",
+    "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY",
+)
 
 
 @dataclass(frozen=True)
@@ -309,6 +329,45 @@ def _related_metadata_disqualifiers(
     return disqualifiers
 
 
+def _wind_tendency_metadata_disqualifiers(attrs: dict[str, object]) -> list[str]:
+    disqualifiers: list[str] = []
+
+    source_kind = attrs.get("TYWRF_WIND_TENDENCY_SOURCE_KIND")
+    if source_kind is not None:
+        source_kind_text = _metadata_token_text(source_kind)
+        if any(
+            token in source_kind_text
+            for token in WIND_TENDENCY_SOURCE_KIND_BLOCKING_TOKENS
+        ):
+            disqualifiers.append(
+                "TYWRF_WIND_TENDENCY_SOURCE_KIND="
+                f"{_metadata_text(source_kind)}"
+            )
+
+    for name in WIND_TENDENCY_FALSE_EVIDENCE_ATTRS:
+        value = attrs.get(name)
+        if value is not None and _is_false_metadata_value(value):
+            disqualifiers.append(f"{name}={_metadata_text(value)}")
+
+    for name in WIND_TENDENCY_TRUE_BLOCKER_ATTRS:
+        value = attrs.get(name)
+        if value is not None and _read_metadata_bool(value) is True:
+            disqualifiers.append(f"{name}={_metadata_text(value)}")
+
+    return disqualifiers
+
+
+def _read_metadata_bool(value: object) -> bool | None:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    text = _metadata_token_text(value)
+    if text in BOOL_TRUE_VALUES:
+        return True
+    if text in BOOL_FALSE_VALUES:
+        return False
+    return None
+
+
 def _candidate_metadata_gate(
     candidate_path: Path,
     *,
@@ -350,6 +409,7 @@ def _candidate_metadata_gate(
     kind = _metadata_token_text(candidate_kind) if candidate_kind else ""
     if kind and any(token in kind for token in BLOCKING_CANDIDATE_KIND_TOKENS):
         disqualifiers.append(f"TYWRF_CANDIDATE_KIND={candidate_kind}")
+    disqualifiers.extend(_wind_tendency_metadata_disqualifiers(attrs))
     disqualifiers.extend(
         _related_metadata_disqualifiers(
             attrs,
@@ -644,16 +704,17 @@ def evaluate_cycles(
     cycle_start = start_time
     cycles = []
     for cycle_end in end_times:
-        cycles.append(
-            evaluate_cycle(
-                reference_dir,
-                candidate_dir,
-                cycle_start,
-                cycle_end,
-                domain=domain,
-                allow_validation_gate_only=allow_validation_gate_only,
-            )
+        cycle = evaluate_cycle(
+            reference_dir,
+            candidate_dir,
+            cycle_start,
+            cycle_end,
+            domain=domain,
+            allow_validation_gate_only=allow_validation_gate_only,
         )
+        cycles.append(cycle)
+        if _candidate_metadata_failed(cycle):
+            break
         cycle_start = cycle_end
 
     passed = sum(1 for cycle in cycles if cycle.status == "passed")
@@ -671,6 +732,13 @@ def evaluate_cycles(
         cycles=cycles,
         summary={"total": len(cycles), "passed": passed, "failed": failed},
         first_failure=first_failure,
+    )
+
+
+def _candidate_metadata_failed(cycle: CycleGate) -> bool:
+    return any(
+        metric.name == "candidate_metadata" and metric.status != "passed"
+        for metric in cycle.diagnostics
     )
 
 

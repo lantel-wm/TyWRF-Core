@@ -1763,6 +1763,25 @@ compatibility context only and is not gate evidence; only a later real strict
 `2025-07-26_00:10:00` gate run with positive integrator metadata and passing
 metrics can prove compatibility improvement.
 
+D84 is complete, validated, and pushed at commit `44c7fff`
+(`Add wind tendency core skeleton`). The commit adds the wind tendency core
+skeleton and reports only skeleton/accounting state. Its wind tendency report
+is not validation-gate evidence; the core report explicitly fixes
+`validation_gate_evidence=false` so reports cannot be mistaken for a strict
+gate result. The prior real strict d02 `2025-07-26_00:10:00` gate still fails,
+validation remains stopped at `00:10`, and d02 remains `2 km`.
+
+D85 may add only default-off selected-field `U`/`V` wind tendency opt-in
+plumbing. The opt-in path may expose wiring, source selection metadata, and
+strict rejection behavior for selected wind tendencies, but it must not become
+default behavior and must not claim numerical validation improvement. Zero or
+identity placeholder tendency sources are allowed only as strict-gate-negative
+plumbing checks: they must be rejected as non-evidence and must not receive
+gate credit. D85 must not use any reference-end or oracle source, must not
+touch `P`, `MU`, `PB`, or `PHB`, must not invoke pressure refresh, physics, or
+best-track nudging, must not change d02 below `2 km`, and must not advance or
+report validation at `00:20`.
+
 ## Physics Bridge Compatibility Notes
 
 P6 audited the current PGWRF/WRF tree for the v1 physics bridge strategy. The

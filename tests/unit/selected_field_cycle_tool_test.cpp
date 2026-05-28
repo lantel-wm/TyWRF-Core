@@ -854,6 +854,12 @@ void assert_no_pressure_formula_observation_attrs(const int file_id) {
   assert(!has_text_attr(file_id, "TYWRF_PRESSURE_FORMULA_OBSERVATION_VALUES"));
 }
 
+void assert_no_wind_tendency_attrs(const int file_id) {
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_OPT_IN"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_APPLIED"));
+  assert(!has_text_attr(file_id, "TYWRF_WIND_TENDENCY_SOURCE_KIND"));
+}
+
 void assert_successful_candidate(
     const std::filesystem::path& output,
     const bool pressure_refresh = false,
@@ -973,6 +979,7 @@ void assert_successful_candidate(
   if (!(pressure_refresh && pressure_column_probe)) {
     assert_no_pressure_formula_observation_attrs(file_id);
   }
+  assert_no_wind_tendency_attrs(file_id);
   assert_selected_field_timeline_attrs(
       file_id, pressure_refresh, experimental_pressure_refresh, pressure_column_probe);
   const auto state_variables = read_text_attr(file_id, "TYWRF_STATE_VARIABLES");
@@ -1586,6 +1593,7 @@ void assert_hidden_apply_flag_absent_from_help(
       shell_quote(executable) + " --help >" + shell_quote(help_log) + " 2>&1");
   assert(status == 0);
   const auto help = read_file(help_log);
+  assert(help.find("--wind-tendency-source") != std::string::npos);
   assert(help.find("--pressure-refresh") != std::string::npos);
   assert(help.find("--pressure-column-probe") != std::string::npos);
   assert(help.find("--pressure-column-levels") != std::string::npos);
@@ -2186,6 +2194,175 @@ void assert_diagnostic_adapter_report_path(
   check_nc(nc_close(file_id), "close diagnostic adapter output");
 }
 
+void assert_nonwind_fields_match(
+    const int expected_file_id,
+    const int actual_file_id,
+    const std::string_view label) {
+  expect_close(
+      read_3d_value(actual_file_id, "P", 1, 9, 9),
+      read_3d_value(expected_file_id, "P", 1, 9, 9),
+      std::string(label) + " P");
+  expect_close(
+      read_2d_value(actual_file_id, "MU", 0, 9),
+      read_2d_value(expected_file_id, "MU", 0, 9),
+      std::string(label) + " MU");
+  expect_close(
+      read_3d_value(actual_file_id, "PB", 1, 9, 9),
+      read_3d_value(expected_file_id, "PB", 1, 9, 9),
+      std::string(label) + " PB");
+  expect_close(
+      read_3d_value(actual_file_id, "PHB", 2, 9, 9),
+      read_3d_value(expected_file_id, "PHB", 2, 9, 9),
+      std::string(label) + " PHB");
+  expect_close(
+      read_2d_value(actual_file_id, "MUB", 9, 9),
+      read_2d_value(expected_file_id, "MUB", 9, 9),
+      std::string(label) + " MUB");
+  expect_close(
+      read_2d_value(actual_file_id, "HGT", 9, 9),
+      read_2d_value(expected_file_id, "HGT", 9, 9),
+      std::string(label) + " HGT");
+}
+
+void assert_wind_tendency_opt_in_output(
+    const std::filesystem::path& baseline_output,
+    const std::filesystem::path& output,
+    const std::filesystem::path& log_path,
+    const std::string_view source_kind,
+    const bool expect_uv_changes) {
+  int baseline_file_id = -1;
+  int file_id = -1;
+  check_nc(nc_open(baseline_output.string().c_str(), NC_NOWRITE, &baseline_file_id), "open wind baseline");
+  check_nc(nc_open(output.string().c_str(), NC_NOWRITE, &file_id), "open wind output");
+
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_OPT_IN") == "true");
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_APPLIED") == "true");
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_SOURCE_KIND") ==
+         std::string(source_kind));
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_GATE_EVIDENCE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE") == "false");
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH") == "false");
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY") == "true");
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_WRITTEN_FIELDS") == "U,V");
+  assert(read_text_attr(file_id, "TYWRF_WIND_TENDENCY_STATUS") == "ok");
+  assert(read_double_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS") > 0.0);
+  assert(read_double_attr(file_id, "TYWRF_WIND_TENDENCY_ACTIVE_V_POINTS") > 0.0);
+
+  const auto changed_u = read_double_attr(file_id, "TYWRF_WIND_TENDENCY_CHANGED_U_POINTS");
+  const auto changed_v = read_double_attr(file_id, "TYWRF_WIND_TENDENCY_CHANGED_V_POINTS");
+  if (expect_uv_changes) {
+    assert(changed_u > 0.0);
+    assert(changed_v > 0.0);
+    assert(
+        std::fabs(
+            read_3d_value(file_id, "U", 1, 2, 0) -
+            read_3d_value(baseline_file_id, "U", 1, 2, 0)) > kTolerance);
+    assert(
+        std::fabs(
+            read_3d_value(file_id, "V", 1, 10, 9) -
+            read_3d_value(baseline_file_id, "V", 1, 10, 9)) > kTolerance);
+  } else {
+    assert(changed_u == 0.0);
+    assert(changed_v == 0.0);
+    expect_close(
+        read_3d_value(file_id, "U", 1, 2, 0),
+        read_3d_value(baseline_file_id, "U", 1, 2, 0),
+        "zero wind U unchanged");
+    expect_close(
+        read_3d_value(file_id, "V", 1, 10, 9),
+        read_3d_value(baseline_file_id, "V", 1, 10, 9),
+        "zero wind V unchanged");
+  }
+  assert_nonwind_fields_match(baseline_file_id, file_id, source_kind);
+
+  const auto events = read_text_attr(file_id, "TYWRF_SELECTED_FIELD_TIMELINE_EVENTS");
+  assert_contains_in_order(
+      events,
+      {
+          ":parent_interpolation(",
+          ":wind_tendency_apply(",
+          ":selected_field_change_summary(",
+      });
+  assert(timeline_field_value(events, "wind_tendency_apply", "opt_in") == "true");
+  assert(timeline_field_value(events, "wind_tendency_apply", "applied") == "true");
+  assert(timeline_field_value(events, "wind_tendency_apply", "source_kind") ==
+         std::string(source_kind));
+  assert(timeline_field_value(events, "wind_tendency_apply", "fields") == "U_V");
+  assert(timeline_field_value(events, "wind_tendency_apply", "gate_evidence") == "false");
+  assert(
+      timeline_field_value(events, "wind_tendency_apply", "validation_gate_evidence") ==
+      "false");
+  assert(
+      timeline_field_value(events, "wind_tendency_apply", "uses_reference_end_truth") ==
+      "false");
+
+  check_nc(nc_close(file_id), "close wind output");
+  check_nc(nc_close(baseline_file_id), "close wind baseline");
+
+  const auto log = read_file(log_path);
+  assert(log.find("\"wind_tendency_opt_in\": true") != std::string::npos);
+  assert(log.find("\"wind_tendency_applied\": true") != std::string::npos);
+  assert(
+      log.find("\"wind_tendency_source_kind\": \"" + std::string(source_kind) + "\"") !=
+      std::string::npos);
+  assert(log.find("\"wind_tendency_gate_evidence\": false") != std::string::npos);
+  assert(
+      log.find("\"wind_tendency_validation_gate_evidence\": false") !=
+      std::string::npos);
+  assert(
+      log.find("\"wind_tendency_uses_reference_end_truth\": false") !=
+      std::string::npos);
+  assert(log.find("\"wind_tendency_zero_or_identity_only\": true") != std::string::npos);
+}
+
+void assert_wind_tendency_paths(
+    const std::filesystem::path& executable,
+    const std::filesystem::path& d01_start,
+    const std::filesystem::path& d02_start,
+    const std::filesystem::path& template_path,
+    const std::filesystem::path& baseline_output,
+    const std::filesystem::path& root) {
+  const auto explicit_none_output = root / "tywrf_selected_field_wind_none";
+  const auto zero_output = root / "tywrf_selected_field_wind_zero";
+  const auto identity_output = root / "tywrf_selected_field_wind_identity";
+  const auto explicit_none_log = root / "wind_none.log";
+  const auto zero_log = root / "wind_zero.log";
+  const auto identity_log = root / "wind_identity.log";
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, explicit_none_output) +
+      " --wind-tendency-source none >" + shell_quote(explicit_none_log) + " 2>&1");
+  int baseline_file_id = -1;
+  int none_file_id = -1;
+  check_nc(nc_open(baseline_output.string().c_str(), NC_NOWRITE, &baseline_file_id), "open baseline");
+  check_nc(nc_open(explicit_none_output.string().c_str(), NC_NOWRITE, &none_file_id), "open explicit none");
+  assert_no_wind_tendency_attrs(none_file_id);
+  assert_nonwind_fields_match(baseline_file_id, none_file_id, "explicit none");
+  expect_close(
+      read_3d_value(none_file_id, "U", 1, 2, 0),
+      read_3d_value(baseline_file_id, "U", 1, 2, 0),
+      "explicit none U");
+  expect_close(
+      read_3d_value(none_file_id, "V", 1, 10, 9),
+      read_3d_value(baseline_file_id, "V", 1, 10, 9),
+      "explicit none V");
+  check_nc(nc_close(none_file_id), "close explicit none");
+  check_nc(nc_close(baseline_file_id), "close baseline");
+  assert(read_file(explicit_none_log).find("wind_tendency_opt_in") == std::string::npos);
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, zero_output) +
+      " --wind-tendency-source zero >" + shell_quote(zero_log) + " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output, zero_output, zero_log, "zero", false);
+
+  run_command(
+      base_command(executable, d01_start, d02_start, template_path, identity_output) +
+      " --wind-tendency-source identity >" + shell_quote(identity_log) + " 2>&1");
+  assert_wind_tendency_opt_in_output(
+      baseline_output, identity_output, identity_log, "identity", true);
+}
+
 void run_rejection_tests(
     const std::filesystem::path& executable,
     const std::filesystem::path& d01_start,
@@ -2264,6 +2441,13 @@ void run_rejection_tests(
       " --pressure-refresh --diagnostic-base-state-adapter-report >/dev/null 2>&1");
   assert(adapter_pressure_status != 0);
   assert(!std::filesystem::exists(adapter_pressure_output));
+
+  const auto bad_wind_source_output = root / "bad_wind_source_output";
+  const auto bad_wind_source_status = run_command_status(
+      base_command(executable, d01_start, d02_start, template_path, bad_wind_source_output) +
+      " --wind-tendency-source bogus >/dev/null 2>&1");
+  assert(bad_wind_source_status != 0);
+  assert(!std::filesystem::exists(bad_wind_source_output));
 
   const std::vector<std::string> bad_probe_options = {
       "--pressure-column-probe 9",
@@ -2373,6 +2557,13 @@ int main(const int argc, char** argv) {
         output,
         default_log,
         {false, true, true, "selected_field_integrator_v0"});
+    assert_wind_tendency_paths(
+        executable,
+        d01_start,
+        d02_start,
+        template_path,
+        output,
+        root);
 
     assert_normal_pressure_refresh_apply(
         executable,

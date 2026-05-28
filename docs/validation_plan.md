@@ -1527,6 +1527,26 @@ core reports, source reports, and skeleton reports are not gate evidence; they
 must remain diagnostic/accounting context until the real strict `00:10` gate
 passes.
 
+D84 is complete, validated, and pushed at commit `44c7fff`
+(`Add wind tendency core skeleton`). This is code/test validation for the wind
+tendency skeleton, not scientific gate evidence. The D84 wind tendency report
+must not be used as validation-gate evidence, and the core report explicitly
+sets `validation_gate_evidence=false`. The strict d02
+`2025-07-26_00:10:00` gate still fails from prior real validation, so the
+progressive sequence remains stopped at `00:10`; no `00:20` validation may be
+treated as next-gate progress, and d02 remains `2 km`.
+
+D85 validation scope is default-off selected-field `U`/`V` wind tendency
+opt-in plumbing only. It may prove that selected-field wind tendency source
+selection is wired and reported, but every zero or identity placeholder source
+must be strict-gate rejected and reported as non-evidence. Placeholder reports,
+opt-in metadata, and source/core reports cannot satisfy field thresholds,
+candidate metadata, or diagnostic gates. D85 must not use reference-end truth,
+oracle/reference-copy sources, or WRF end-state deltas; must not handle `P`,
+`MU`, `PB`, or `PHB`; must not invoke pressure refresh, physics, or best-track
+nudging; must not lower d02 below `2 km`; and must not run or report `00:20`
+as an advanced validation gate.
+
 Example:
 
 ```bash

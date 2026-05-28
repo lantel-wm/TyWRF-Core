@@ -1,5 +1,6 @@
 #include "tywrf/dynamics/base_state_provider.hpp"
 #include "tywrf/dynamics/pressure_refresh_hook.hpp"
+#include "tywrf/dynamics/wind_tendency.hpp"
 #include "tywrf/io/pressure_refresh_io.hpp"
 #include "tywrf/io/wrf_state_io.hpp"
 #include "tywrf/nest/base_state_exchange.hpp"
@@ -100,6 +101,12 @@ const std::vector<std::string>& pressure_formula_observation_field_names() {
   return names;
 }
 
+enum class WindTendencySourceKind {
+  none,
+  zero,
+  identity,
+};
+
 struct Options {
   std::filesystem::path d01_start_state_path;
   std::filesystem::path d02_start_state_path;
@@ -119,6 +126,7 @@ struct Options {
   bool pressure_refresh = false;
   bool experimental_pressure_refresh_apply = false;
   bool diagnostic_adapter_report = false;
+  WindTendencySourceKind wind_tendency_source = WindTendencySourceKind::none;
   bool pretty = false;
   std::vector<std::string> variables;
   std::vector<std::pair<std::int32_t, std::int32_t>> pressure_column_probe_columns;
@@ -179,6 +187,13 @@ struct DiagnosticAdapterSourceChildDeltaReport {
   DiagnosticAdapterSourceChildFieldDeltaReport alb;
 };
 
+struct WindTendencyOptInReport {
+  WindTendencySourceKind source_kind = WindTendencySourceKind::none;
+  tywrf::dynamics::WindTendencyReport kernel;
+  std::uint64_t changed_u_points = 0;
+  std::uint64_t changed_v_points = 0;
+};
+
 struct CandidateReport {
   std::uint64_t changed_selected_points = 0;
   std::uint64_t changed_static_template_points = 0;
@@ -206,6 +221,7 @@ struct CandidateReport {
   bool diagnostic_adapter_source_staging_aliases_child = false;
   std::optional<DiagnosticAdapterSourceChildDeltaReport>
       diagnostic_adapter_source_child_delta;
+  std::optional<WindTendencyOptInReport> wind_tendency;
   std::filesystem::path diagnostic_adapter_metadata_source;
   std::size_t diagnostic_adapter_metadata_time_index = 0;
   std::filesystem::path pressure_refresh_metadata_source;
@@ -267,6 +283,74 @@ struct DiagnosticAdapterProviderSource {
 
 [[nodiscard]] const char* bool_text(const bool value) noexcept {
   return value ? "true" : "false";
+}
+
+[[nodiscard]] constexpr bool wind_tendency_enabled(
+    const WindTendencySourceKind kind) noexcept {
+  return kind != WindTendencySourceKind::none;
+}
+
+[[nodiscard]] std::string_view wind_tendency_source_name(
+    const WindTendencySourceKind kind) noexcept {
+  switch (kind) {
+    case WindTendencySourceKind::none:
+      return "none";
+    case WindTendencySourceKind::zero:
+      return "zero";
+    case WindTendencySourceKind::identity:
+      return "identity";
+  }
+  return "none";
+}
+
+[[nodiscard]] WindTendencySourceKind parse_wind_tendency_source(
+    const std::string& value,
+    const std::string_view option) {
+  auto trimmed = value;
+  trimmed.erase(
+      trimmed.begin(),
+      std::find_if(trimmed.begin(), trimmed.end(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }));
+  trimmed.erase(
+      std::find_if(trimmed.rbegin(), trimmed.rend(), [](const unsigned char c) {
+        return !std::isspace(c);
+      }).base(),
+      trimmed.end());
+  if (trimmed == "none") {
+    return WindTendencySourceKind::none;
+  }
+  if (trimmed == "zero") {
+    return WindTendencySourceKind::zero;
+  }
+  if (trimmed == "identity") {
+    return WindTendencySourceKind::identity;
+  }
+  throw std::invalid_argument(
+      std::string(option) + " expects one of: none, zero, identity");
+}
+
+[[nodiscard]] std::string_view wind_tendency_status_name(
+    const tywrf::dynamics::WindTendencyStatus status) noexcept {
+  switch (status) {
+    case tywrf::dynamics::WindTendencyStatus::ok:
+      return "ok";
+    case tywrf::dynamics::WindTendencyStatus::null_target:
+      return "null_target";
+    case tywrf::dynamics::WindTendencyStatus::null_source:
+      return "null_source";
+    case tywrf::dynamics::WindTendencyStatus::invalid_config:
+      return "invalid_config";
+    case tywrf::dynamics::WindTendencyStatus::invalid_layout:
+      return "invalid_layout";
+    case tywrf::dynamics::WindTendencyStatus::insufficient_halo:
+      return "insufficient_halo";
+    case tywrf::dynamics::WindTendencyStatus::mismatched_source_layout:
+      return "mismatched_source_layout";
+    case tywrf::dynamics::WindTendencyStatus::mismatched_wind_layout:
+      return "mismatched_wind_layout";
+  }
+  return "unknown";
 }
 
 template <typename Storage>
@@ -473,6 +557,9 @@ Options:
   --output-time-index N          Time index written in --output; default 0.
   --variables A,B,C              Output variables; default strict fields, Times/XLAT/XLONG/HGT,
                                   plus available d02 PB/PHB/MUB/PSFC/U10/V10/T2/Q2/RAINC/RAINNC.
+  --wind-tendency-source KIND    Opt in to selected-field U/V horizontal wind tendency plumbing.
+                                  KIND is none, zero, or identity; default none. zero and identity
+                                  are placeholder sources only and are not validation-gate evidence.
   --pressure-refresh             Opt in to provider-backed KROSA pressure refresh readiness check.
                                   Current selected-field state aborts before output because
                                   PB/PHB/MUB/P ownership is not yet thermodynamically consistent
@@ -693,6 +780,11 @@ is a selected-field integrator candidate, not a WRF-exact physics result.
       options.output_time_index = parse_size(require_value(arg), arg);
     } else if (arg == "--variables") {
       options.variables = split_variables(require_value(arg));
+    } else if (arg == "--wind-tendency-source") {
+      options.wind_tendency_source = parse_wind_tendency_source(require_value(arg), arg);
+    } else if (arg.rfind("--wind-tendency-source=", 0) == 0) {
+      options.wind_tendency_source =
+          parse_wind_tendency_source(arg.substr(std::string("--wind-tendency-source=").size()), "--wind-tendency-source");
     } else if (arg == "--pressure-refresh") {
       options.pressure_refresh = true;
     } else if (arg == "--diagnostic-base-state-adapter-report") {
@@ -1021,6 +1113,180 @@ template <typename BeforeStorage, typename AfterStorage>
   return changed_points(before.u, after.u) + changed_points(before.v, after.v) +
          changed_points(before.t, after.t) + changed_points(before.ph, after.ph) +
          changed_points(before.mu, after.mu) + changed_points(before.qvapor, after.qvapor);
+}
+
+template <typename Real>
+[[nodiscard]] tywrf::ActiveShape3D active_shape(const tywrf::FieldView3D<Real> view) noexcept {
+  return {
+      view.nx - view.halo.i_lower - view.halo.i_upper,
+      view.ny - view.halo.j_lower - view.halo.j_upper,
+      view.nz - view.halo.k_lower - view.halo.k_upper};
+}
+
+template <typename Real>
+void fill_halo_staging_from_active_clamped(
+    const tywrf::FieldView3D<const Real> source,
+    tywrf::FieldStorage3D<Real>& destination) {
+  const auto destination_view = destination.view();
+  const auto source_i_begin = source.halo.i_lower;
+  const auto source_i_end = source.nx - source.halo.i_upper;
+  const auto source_j_begin = source.halo.j_lower;
+  const auto source_j_end = source.ny - source.halo.j_upper;
+  const auto source_k_begin = source.halo.k_lower;
+  const auto source_k_end = source.nz - source.halo.k_upper;
+  for (std::int32_t j = 0; j < destination_view.ny; ++j) {
+    const auto source_j = std::clamp(
+        j - destination_view.halo.j_lower + source_j_begin,
+        source_j_begin,
+        source_j_end - 1);
+    for (std::int32_t k = 0; k < destination_view.nz; ++k) {
+      const auto source_k = std::clamp(
+          k - destination_view.halo.k_lower + source_k_begin,
+          source_k_begin,
+          source_k_end - 1);
+      for (std::int32_t i = 0; i < destination_view.nx; ++i) {
+        const auto source_i = std::clamp(
+            i - destination_view.halo.i_lower + source_i_begin,
+            source_i_begin,
+            source_i_end - 1);
+        destination_view(i, j, k) = source(source_i, source_j, source_k);
+      }
+    }
+  }
+}
+
+template <typename Real>
+void fill_storage_constant(
+    tywrf::FieldStorage3D<Real>& destination,
+    const Real value) {
+  std::fill(destination.data(), destination.data() + destination.size(), value);
+}
+
+template <typename Real>
+void copy_staging_active_to_field(
+    const tywrf::FieldView3D<const Real> source,
+    const tywrf::FieldView3D<Real> destination) {
+  const auto destination_i_begin = destination.halo.i_lower;
+  const auto destination_j_begin = destination.halo.j_lower;
+  const auto destination_k_begin = destination.halo.k_lower;
+  for (std::int32_t j = source.halo.j_lower; j < source.ny - source.halo.j_upper; ++j) {
+    const auto destination_j = j - source.halo.j_lower + destination_j_begin;
+    for (std::int32_t k = source.halo.k_lower; k < source.nz - source.halo.k_upper; ++k) {
+      const auto destination_k = k - source.halo.k_lower + destination_k_begin;
+      for (std::int32_t i = source.halo.i_lower; i < source.nx - source.halo.i_upper; ++i) {
+        const auto destination_i = i - source.halo.i_lower + destination_i_begin;
+        destination(destination_i, destination_j, destination_k) = source(i, j, k);
+      }
+    }
+  }
+}
+
+void apply_selected_field_wind_tendency(
+    const Options& options,
+    tywrf::State<float>& candidate,
+    CandidateReport& report) {
+  if (!wind_tendency_enabled(options.wind_tendency_source)) {
+    return;
+  }
+
+  auto u_target =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.u.view()), tywrf::uniform_halo_3d(1));
+  auto v_target =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.v.view()), tywrf::uniform_halo_3d(1));
+  auto u_source =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.u.view()), tywrf::uniform_halo_3d(1));
+  auto v_source =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.v.view()), tywrf::uniform_halo_3d(1));
+  auto u_advect_x =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.u.view()), tywrf::uniform_halo_3d(1));
+  auto u_advect_y =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.u.view()), tywrf::uniform_halo_3d(1));
+  auto v_advect_x =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.v.view()), tywrf::uniform_halo_3d(1));
+  auto v_advect_y =
+      tywrf::FieldStorage3D<float>(active_shape(candidate.v.view()), tywrf::uniform_halo_3d(1));
+
+  const tywrf::State<float>& candidate_source = candidate;
+  fill_halo_staging_from_active_clamped(candidate_source.u.view(), u_target);
+  fill_halo_staging_from_active_clamped(candidate_source.v.view(), v_target);
+  if (options.wind_tendency_source == WindTendencySourceKind::zero) {
+    fill_storage_constant(u_source, 0.0F);
+    fill_storage_constant(v_source, 0.0F);
+    fill_storage_constant(u_advect_x, 0.0F);
+    fill_storage_constant(u_advect_y, 0.0F);
+    fill_storage_constant(v_advect_x, 0.0F);
+    fill_storage_constant(v_advect_y, 0.0F);
+  } else {
+    fill_halo_staging_from_active_clamped(candidate_source.u.view(), u_source);
+    fill_halo_staging_from_active_clamped(candidate_source.v.view(), v_source);
+    fill_halo_staging_from_active_clamped(candidate_source.u.view(), u_advect_x);
+    fill_halo_staging_from_active_clamped(candidate_source.u.view(), u_advect_y);
+    fill_halo_staging_from_active_clamped(candidate_source.v.view(), v_advect_x);
+    fill_halo_staging_from_active_clamped(candidate_source.v.view(), v_advect_y);
+  }
+
+  const auto u_before = candidate.u;
+  const auto v_before = candidate.v;
+  const auto& u_target_const = static_cast<const tywrf::FieldStorage3D<float>&>(u_target);
+  const auto& v_target_const = static_cast<const tywrf::FieldStorage3D<float>&>(v_target);
+  const auto& u_source_const = static_cast<const tywrf::FieldStorage3D<float>&>(u_source);
+  const auto& v_source_const = static_cast<const tywrf::FieldStorage3D<float>&>(v_source);
+  const auto& u_advect_x_const =
+      static_cast<const tywrf::FieldStorage3D<float>&>(u_advect_x);
+  const auto& u_advect_y_const =
+      static_cast<const tywrf::FieldStorage3D<float>&>(u_advect_y);
+  const auto& v_advect_x_const =
+      static_cast<const tywrf::FieldStorage3D<float>&>(v_advect_x);
+  const auto& v_advect_y_const =
+      static_cast<const tywrf::FieldStorage3D<float>&>(v_advect_y);
+  WindTendencyOptInReport wind_report;
+  wind_report.source_kind = options.wind_tendency_source;
+  wind_report.kernel = tywrf::dynamics::apply_horizontal_wind_tendency(
+      tywrf::dynamics::WindTendencyViews<float>{
+          {u_target.view(),
+           u_source_const.view(),
+           u_advect_x_const.view(),
+           u_advect_y_const.view()},
+          {v_target.view(),
+           v_source_const.view(),
+           v_advect_x_const.view(),
+           v_advect_y_const.view()}},
+      tywrf::dynamics::WindTendencyConfig<float>{
+          .dt_seconds = 8.0F,
+          .dx_m = static_cast<float>(kD02TargetDxMeters),
+          .dy_m = static_cast<float>(kD02TargetDxMeters),
+          .enable_horizontal_advection = true,
+          .diagnostic_only = false,
+          .gate_candidate = false,
+          .validation_gate_evidence = false});
+  if (wind_report.kernel.status != tywrf::dynamics::WindTendencyStatus::ok) {
+    throw std::runtime_error(
+        "selected-field wind tendency failed: " +
+        std::string(wind_tendency_status_name(wind_report.kernel.status)));
+  }
+
+  copy_staging_active_to_field(u_target_const.view(), candidate.u.view());
+  copy_staging_active_to_field(v_target_const.view(), candidate.v.view());
+  wind_report.changed_u_points = changed_points(u_before, candidate.u);
+  wind_report.changed_v_points = changed_points(v_before, candidate.v);
+  report.wind_tendency = wind_report;
+  append_timeline_event(
+      report,
+      "wind_tendency_apply",
+      {
+          timeline_field("opt_in", "true"),
+          timeline_field("applied", "true"),
+          timeline_field(
+              "source_kind",
+              std::string(wind_tendency_source_name(options.wind_tendency_source))),
+          timeline_field("fields", "U_V"),
+          timeline_field("zero_or_identity_only", "true"),
+          timeline_field("gate_evidence", "false"),
+          timeline_field("validation_gate_evidence", "false"),
+          timeline_field("uses_reference_end_truth", "false"),
+          timeline_field("changed_u_points", wind_report.changed_u_points),
+          timeline_field("changed_v_points", wind_report.changed_v_points),
+      });
 }
 
 template <typename Storage>
@@ -2931,6 +3197,8 @@ void run_diagnostic_adapter_report(
           timeline_field("wrote_halo", report.interpolation.wrote_halo ? "true" : "false"),
       });
 
+  apply_selected_field_wind_tendency(options, candidate, report);
+
   report.changed_selected_points = changed_selected_points(d02_start, candidate);
   if (report.changed_selected_points == 0) {
     throw std::runtime_error("selected-field candidate did not change any selected-field point");
@@ -3981,6 +4249,55 @@ void write_diagnostic_adapter_attrs(
       "staging_report_only_no_gate_no_integrator");
 }
 
+void write_wind_tendency_attrs(
+    const NetcdfHandle& file,
+    const CandidateReport& report) {
+  if (!report.wind_tendency.has_value()) {
+    return;
+  }
+
+  const auto& wind = *report.wind_tendency;
+  write_text_attr(file, "TYWRF_WIND_TENDENCY_OPT_IN", "true");
+  write_text_attr(file, "TYWRF_WIND_TENDENCY_APPLIED", "true");
+  write_text_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_SOURCE_KIND",
+      wind_tendency_source_name(wind.source_kind));
+  write_text_attr(file, "TYWRF_WIND_TENDENCY_GATE_EVIDENCE", "false");
+  write_text_attr(file, "TYWRF_WIND_TENDENCY_VALIDATION_GATE_EVIDENCE", "false");
+  write_text_attr(file, "TYWRF_WIND_TENDENCY_USES_REFERENCE_END_TRUTH", "false");
+  write_text_attr(file, "TYWRF_WIND_TENDENCY_ZERO_OR_IDENTITY_ONLY", "true");
+  write_text_attr(file, "TYWRF_WIND_TENDENCY_WRITTEN_FIELDS", "U,V");
+  write_text_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_STATUS",
+      wind_tendency_status_name(wind.kernel.status));
+  write_double_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_ACTIVE_U_POINTS",
+      static_cast<double>(wind.kernel.active_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_ACTIVE_V_POINTS",
+      static_cast<double>(wind.kernel.active_v_points));
+  write_double_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_UPDATED_U_POINTS",
+      static_cast<double>(wind.kernel.updated_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_UPDATED_V_POINTS",
+      static_cast<double>(wind.kernel.updated_v_points));
+  write_double_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_CHANGED_U_POINTS",
+      static_cast<double>(wind.changed_u_points));
+  write_double_attr(
+      file,
+      "TYWRF_WIND_TENDENCY_CHANGED_V_POINTS",
+      static_cast<double>(wind.changed_v_points));
+}
+
 void stamp_gate_metadata(
     const Options& options,
     const Resolution resolution,
@@ -4206,6 +4523,7 @@ void stamp_gate_metadata(
   write_pressure_formula_observation_attrs(file, report);
   write_normal_base_state_producer_attrs(file, report);
   write_diagnostic_adapter_attrs(file, report);
+  write_wind_tendency_attrs(file, report);
   if (options.diagnostic_adapter_report) {
     write_text_attr(
         file,
@@ -4763,6 +5081,74 @@ void write_normal_base_state_producer_json(
       stream,
       "normal_base_state_producer_changed_hgt_points",
       static_cast<double>(report.normal_base_state_changed_hgt_points),
+      comma,
+      pretty);
+}
+
+void write_wind_tendency_json(
+    std::ostream& stream,
+    const CandidateReport& report,
+    const bool comma,
+    const bool pretty) {
+  if (!report.wind_tendency.has_value()) {
+    return;
+  }
+
+  const auto& wind = *report.wind_tendency;
+  write_json_bool(stream, "wind_tendency_opt_in", true, true, pretty);
+  write_json_bool(stream, "wind_tendency_applied", true, true, pretty);
+  write_json_string(
+      stream,
+      "wind_tendency_source_kind",
+      wind_tendency_source_name(wind.source_kind),
+      true,
+      pretty);
+  write_json_bool(stream, "wind_tendency_gate_evidence", false, true, pretty);
+  write_json_bool(
+      stream, "wind_tendency_validation_gate_evidence", false, true, pretty);
+  write_json_bool(stream, "wind_tendency_uses_reference_end_truth", false, true, pretty);
+  write_json_bool(stream, "wind_tendency_zero_or_identity_only", true, true, pretty);
+  write_json_string(stream, "wind_tendency_written_fields", "U,V", true, pretty);
+  write_json_string(
+      stream,
+      "wind_tendency_status",
+      wind_tendency_status_name(wind.kernel.status),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "wind_tendency_active_u_points",
+      static_cast<double>(wind.kernel.active_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "wind_tendency_active_v_points",
+      static_cast<double>(wind.kernel.active_v_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "wind_tendency_updated_u_points",
+      static_cast<double>(wind.kernel.updated_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "wind_tendency_updated_v_points",
+      static_cast<double>(wind.kernel.updated_v_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "wind_tendency_changed_u_points",
+      static_cast<double>(wind.changed_u_points),
+      true,
+      pretty);
+  write_json_number(
+      stream,
+      "wind_tendency_changed_v_points",
+      static_cast<double>(wind.changed_v_points),
       comma,
       pretty);
 }
@@ -5654,6 +6040,7 @@ void print_report(
   const bool has_normal_base_state_producer =
       report.normal_base_state_producer.has_value();
   const bool has_diagnostic_adapter = report.diagnostic_adapter.has_value();
+  const bool has_wind_tendency = report.wind_tendency.has_value();
   const bool has_pressure_column_probe = !report.pressure_column_observations.empty();
   const bool has_pressure_formula_observation =
       !report.pressure_formula_observations.empty();
@@ -5738,9 +6125,12 @@ void print_report(
       "selected_field_timeline_events",
       join_timeline_events(report.timeline),
       has_normal_base_state_producer || has_diagnostic_adapter ||
-          report.pressure_refresh.has_value() ||
+          has_wind_tendency || report.pressure_refresh.has_value() ||
           has_pressure_column_probe,
       pretty);
+  if (has_wind_tendency) {
+    write_wind_tendency_json(std::cout, report, true, pretty);
+  }
   if (has_normal_base_state_producer) {
     write_normal_base_state_producer_json(
         std::cout,
